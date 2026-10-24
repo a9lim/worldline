@@ -126,7 +126,7 @@ use the 3D quadrupole and TT projection.
 |---|---|---|---|
 | **1.5** | WebGPU only; relativity you can see; frames; cosmology; lensing | done 2026-10-23 (§10) | — |
 | **2.0** | The visual overhaul | done 2026-10-24 (§10) | — |
-| **2.1** | Performance and receipts | measure and optimize; settle the caps; fix what 2.0 shipped; delete Disintegration; honest `about.md` (§3) | M |
+| **2.1** | Performance and receipts | measure and optimize; settle the caps; fix what 2.0 shipped; honest `about.md` (§3) | M |
 | **2.5** | The laboratory | the record (§4), then sight (§5), then the instrument (§6) | L |
 | **3.0** | The model | a decision point, then honest gravity and/or curved spacetime (§7) | L |
 
@@ -194,7 +194,9 @@ the tour harness, and a colour-vision simulation pass. GPU timestamp budgets joi
 
 Fix what 2.0 shipped, so each figure says only what it shows.
 
-- **Delete Disintegration** (decided). Extremal censorship keeps running in black-hole mode.
+- **An extremal-censorship oracle:** an over-charged hole sheds to its Kerr–Newman limit in
+  whole quanta, with the leptons' momentum as its recoil. The Disintegration deletion
+  (§10) was checked by a one-off script, because the oracle page has no such case.
 - **The twin fits its history.** Its round trip is about 370 time units against a 128-unit
   ring, so the plate never shows departure and reunion together. Shrink the domain to about
   [56, 32] (a round trip near 107) until the archive (§4.1) lets it grow again.
@@ -595,7 +597,7 @@ provides it.
 - **"Make a geon"** as a success criterion: a long-lived numerical lump wouldn't establish it.
 - **The ER=EPR framing** for annihilation photons: they share an origin, which the event log
   shows; that isn't entanglement.
-- **Hidden Disintegration** (decided).
+- **Hidden Disintegration**, deleted 2026-10-24 (`ef6576f`).
 - **Coverage presets:** superradiance, Schwinger, kugelblitz, Klein/RP² and the external
   fields return only as experiments.
 
@@ -669,6 +671,7 @@ and benchmark harnesses (§3.1).
 | Stats | 2026-10-23 | `4b68bb6` | The stats' energies for the audited forces (Darwin, EIH, Bažański, Breit). |
 | 2.0 | 2026-10-24 | `433c8bf` … `8533f6d` | The visual overhaul: the tilted spacetime plate, Lab and Observer coordinates, the glyph grammar, photons as wave packets, the field atlas, the key, scale bar and captions, six presets. Sketches and the screenshot harness in `docs/second-pass/`. |
 | 2.1 | 2026-10-24 | `346564b` | The ghost count clamped to its buffer, so a torus with more than about 170 bodies keeps stepping. |
+| 2.1 | 2026-10-24 | `ef6576f` | Disintegration deleted (tidal breakup, Roche transfer, `inheritClockFrom`); extremal censorship runs alone as `extremal.wgsl`. |
 
 ## 11. Gotchas
 
