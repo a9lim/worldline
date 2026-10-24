@@ -2076,7 +2076,9 @@ export default class GPUPhysics {
             const data = new Uint32Array(this.buffers.ghostCountStaging.getMappedRange().slice(0));
             this.buffers.ghostCountStaging.unmap();
 
-            this._ghostCount = data[0];
+            // The counter keeps counting past MAX_GHOSTS (ghost-gen drops the overflow), and a
+            // copy sized by it would invalidate every substep's command buffer
+            this._ghostCount = Math.min(data[0], MAX_PARTICLES);
         } catch (e) {
             // Device lost or other error — don't block future readbacks
         } finally {
