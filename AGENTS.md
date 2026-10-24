@@ -8,8 +8,8 @@ KaTeX from jsDelivr renders the reference overlay.
 It is a submodule of the a9l.im repository (`a9lim.github.io`, at `projects/worldline`); the
 root `AGENTS.md` covers the shared layer, design system, build, and deployment.
 
-`docs/ROADMAP.md` is the plan of record: versions 1.5–3.0, open decisions, and known
-physics bugs. This file describes the code as it is.
+`docs/ROADMAP.md` is the plan of record: the planar-laboratory thesis, versions 2.1–3.0,
+open decisions, and the model's known boundaries. This file describes the code as it is.
 
 ## Running and checking
 
@@ -107,7 +107,7 @@ clears itself; each stats readback carries the selection it was requested for
   `derived.radiusSq` hold the Kerr–Newman horizon instead.
 - Charges are multiples of `BOSON_CHARGE` (0.1): `addParticle()` rounds, pions and
   leptons carry 0 or ±`BOSON_CHARGE`, and emission, absorption, decay, Schwinger
-  discharge, extremal shedding, and Roche transfer move whole quanta.
+  discharge and extremal shedding move whole quanta.
 - Energy totals include rest mass plus kinetic, spin, potential, field, and radiated
   terms. The potential and field terms are each force's conserved energy
   (`compute-stats.wgsl` `statsPE`): T + V alone without Relativity or 1PN, since the
@@ -131,7 +131,7 @@ command buffer so that substep's uniforms (`simTime` above all) are the ones its
 read. `_dispatchSubstep()` lists the order in its pass comments: forces, external and
 field forces come before the fused kick–rotate–kick, then spin-orbit and torques,
 radiation, drift, clocks, the 1PN velocity-Verlet correction, the field step,
-collisions, disintegration, bosons, the boundary, and the world lines (a sample whenever
+collisions, extremal shedding, bosons, the boundary, and the world lines (a sample whenever
 the world-line clock crosses the next `WORLDLINE_DT` mark, else merge breaks and death
 snapshots only). After the substeps, once per frame: the expansion (below), the pool
 culls, pion decay, boson interaction, dead-slot GC, quadrupole radiation and colors.
@@ -212,15 +212,15 @@ observer, so a positive radial coefficient attracts. The fields, in that convent
   exactly EIH's v₁·v₂ sector, which the 1PN pair force leaves out.
 - Spinning mass: `Bgz = +J/(2r³)` in the plane, which slows prograde orbits
   (Ω_pro = Ω_K − J/r³); the gravitomagnetic dipole force `+3L₁L₂/r⁴` attracts.
-Those signs were reversed until 2026-10-23 (`docs/ROADMAP.md` §2.1); the oracle page pins
+Those signs were reversed until 2026-10-23 (`2187ef4`, `docs/ROADMAP.md` §10); the oracle page pins
 each. 1PN forces are velocity-dependent and break Newton's third law, hence the
 velocity-Verlet correction.
 
 ### Forces and toggles
 
-Sixteen toggles (`TOGGLE_KEYS`). Their dependency graph is the declarative
+Fifteen toggles (`TOGGLE_KEYS`). Their dependency graph is the declarative
 `_forms.bindDeps()` list in `ui.js`; `updateAllDeps()` adds the mode locks (Black hole
-and the hidden Disintegration force Merge collisions, Expansion forces Loop). Less
+forces Merge collisions, Expansion forces Loop). Less
 obvious couplings: Boson interaction needs the Barnes–Hut toggle (Simulation section);
 signal delay runs whenever Relativity is on, and with it charges interact through their
 Liénard–Wiechert fields; field gravity follows Gravity; kugelblitz runs under Boson
@@ -235,7 +235,10 @@ Liénard–Wiechert needs each source's world line, which tree aggregates lack, 
 carries everything else. Periodic modes put ghost copies in the tree for seam collisions
 and hit tests, but ghosts weigh nothing in the aggregates (`tree-build.wgsl`), because
 every walk takes minimum-image displacements and a weighted ghost would count its pair
-twice. With Higgs on, the Yukawa range is `yukawaMu·√(higgsMod_i·higgsMod_j)`,
+twice. `ghost-gen.wgsl` makes a ghost for each edge within `max(W, H)·θ` (half the domain),
+so every body makes up to three and the 512-slot ghost buffer fills at about 170 bodies;
+past that some seam collisions and hit tests go unseen (the read-back count is clamped, so
+stepping continues). With Higgs on, the Yukawa range is `yukawaMu·√(higgsMod_i·higgsMod_j)`,
 `higgsMod = max(|φ|, HIGGS_MASS_FLOOR)` cached per particle in `axYukMod.z`.
 
 Signal delay finds each source's retarded state, `retardedState()` in
@@ -304,9 +307,7 @@ created at `−∞` and act at once.
   extrapolated to now and the merged body at the same time, so no segment smooths the
   jump. The epoch rebase also maps each line by its inverse deck, back to the identity.
 - **Continuity.** An inelastic merge keeps the heavier parent's slot, so its τ and θ
-  carry on; disintegration fragments and Roche transfers copy the parent's clock
-  (`addParticle({ inheritClockFrom })`, through `_clockScratch`, since
-  `copyBufferToBuffer` cannot copy within one buffer).
+  carry on.
 
 ### The spacetime view
 
@@ -469,8 +470,7 @@ backdrop seen through the bodies as a thin lens, viewed along z, in the lab fram
   whole domain in black-hole mode so a small body deep inside a large horizon is found.
 - **Extremal censorship.** An over-bound hole sheds same-sign leptons one quantum at a
   time, emitted in its rest frame and boosted, with a clamp to the nearest allowed charge
-  as backstop. It runs in black-hole mode whatever the Disintegration toggle says:
-  `disintegration.wgsl` with `DISINT_FEATURE_EXTREMAL`.
+  as backstop, in black-hole mode (`extremal.wgsl`).
 - **Hawking** (Black hole + Radiation): Kerr–Newman temperature, Stefan–Boltzmann
   power, none at extremality, on the hole's clock (`dM = P·dt/γ`). Mass leaves at fixed
   proper velocity; each photon is drawn isotropically in the rest frame, boosted, and the
@@ -585,10 +585,9 @@ per stage would land before the whole encoder ran (that bug left Φ ≡ 0 until
   with a max-capacity fallback.
 - **Tree.** `computeBounds`, `initRoot`, `insertParticles` (lock-free CAS, one body per
   leaf), `computeAggregates` (bottom-up via visitor flags).
-- **Events.** Merge, disintegration, and kugelblitz events, hit tests, stats,
-  maxAccel, ghost count, and the free-slot stack come back through async `mapAsync`
-  readbacks a frame late; `GPUBackend` spawns fragments, transfers, and kugelblitz
-  particles from them.
+- **Events.** Merge and kugelblitz events, hit tests, stats, maxAccel, ghost count,
+  and the free-slot stack come back through async `mapAsync` readbacks a frame late;
+  `GPUBackend` spawns kugelblitz particles from them.
 - `_phase5Ready` holds field dispatches until the async field pipelines exist.
 
 ### The Fields overlay
@@ -689,7 +688,7 @@ canvas text needs no font-load redraw.
 ## Conventions
 
 - **Naming.** Code, comments, and UI text say "signal delay" or "finite-speed force
-  propagation", never "retarded potential(s)" (a9's rule; `docs/ROADMAP.md` §12 adds
+  propagation", never "retarded potential(s)" (a9's rule; `docs/ROADMAP.md` §11 adds
   "light-cone" and "Liénard–Wiechert").
 - **Force laws.** A force-law change touches `pair-force`, `forces-tree`,
   `compute-stats` (PE), and `heatmap.wgsl`, and `effective-potential.js` for the plot;
@@ -754,33 +753,17 @@ canvas text needs no font-load redraw.
 
 ## Open work
 
-`docs/ROADMAP.md` holds the plan: §2.2–2.3 list known physics bugs and audit leftovers,
-§3 the milestones. Not tracked there:
+`docs/ROADMAP.md` holds the plan. Its §3 lists 2.1's fixes (performance, structure, what
+2.0 shipped) and §7.3 the model's known boundaries, which hold through 2.5. The presets cut
+in 2.0 showed several of those boundaries: the inspiral gained energy under gravity's signal
+delay, the precession preset's planet escaped at once with 1PN on inside the softening
+length, and the nucleus preset's Yukawa well drove bodies to about 3c. Preset facts that
+follow from them:
 
-- Hidden Disintegration (its control's parent is `display:none`; no preset enables
-  it): fragments split the parent's charge evenly and `addParticle()` rounds each
-  share, so charge survives only when it divides into `SPAWN_COUNT` quanta, and a
-  Coulomb-driven breakup leaves fragments over threshold, cascading into dust.
-- Photons left in the pool after Radiation and Merge are both turned off stop updating
-  (`pass-graph.js` gates the passes on what can emit them), so they neither move nor age.
-- The `torque-render.wgsl` header table swaps the contact (0.5) and superradiance (1.0)
-  arc offsets relative to `getTorqueOffset()`.
-- With Relativity on, gravity's signal delay unbinds comparable-mass orbits at O(v)
-  (Laplace's aberration; `docs/ROADMAP.md` §2.2), so a radiating binary gains energy
-  despite its quadrupole radiation (the inspiral preset, cut in 2.0, showed it).
-- 1PN is far outside its range inside the softening length (ε = 8): a planet started at
-  about 0.63c at r = 10 escapes at once with 1PN on instead of tracing a rosette, where
-  Newton alone keeps it bound (the cut precession preset).
-- A Yukawa well of coupling 14 and m = 2 drives bodies to about 3c with Relativity off,
-  and its energy drifts by tens of percent even with pass-through collisions: the
-  integrator at those speeds, not the stats (the cut nucleus preset).
-- Schwinger and extremal-shedding leptons carry kinetic energy the hole never pays
-  (see Black holes); since the pools count, an evaporating hole's energy drift shows it.
-- Radiation reaction is strong at these charges: Larmor's τ = 2q²/3m is 6.7 for an
-  electron of m 0.1 and q −1, comparable to a pass, so such an electron radiates more than
-  its kinetic energy and is captured, and with q −2 about a charge-6 nucleus the reaction
-  runs away (147 radiated in a test). The bremsstrahlung beam uses m 0.3 for that reason.
-- `GPUPhysics.update()` returns when no body is alive, fields included, so the
-  Kibble–Zurek preset keeps a 10⁻³ tracer body to step the Higgs; it draws as a 2 px dot
-  (every body is at least 2 px) and the key lists it as Neutral.
+- The bremsstrahlung beam's electrons have m 0.3 because radiation reaction is strong at
+  these charges: Larmor's τ = 2q²/3m is 6.7 for m 0.1 and q −1, comparable to a pass, so
+  such an electron radiates more than its kinetic energy and is captured.
+- The Kibble–Zurek preset keeps a 10⁻³ tracer body because `GPUPhysics.update()` returns
+  when no body is alive; it draws as a 2 px dot (every body is at least 2 px) and the key
+  lists it as Neutral.
 - The cyclotron's synchrotron light is weak at 0.5c: a few photons a run.

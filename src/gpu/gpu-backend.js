@@ -3,7 +3,7 @@
  * to the Simulation — stepping, event readbacks, rendering, stats, auto-save.
  */
 import {
-    TWO_PI, PHYSICS_DT, SPAWN_COUNT, spawnOffset,
+    PHYSICS_DT,
     GPU_HEATMAP_GRID, STATS_THROTTLE_MASK, INERTIA_K, EPSILON, BOUND_LOOP, TORUS,
 } from '../config.js';
 import GPUPhysics, { LENS_RES } from './gpu-physics.js';
@@ -125,7 +125,6 @@ export default class GPUBackend {
             sim.accumulator -= substeps * PHYSICS_DT;
         }
 
-        this._processDisintegrationEvents(sim);
         this._processKugelblitzEvents(sim);
 
         if (++this._autoSaveCounter >= AUTO_SAVE_INTERVAL) {
@@ -364,41 +363,6 @@ export default class GPUBackend {
             sim.effPotPlot.update(sel2, gpuStats.reference, sim.settings, geom);
             sim.phasePlot.draw(sim.overlay.isLight);
             sim.effPotPlot.draw(sim.overlay.isLight);
-        }
-    }
-
-    _processDisintegrationEvents(sim) {
-        const disintEvents = this.physics.consumeDisintegrationEvents();
-        for (let i = 0; i < disintEvents.length; i++) {
-            const evt = disintEvents[i];
-            if (evt.eventType === 0) {
-                this.physics.removeParticle(evt.particleIdx, evt.mass, evt.angW);
-                const nf = SPAWN_COUNT;
-                const fragMass = evt.mass / nf;
-                const fragCharge = evt.charge / nf;
-                for (let fi = 0; fi < nf; fi++) {
-                    const angle = (TWO_PI * fi) / nf;
-                    const offset = spawnOffset(evt.radius);
-                    const cos = Math.cos(angle), sin = Math.sin(angle);
-                    const angVel = evt.angW;
-                    this.physics.addParticle({
-                        x: evt.spawnX + cos * offset,
-                        y: evt.spawnY + sin * offset,
-                        vx: evt.spawnVX + (-sin) * angVel * offset,
-                        vy: evt.spawnVY + cos * angVel * offset,
-                        mass: fragMass, charge: fragCharge, angw: evt.angW,
-                        inheritClockFrom: evt.particleIdx,
-                    });
-                }
-            } else {
-                // The shader already took the transferred mass and charge from the donor.
-                this.physics.addParticle({
-                    x: evt.spawnX, y: evt.spawnY,
-                    vx: evt.spawnVX, vy: evt.spawnVY,
-                    mass: evt.transferMass, charge: evt.charge,
-                    inheritClockFrom: evt.particleIdx,
-                });
-            }
         }
     }
 

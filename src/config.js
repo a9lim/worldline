@@ -96,12 +96,9 @@ export const DEFAULT_AXION_MASS = 0.05;      // m_a (oscillation frequency)
 export const AXION_COUPLING = 0.05;          // g in L = -(1+g·a)F²/4
 export const HIGGS_AXION_COUPLING = 0.01;    // λ in V_portal = ½λφ²a² (Higgs portal)
 
-// ── Disintegration & Roche ──
-export const SPAWN_COUNT = 4;
-export const SPAWN_OFFSET_MULTIPLIER = 1.5;
+// ── Emission ──
+export const SPAWN_OFFSET_MULTIPLIER = 1.5;  // emitted bosons start this many radii from the emitter
 export const SPAWN_OFFSET_FLOOR = 1;
-export const ROCHE_THRESHOLD = 0.9;
-export const ROCHE_TRANSFER_RATE = 0.1;      // fraction of donor mass per unit donor proper time, per unit overflow
 
 // ── Kugelblitz Collapse ──
 export const MIN_KUGELBLITZ_ENERGY = 0.2;    // minimum total boson energy for collapse (4 × MIN_MASS)
@@ -152,11 +149,6 @@ export const HEATMAP_MAX_ALPHA = 100;
 export const VELOCITY_VECTOR_SCALE = 32;
 
 // ── Helpers ──
-
-/** Compute photon/fragment spawn offset from particle radius. */
-export function spawnOffset(radius) {
-    return Math.max(radius * SPAWN_OFFSET_MULTIPLIER, SPAWN_OFFSET_FLOOR);
-}
 
 /** Kerr-Newman radius for sub-extremal parameters; super-extremal inputs clamp to M as a toy-model effective radius. */
 export function kerrNewmanRadius(M, radiusSq, angVel, charge) {

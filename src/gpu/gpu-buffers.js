@@ -7,7 +7,7 @@
  * Packed struct buffers reduce storage buffer count per shader stage:
  *   ParticleState  (36 bytes) — posX,posY,velWX,velWY,mass,charge,angW,baseMass,flags
  *   ParticleAux    (20 bytes) — radius,particleId,deathTime,deathMass,deathAngVel
- *   RadiationState (48 bytes) — accumulators,display,quadrupole contrib
+ *   RadiationState (40 bytes) — accumulators,display,quadrupole contrib
  *   Photon         (32 bytes) — pos,vel,energy,emitterId,lifetime,flags
  *   Pion           (48 bytes) — pos,w,mass,charge,energy,emitterId,age,flags,pad
  */
@@ -24,7 +24,7 @@ const QTNODE_SIZE_BYTES = 80;
 // Packed struct sizes (must match common.wgsl struct definitions)
 const PARTICLE_STATE_SIZE = 36;  // 9 × 4 bytes
 const PARTICLE_AUX_SIZE = 20;   // 5 × 4 bytes
-const RADIATION_STATE_SIZE = 48; // 12 × 4 bytes (accumulators + display + quadrupole scratch)
+const RADIATION_STATE_SIZE = 40; // 10 × 4 bytes (accumulators + display + quadrupole scratch)
 const PHOTON_SIZE = 32;          // 8 × 4 bytes
 const PION_SIZE = 48;            // 12 × 4 bytes
 const MERGE_RESULT_SIZE = 32;    // 2 × vec4: x,y,energy,type + px,py,pad,pad
@@ -88,7 +88,7 @@ export function createParticleBuffers(device, maxParticles) {
     const wlMeta = storageBuffer('wlMeta', WL_META_STRIDE * 4, maxParticles);
 
     // ── Radiation state (packed struct) ──
-    // RadiationState (48 bytes): accumulators, display, quadrupole contrib
+    // RadiationState (40 bytes): accumulators, display, quadrupole contrib
     const radiationState = storageBuffer('radiationState', RADIATION_STATE_SIZE, maxParticles);
 
     // ── Quadrupole radiation reduction buffer ──
@@ -447,23 +447,6 @@ export function createExcitationBuffers(device, maxEvents = 64) {
     return {
         events: device.createBuffer({ label: 'excitation-events', size: maxEvents * 16, usage }), // ExcitationEvent = 16 bytes
         counter: device.createBuffer({ label: 'excitation-counter', size: 4, usage }),
-    };
-}
-
-/**
- * Allocate disintegration event buffers for tidal fragmentation / Roche transfer.
- * @param {GPUDevice} device
- * @param {number} maxEvents - max events per frame (default 64)
- */
-export function createDisintegrationBuffers(device, maxEvents = 64) {
-    const usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
-    return {
-        events: device.createBuffer({ label: 'disint-events', size: maxEvents * 48, usage }), // DisintEvent = 48 bytes
-        counter: device.createBuffer({ label: 'disint-counter', size: 4, usage }),
-        staging: device.createBuffer({ label: 'disint-staging', size: maxEvents * 48,
-            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
-        counterStaging: device.createBuffer({ label: 'disint-count-staging', size: 4,
-            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
     };
 }
 

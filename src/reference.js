@@ -9,7 +9,7 @@
 const REF_KEYS = [
     'gravity', 'coulomb', 'magnetic', 'gravitomag', 'relativity', 'frames', 'lensing', 'radiation',
     'onepn', 'blackhole', 'kugelblitz', 'spinorbit', 'yukawa', 'axion', 'higgs',
-    'expansion', 'disintegration', 'barneshut', 'collision', 'boundary',
+    'expansion', 'barneshut', 'collision', 'boundary',
     'topology', 'external', 'spin', 'charge', 'energy', 'pion',
     'fieldExcitation', 'conserved',
 ];

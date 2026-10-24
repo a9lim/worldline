@@ -50,7 +50,7 @@ struct AllForces {
 };
 
 // Radiation accumulator state per particle.
-// 48 bytes = 12 × f32.
+// 40 bytes = 10 × f32.
 struct RadiationState {
     radAccum: f32,
     hawkAccum: f32,
@@ -61,8 +61,6 @@ struct RadiationState {
     d3IContrib: f32,
     d3QContrib: f32,
     schwingerAccum: f32,
-    rocheAccum: f32,   // donor mass awaiting Roche transfer
-    _pad2: f32,
 };
 
 // Packed photon pool entry (32 bytes = 8 × f32/u32).

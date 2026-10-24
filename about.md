@@ -19,7 +19,7 @@ Particle trajectories are advanced with a phase-space-volume-preserving Boris ro
 
 ## Proper Time
 
-Internal processes run on each body's own clock rather than on lab time. Pion decay, Hawking evaporation, Schwinger discharge, superradiance, and Roche mass transfer advance by the body's proper time, so a neutral pion beam at Lorentz factor 5 travels five times farther before half of it decays, and a black hole moving at γ = 2 takes twice as long to evaporate. Emission happens in the emitter's rest frame and is boosted into the lab with the matching recoil. Photons and leptons are removed from their pools after a fixed age; that cull bounds memory and is not a physical lifetime.
+Internal processes run on each body's own clock rather than on lab time. Pion decay, Hawking evaporation, Schwinger discharge, and superradiance advance by the body's proper time, so a neutral pion beam at Lorentz factor 5 travels five times farther before half of it decays, and a black hole moving at γ = 2 takes twice as long to evaporate. Emission happens in the emitter's rest frame and is boosted into the lab with the matching recoil. Photons and leptons are removed from their pools after a fixed age; that cull bounds memory and is not a physical lifetime.
 
 Every body also carries a clock. Its proper time advances at dτ/dt = √(1 + 2Φ − v²), the weak-field rate that is exact for a free particle, for a clock held at rest near a Schwarzschild mass, and on a circular Schwarzschild orbit, where it runs at √(1 − 3M/r). The particle panel shows τ and dτ/dt, and the Clocks overlay (K) draws a ring around each body that fills once per 16 units of its proper time, so a moving body or one deep in a well visibly lags.
 

@@ -3,7 +3,7 @@
  *
  * Phase 2+3+4+5: Full force computation, Boris integrator, tree build, collisions,
  * dead GC, radiation, 1PN VV, boson lifecycle, boson gravity, signal delay history,
- * scalar fields, heatmap, expansion, disintegration.
+ * scalar fields, heatmap, expansion, extremal charge shedding.
  *
  * Dispatch sequence per substep:
  *   1. resetForces (DMA clear)
@@ -23,7 +23,7 @@
  *  15. scalarFieldEvolve      (Phase 5 — deposit → [self-grav] → KDK → gradients)
  *  17-18. collisions          (Phase 3 — detect + resolve)
  *  19. fieldExcitations       (Phase 5 — merge KE → wave packets)
- *  20. disintegrationCheck    (Phase 5 — tidal + Roche)
+ *  20. shedExtremalCharge     (Phase 5 — black holes past the extremal limit shed leptons)
  *  21. bosonUpdate            (Phase 4 — photon/pion drift, absorption, decay)
  *  24. boundary
  *
@@ -37,9 +37,9 @@
  *  Under expansion the domain is a × the comoving domain and the world-line clock is
  *  conformal time (cosmology.js, expansion.wgsl).
  */
-import { createParticleBuffers, createUniformBuffer, writeFrameUniforms, writeSubstepUniforms, createFieldBuffers, createGravityGridBuffers, createAtomicGridBuffer, createHeatmapBuffers, createExcitationBuffers, createDisintegrationBuffers, createKugelblitzBuffers, createFrameBuffers, FRAME_PARAMS_SIZE, FRAME_STATE_SIZE, FIELD_GRID_RES, PARTICLE_STATE_SIZE, PARTICLE_AUX_SIZE, RADIATION_STATE_SIZE, PHOTON_SIZE, PION_SIZE, DERIVED_SIZE } from './gpu-buffers.js';
-import { fetchShader, createLensPipeline, createPhase2Pipelines, createGhostGenPipeline, createTreeBuildPipelines, createTreeForcePipeline, createCollisionPipelines, createMergePhotonPipeline, createDeadGCPipeline, createPhase4Pipelines, createFieldDepositPipelines, createFieldEvolvePipelines, createFieldForcesPipelines, createFieldParticleGravPipeline, createFieldGravityPipelines, createFFTPipelines, createFieldExcitationPipeline, createHeatmapPipelines, createExpansionPipeline, createDisintegrationPipeline, createBosonDispatchArgsPipeline, createUpdateColorsPipeline, createHitTestPipeline, createComputeStatsPipeline, createFrameSlicePipelines } from './gpu-pipelines.js';
-import { buildWGSLConstants, GRAVITY_BIT, COULOMB_BIT, MAGNETIC_BIT, GRAVITOMAG_BIT, ONE_PN_BIT, RELATIVITY_BIT, SPIN_ORBIT_BIT, RADIATION_BIT, BLACK_HOLE_BIT, DISINTEGRATION_BIT, EXPANSION_BIT, YUKAWA_BIT, HIGGS_BIT, AXION_BIT, BARNES_HUT_BIT, BOSON_INTER_BIT, FIELD_GRAV_BIT_T1, HERTZ_BOUNCE_BIT_T1, EM_PAIRWISE_BIT_T1, WL_STRIDE, WL_META_STRIDE } from './gpu-constants.js';
+import { createParticleBuffers, createUniformBuffer, writeFrameUniforms, writeSubstepUniforms, createFieldBuffers, createGravityGridBuffers, createAtomicGridBuffer, createHeatmapBuffers, createExcitationBuffers, createKugelblitzBuffers, createFrameBuffers, FRAME_PARAMS_SIZE, FRAME_STATE_SIZE, FIELD_GRID_RES, PARTICLE_STATE_SIZE, PARTICLE_AUX_SIZE, RADIATION_STATE_SIZE, PHOTON_SIZE, PION_SIZE, DERIVED_SIZE } from './gpu-buffers.js';
+import { fetchShader, createLensPipeline, createPhase2Pipelines, createGhostGenPipeline, createTreeBuildPipelines, createTreeForcePipeline, createCollisionPipelines, createMergePhotonPipeline, createDeadGCPipeline, createPhase4Pipelines, createFieldDepositPipelines, createFieldEvolvePipelines, createFieldForcesPipelines, createFieldParticleGravPipeline, createFieldGravityPipelines, createFFTPipelines, createFieldExcitationPipeline, createHeatmapPipelines, createExpansionPipeline, createExtremalPipeline, createBosonDispatchArgsPipeline, createUpdateColorsPipeline, createHitTestPipeline, createComputeStatsPipeline, createFrameSlicePipelines } from './gpu-pipelines.js';
+import { buildWGSLConstants, GRAVITY_BIT, COULOMB_BIT, MAGNETIC_BIT, GRAVITOMAG_BIT, ONE_PN_BIT, RELATIVITY_BIT, SPIN_ORBIT_BIT, RADIATION_BIT, BLACK_HOLE_BIT, EXPANSION_BIT, YUKAWA_BIT, HIGGS_BIT, AXION_BIT, BARNES_HUT_BIT, BOSON_INTER_BIT, FIELD_GRAV_BIT_T1, HERTZ_BOUNCE_BIT_T1, EM_PAIRWISE_BIT_T1, WL_STRIDE, WL_META_STRIDE } from './gpu-constants.js';
 import { createGPUDispatchPlan, updateGPUDispatchPlan } from './pass-graph.js';
 import {
     WORLDLINE_DT, WORLDLINE_LEN, GPU_MAX_PHOTONS, GPU_MAX_PIONS, GPU_MAX_LEPTONS,
@@ -48,7 +48,7 @@ import {
     COL_NAMES, BOUND_NAMES, TOPO_NAMES,
     SOFTENING, BH_SOFTENING, SOFTENING_SQ, BH_SOFTENING_SQ, SHEET_THICKNESS_SQ, CLOCK_PERIOD,
     HIGGS_MASS_FLOOR, HIGGS_MASS_MAX_DELTA, HIGGS_COUPLING, AXION_COUPLING,
-    TIDAL_STRENGTH, ROCHE_THRESHOLD, ROCHE_TRANSFER_RATE, MIN_MASS, SPAWN_COUNT, BOSON_CHARGE,
+    BOSON_CHARGE,
     EPOCH_SPAN, EPOCH_STEP, kerrNewmanRadius,
 } from '../config.js';
 import Cosmology, { SCHEDULE_KEYS, slabVolume } from '../cosmology.js';
@@ -61,8 +61,6 @@ const BOSON_ARGS_PHOTON = 0;
 const BOSON_ARGS_PION = 12;
 const BOSON_ARGS_TOTAL = 24;
 const BOSON_ARGS_NODES = 36;
-const DISINT_FEATURE_BREAKUP = 1;
-const DISINT_FEATURE_EXTREMAL = 2;
 
 // A new slot's ink as update-colors.wgsl would give it, so a body spawned while paused
 // shows its charge before the first step: sienna positive, prussian negative, graphite
@@ -90,9 +88,6 @@ const _fieldUniformF32 = new Float32Array(_fieldUniformData);
 const _fieldUniformU32 = new Uint32Array(_fieldUniformData);
 
 // Pre-allocated dispatch uniform buffers (avoids per-frame GC from dispatch methods)
-const _disintUniformData = new ArrayBuffer(64);
-const _disintUniformF32 = new Float32Array(_disintUniformData);
-const _disintUniformU32 = new Uint32Array(_disintUniformData);
 const _heatmapUniformData = new ArrayBuffer(96);
 const _heatmapUniformF32 = new Float32Array(_heatmapUniformData);
 const _heatmapUniformU32 = new Uint32Array(_heatmapUniformData);
@@ -133,7 +128,8 @@ const _fieldLedgerU32 = new Uint32Array(_fieldLedgerData);
 const _expansionUniformData = new ArrayBuffer(32);   // ExpansionUniforms
 const _expansionUniformF32 = new Float32Array(_expansionUniformData);
 const _expansionUniformU32 = new Uint32Array(_expansionUniformData);       // one world-line sample (WL_STRIDE)
-const _addParticleRadData = new Float32Array(12);    // RADIATION_STATE_SIZE / 4
+const RADIATION_STATE_WORDS = RADIATION_STATE_SIZE / 4;
+const _addParticleRadData = new Float32Array(RADIATION_STATE_WORDS);
 const _addParticleMetaBuf = new ArrayBuffer(32);       // 8 u32 for wlMeta (WL_META_STRIDE)
 const _addParticleMetaU32 = new Uint32Array(_addParticleMetaBuf);
 const _addParticleMetaF32 = new Float32Array(_addParticleMetaBuf);
@@ -185,7 +181,7 @@ const _dsAuxF32     = new Float32Array(_dsAuxData);
 const _dsAuxU32     = new Uint32Array(_dsAuxData);
 const _dsColorData  = new Uint32Array(_DS_MAX);        // 4 bytes each
 const _dsModData    = new Float32Array(_DS_MAX * 4);   // VEC4_SIZE = 16
-const _dsRadData    = new Float32Array(_DS_MAX * 12);  // RADIATION_STATE_SIZE = 48 = 12 f32
+const _dsRadData    = new Float32Array(_DS_MAX * RADIATION_STATE_WORDS);
 const _dsMetaData   = new ArrayBuffer(_DS_MAX * 32);  // wlMeta: WL_META_STRIDE (8) u32 per particle
 const _dsMetaF32    = new Float32Array(_dsMetaData);
 const _dsMetaU32    = new Uint32Array(_dsMetaData);
@@ -300,8 +296,6 @@ export default class GPUPhysics {
         this._mergePhotonBindGroup = null;
         this._mergeResultsPending = false;
         this._pendingMergeEvents = [];
-        this._disintResultsPending = false;
-        this._pendingDisintEvents = [];
         this._kbResultsPending = false;
         this._pendingKugelblitzEvents = [];
 
@@ -359,12 +353,10 @@ export default class GPUPhysics {
         this._atomicGrid = null;
         this._heatmapBuffers = null;
         this._excitationBuffers = null;
-        this._disintBuffers = null;
         this._bosonDispatchArgs = null;
         this._higgsEnabled = false;
         this._axionEnabled = false;
         this._expansionEnabled = false;
-        this._disintegrationEnabled = false;
         this._hubbleParam = 0.001;
         this._cosmoSchedule = 0;
         this._fieldDamping = 1;
@@ -391,7 +383,7 @@ export default class GPUPhysics {
         this._fieldExcitation = null;
         this._heatmapPipelines = null;
         this._expansionPipeline = null;
-        this._disintPipeline = null;
+        this._extremalPipeline = null;
         this._bosonDispatchArgsPipeline = null;
 
         // Phase 5: Bind groups (lazy-created per field)
@@ -405,7 +397,7 @@ export default class GPUPhysics {
         this._heatmapBGs = null;
         this._heatmapBlurBGs = {};
         this._expansionBG = null;
-        this._disintBGs = null;
+        this._extremalBGs = null;
         this._bosonDispatchArgsBG = null;
 
         // Phase 5: FieldUniforms buffer (shared)
@@ -418,7 +410,6 @@ export default class GPUPhysics {
         this._heatmapReadPending = false;
         this.heatmapReadback = null;
         this._expansionUniformBuffer = null;
-        this._disintUniformBuffer = null;
 
         // Update colors pipeline
         this._updateColorsPipeline = null;
@@ -1855,79 +1846,6 @@ export default class GPUPhysics {
     }
 
     /**
-     * Non-blocking readback of disintegration events (fragment + Roche transfer).
-     * Uses 1-frame latency like other readbacks.
-     */
-    async _readbackDisintegrationResults() {
-        if (this._disintResultsPending) return;
-        if (!this._disintegrationEnabled || !this._disintBuffers) return;
-        this._disintResultsPending = true;
-
-        try {
-            const db = this._disintBuffers;
-            const encoder = this.device.createCommandEncoder();
-            encoder.copyBufferToBuffer(db.counter, 0, db.counterStaging, 0, 4);
-            this.device.queue.submit([encoder.finish()]);
-
-            await db.counterStaging.mapAsync(GPUMapMode.READ);
-            const countData = new Uint32Array(db.counterStaging.getMappedRange().slice(0));
-            db.counterStaging.unmap();
-
-            const eventCount = countData[0];
-            if (eventCount > 0) {
-                const readBytes = Math.min(eventCount, 64) * 48; // DisintEvent = 48 bytes
-                const encoder2 = this.device.createCommandEncoder();
-                encoder2.copyBufferToBuffer(db.events, 0, db.staging, 0, readBytes);
-                this.device.queue.submit([encoder2.finish()]);
-
-                await db.staging.mapAsync(GPUMapMode.READ);
-                const raw = db.staging.getMappedRange(0, readBytes);
-                const f32 = new Float32Array(raw.slice(0));
-                const u32 = new Uint32Array(raw.slice(0));
-                db.staging.unmap();
-
-                // Parse DisintEvent structs (12 fields × 4 bytes = 48 bytes each)
-                const events = [];
-                const count = Math.min(eventCount, 64);
-                for (let i = 0; i < count; i++) {
-                    const base = i * 12;
-                    events.push({
-                        particleIdx: u32[base],
-                        eventType: u32[base + 1],    // 0=fragment, 1=transfer
-                        targetIdx: u32[base + 2],
-                        transferMass: f32[base + 3],
-                        spawnX: f32[base + 4],
-                        spawnY: f32[base + 5],
-                        spawnVX: f32[base + 6],
-                        spawnVY: f32[base + 7],
-                        mass: f32[base + 8],
-                        charge: f32[base + 9],
-                        angW: f32[base + 10],
-                        radius: f32[base + 11],
-                    });
-                }
-                this._pendingDisintEvents = events;
-            } else {
-                this._pendingDisintEvents = [];
-            }
-        } catch (e) {
-            // Device lost or other error — don't block future readbacks
-        } finally {
-            this._disintResultsPending = false;
-        }
-    }
-
-    /**
-     * Consume pending disintegration events.
-     * @returns {Array} Array of DisintEvent objects
-     */
-    consumeDisintegrationEvents() {
-        const events = this._pendingDisintEvents;
-        this._pendingDisintEvents = [];
-        return events;
-    }
-
-    /**
      * Non-blocking readback of kugelblitz collapse events.
      * Max 1 event per substep (32 bytes = 8 × f32).
      */
@@ -2092,15 +2010,14 @@ export default class GPUPhysics {
      */
     /**
      * Write a new particle into a free slot. vx, vy are proper velocity. The clock starts
-     * at τ = tau, θ = theta, unless inheritClockFrom names a slot whose clock to copy
-     * (a fragment or a transferred mass carries its parent's age and orientation).
+     * at τ = tau, θ = theta.
      * bornAt is the lab time signal delay treats as the particle's birth: now by default,
      * so its field spreads out at c; −Infinity for initial conditions, which are taken
      * to have moved uniformly forever.
      * @returns {number} slot index, or -1 when the pool is full
      */
     addParticle({ x, y, vx = 0, vy = 0, mass: m = 1, charge: q = 0, angw = 0, antimatter = false,
-                  tau = 0, theta = 0, inheritClockFrom = -1, bornAt = null }) {
+                  tau = 0, theta = 0, bornAt = null }) {
         this.stateVersion++;
         this._stepsSinceChange = 0;
         let idx;
@@ -2153,25 +2070,12 @@ export default class GPUPhysics {
         _addParticleRadData.fill(0);
         this.device.queue.writeBuffer(this.buffers.radiationState, idx * RADIATION_STATE_SIZE, _addParticleRadData);
 
-        // Clock: fresh, or copied from the parent's slot (still intact while retired)
-        if (inheritClockFrom >= 0) {
-            // A buffer can't be copied onto itself, so go through a 16-byte scratch
-            if (!this._clockScratch) {
-                this._clockScratch = this.device.createBuffer({
-                    label: 'clockScratch', size: 16, usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
-                });
-            }
-            const enc = this.device.createCommandEncoder({ label: 'inheritClock' });
-            enc.copyBufferToBuffer(this.buffers.clocks, inheritClockFrom * 16, this._clockScratch, 0, 16);
-            enc.copyBufferToBuffer(this._clockScratch, 0, this.buffers.clocks, idx * 16, 16);
-            this.device.queue.submit([enc.finish()]);
-        } else {
-            _addParticleClockData[0] = tau;
-            _addParticleClockData[1] = tau - CLOCK_PERIOD * Math.floor(tau / CLOCK_PERIOD);
-            _addParticleClockData[2] = theta;
-            _addParticleClockData[3] = 1;
-            this.device.queue.writeBuffer(this.buffers.clocks, idx * 16, _addParticleClockData);
-        }
+        // Clock
+        _addParticleClockData[0] = tau;
+        _addParticleClockData[1] = tau - CLOCK_PERIOD * Math.floor(tau / CLOCK_PERIOD);
+        _addParticleClockData[2] = theta;
+        _addParticleClockData[3] = 1;
+        this.device.queue.writeBuffer(this.buffers.clocks, idx * 16, _addParticleClockData);
 
         // World line: one sample at birth, so signal delay has a state to extrapolate
         // from before the first recorded one. Meta (shared-worldline.wgsl): writeIdx, count,
@@ -2232,7 +2136,6 @@ export default class GPUPhysics {
         if (physics.spinOrbitEnabled) t0 |= SPIN_ORBIT_BIT;
         if (physics.radiationEnabled) t0 |= RADIATION_BIT;
         if (physics.blackHoleEnabled) t0 |= BLACK_HOLE_BIT;
-        if (physics.disintegrationEnabled) t0 |= DISINTEGRATION_BIT;
         if (physics.expansionEnabled) t0 |= EXPANSION_BIT;
         if (physics.yukawaEnabled) t0 |= YUKAWA_BIT;
         if (physics.higgsEnabled) t0 |= HIGGS_BIT;
@@ -2294,7 +2197,6 @@ export default class GPUPhysics {
         this._cosmoSchedule = physics.cosmoSchedule | 0;
         this._fieldDamping = physics.fieldDamping ?? 1;
         this.cosmology.schedule = SCHEDULE_KEYS[this._cosmoSchedule] || SCHEDULE_KEYS[0];
-        this._disintegrationEnabled = physics.disintegrationEnabled;
         this._hubbleParam = physics.hubbleParam || 0.001;
         this._heatmapEnabled = physics.heatmapEnabled || false;
         this._heatmapMode = physics.heatmapMode || 'all';
@@ -2309,7 +2211,7 @@ export default class GPUPhysics {
 
         // Lazily initialize Phase 5 pipelines when any Phase 5 feature is enabled
         const needsPhase5 = physics.higgsEnabled || physics.axionEnabled ||
-            physics.expansionEnabled || physics.disintegrationEnabled || physics.blackHoleEnabled || this._heatmapEnabled;
+            physics.expansionEnabled || physics.blackHoleEnabled || this._heatmapEnabled;
         if (needsPhase5 && !this._fieldDeposit) {
             this._ensurePhase5Pipelines();
         }
@@ -2426,7 +2328,7 @@ export default class GPUPhysics {
         const wgslConstants = buildWGSLConstants();
 
         // Initialize all Phase 5 pipelines in parallel
-        const [deposit, evolve, forces, particleGrav, selfGrav, fft, excitation, heatmap, expansion, disint, bosonDispatchArgs] =
+        const [deposit, evolve, forces, particleGrav, selfGrav, fft, excitation, heatmap, expansion, extremal, bosonDispatchArgs] =
             await Promise.all([
                 createFieldDepositPipelines(this.device, wgslConstants),
                 createFieldEvolvePipelines(this.device, wgslConstants),
@@ -2437,7 +2339,7 @@ export default class GPUPhysics {
                 createFieldExcitationPipeline(this.device, wgslConstants),
                 createHeatmapPipelines(this.device, wgslConstants),
                 createExpansionPipeline(this.device, wgslConstants),
-                createDisintegrationPipeline(this.device, wgslConstants),
+                createExtremalPipeline(this.device, wgslConstants),
                 createBosonDispatchArgsPipeline(this.device, wgslConstants),
             ]);
 
@@ -2450,7 +2352,7 @@ export default class GPUPhysics {
         this._fieldExcitation = excitation;
         this._heatmapPipelines = heatmap;
         this._expansionPipeline = expansion;
-        this._disintPipeline = disint;
+        this._extremalPipeline = extremal;
         this._bosonDispatchArgsPipeline = bosonDispatchArgs;
         this._phase5Ready = true;
     }
@@ -3316,85 +3218,46 @@ export default class GPUPhysics {
     }
 
     /**
-     * Dispatch disintegration check (Pass 20).
+     * Dispatch extremal charge shedding (Pass 20), black-hole mode only: a hole whose charge
+     * passes its Kerr–Newman limit sheds leptons.
      */
-    _dispatchDisintegration(encoder, dtSub) {
-        if (!(this._disintegrationEnabled || this._blackHoleEnabled) || !this._disintPipeline) return;
+    _dispatchExtremal(encoder) {
+        if (!this._blackHoleEnabled || !this._extremalPipeline) return;
         if (this.aliveCount === 0) return;
 
-        if (!this._disintBuffers) {
-            this._disintBuffers = createDisintegrationBuffers(this.device);
-        }
-
-        if (!this._disintUniformBuffer) {
-            this._disintUniformBuffer = this.device.createBuffer({
-                label: 'disintUniforms',
-                size: 64, // 16 floats/u32
-                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-            });
-        }
-
-        // Write DisintUniforms (pre-allocated buffers, no per-frame GC)
-        _disintUniformF32[0] = this._blackHoleEnabled ? BH_SOFTENING_SQ : SOFTENING_SQ; // softeningSq
-        _disintUniformF32[1] = this.domainW;
-        _disintUniformF32[2] = this.domainH;
-        _disintUniformF32[3] = TIDAL_STRENGTH;
-        _disintUniformF32[4] = ROCHE_THRESHOLD;
-        _disintUniformF32[5] = ROCHE_TRANSFER_RATE;
-        _disintUniformF32[6] = MIN_MASS;
-        _disintUniformU32[7] = SPAWN_COUNT;
-        _disintUniformU32[8] = this.aliveCount;
-        _disintUniformU32[9] = this.boundaryMode === BOUND_LOOP ? 1 : 0;
-        _disintUniformU32[10] = this.topologyMode;
-        _disintUniformU32[11] =
-            (this._disintegrationEnabled ? DISINT_FEATURE_BREAKUP : 0) |
-            (this._blackHoleEnabled ? DISINT_FEATURE_EXTREMAL : 0);
-        _disintUniformF32[12] = dtSub;
-        _disintUniformU32[13] = this._relativityEnabled ? 1 : 0;
-        this.device.queue.writeBuffer(this._disintUniformBuffer, 0, _disintUniformData);
-
-        // Reset event counter
-        encoder.clearBuffer(this._disintBuffers.counter, 0, 4);
-
-        if (!this._disintBGs) {
+        if (!this._extremalBGs) {
             const b = this.buffers;
-            const g0 = this.device.createBindGroup({
-                label: 'disint_g0',
-                layout: this._disintPipeline.bindGroupLayouts[0],
-                entries: [
-                    { binding: 0, resource: { buffer: b.particleState } },
-                    { binding: 1, resource: { buffer: b.particleAux } },
-                    { binding: 2, resource: { buffer: b.derived } },
-                ],
-            });
-            const g1 = this.device.createBindGroup({
-                label: 'disint_g1',
-                layout: this._disintPipeline.bindGroupLayouts[1],
-                entries: [
-                    { binding: 0, resource: { buffer: this._disintBuffers.events } },
-                    { binding: 1, resource: { buffer: this._disintBuffers.counter } },
-                    { binding: 2, resource: { buffer: this._disintUniformBuffer } },
-                ],
-            });
-            const g2 = this.device.createBindGroup({
-                label: 'disint_g2',
-                layout: this._disintPipeline.bindGroupLayouts[2],
-                entries: [
-                    { binding: 0, resource: { buffer: b.pionPool } },
-                    { binding: 1, resource: { buffer: b.piCount } },
-                    { binding: 2, resource: { buffer: b.radiationState } },
-                ],
-            });
-            this._disintBGs = [g0, g1, g2];
+            const layouts = this._extremalPipeline.bindGroupLayouts;
+            this._extremalBGs = [
+                this.device.createBindGroup({
+                    label: 'extremal_g0',
+                    layout: layouts[0],
+                    entries: [{ binding: 0, resource: { buffer: this.uniformBuffer } }],
+                }),
+                this.device.createBindGroup({
+                    label: 'extremal_g1',
+                    layout: layouts[1],
+                    entries: [
+                        { binding: 0, resource: { buffer: b.particleState } },
+                        { binding: 1, resource: { buffer: b.particleAux } },
+                        { binding: 2, resource: { buffer: b.derived } },
+                    ],
+                }),
+                this.device.createBindGroup({
+                    label: 'extremal_g2',
+                    layout: layouts[2],
+                    entries: [
+                        { binding: 0, resource: { buffer: b.pionPool } },
+                        { binding: 1, resource: { buffer: b.piCount } },
+                    ],
+                }),
+            ];
         }
 
-        const workgroups = Math.ceil(this.aliveCount / 256);
-        const p = encoder.beginComputePass({ label: 'disintegration' });
-        p.setPipeline(this._disintPipeline.pipeline);
-        p.setBindGroup(0, this._disintBGs[0]);
-        p.setBindGroup(1, this._disintBGs[1]);
-        p.setBindGroup(2, this._disintBGs[2]);
-        p.dispatchWorkgroups(workgroups);
+        const p = encoder.beginComputePass({ label: 'shedExtremalCharge' });
+        p.setPipeline(this._extremalPipeline.pipeline);
+        for (let g = 0; g < 3; g++) p.setBindGroup(g, this._extremalBGs[g]);
+        p.dispatchWorkgroups(Math.ceil(this.aliveCount / 256));
         p.end();
     }
 
@@ -3801,9 +3664,6 @@ export default class GPUPhysics {
         // Readback merge results for field excitations/debugging (non-blocking)
         this._readbackMergeResults();
 
-        // Readback disintegration events for fragment spawning (non-blocking)
-        this._readbackDisintegrationResults();
-
         // Readback kugelblitz collapse events (non-blocking)
         if (this._dispatchPlan.kugelblitzReadback) {
             this._readbackKugelblitzResults();
@@ -3975,8 +3835,8 @@ export default class GPUPhysics {
         // Pass 19: field excitations from merge events
         this._dispatchFieldExcitations(encoder);
 
-        // Pass 20: disintegration check
-        this._dispatchDisintegration(encoder, dtSub);
+        // Pass 20: extremal charge shedding
+        this._dispatchExtremal(encoder);
 
         // Pass 21: boson update (photon/pion drift, absorption, decay)
         this._dispatchBosonUpdate(encoder, plan);
@@ -4171,7 +4031,6 @@ export default class GPUPhysics {
         state.toggles.spinOrbitEnabled = !!(t0 & SPIN_ORBIT_BIT);
         state.toggles.radiationEnabled = !!(t0 & RADIATION_BIT);
         state.toggles.blackHoleEnabled = !!(t0 & BLACK_HOLE_BIT);
-        state.toggles.disintegrationEnabled = !!(t0 & DISINTEGRATION_BIT);
         state.toggles.expansionEnabled = !!(t0 & EXPANSION_BIT);
         state.toggles.yukawaEnabled = !!(t0 & YUKAWA_BIT);
         state.toggles.higgsEnabled = !!(t0 & HIGGS_BIT);
@@ -4287,9 +4146,9 @@ export default class GPUPhysics {
             _dsModData[mBase + 2] = 1.0;
             _dsModData[mBase + 3] = 0.0;
 
-            // RadiationState (12 f32 = 48 bytes) — all zero (accumulator reset)
-            const rBase = idx * 12;
-            for (let k = 0; k < 12; k++) _dsRadData[rBase + k] = 0;
+            // RadiationState: all zero (accumulator reset)
+            const rBase = idx * RADIATION_STATE_WORDS;
+            for (let k = 0; k < RADIATION_STATE_WORDS; k++) _dsRadData[rBase + k] = 0;
 
             // Clock: τ, ring phase, θ, lapse
             const tau = pd.tau || 0;
@@ -4317,7 +4176,7 @@ export default class GPUPhysics {
             this.device.queue.writeBuffer(b.particleAux,    0, _dsAuxData,    0, count * PARTICLE_AUX_SIZE);      // ArrayBuffer, bytes
             this.device.queue.writeBuffer(b.color,          0, _dsColorData,  0, count);                          // Uint32Array, elements (1 u32 per particle)
             this.device.queue.writeBuffer(b.axYukMod,       0, _dsModData,    0, count * 4);                      // Float32Array, elements (4 f32 per particle)
-            this.device.queue.writeBuffer(b.radiationState, 0, _dsRadData,    0, count * 12);                     // Float32Array, elements (12 f32 per particle)
+            this.device.queue.writeBuffer(b.radiationState, 0, _dsRadData,    0, count * RADIATION_STATE_WORDS);  // Float32Array, elements (RADIATION_STATE_WORDS f32 per particle)
             this.device.queue.writeBuffer(b.wlMeta, 0, _dsMetaData, 0, count * WL_META_STRIDE * 4);          // ArrayBuffer, bytes
             this.device.queue.writeBuffer(b.clocks, 0, _dsClockData, 0, count * 4);                            // Float32Array, elements
         }
@@ -4364,7 +4223,6 @@ export default class GPUPhysics {
         this.heatmapReadback = null;
         this._heatmapCopyMeta = null;
         this._pendingMergeEvents = [];
-        this._pendingDisintEvents = [];
         this._pendingKugelblitzEvents = [];
         this._cpuFreeSlots = [];
         // Reset GPU free stack (reuse pre-allocated zero buffer)
@@ -4759,7 +4617,6 @@ export default class GPUPhysics {
 
         // Core buffers
         this.buffers.destroy();
-        _d(this._clockScratch);
         this.uniformBuffer.destroy();
         _d(this._qtCounterSrc);
         _d(this._qtBoundsSrc);
@@ -4781,10 +4638,8 @@ export default class GPUPhysics {
         _d(this._heatmapUniformBuffer);
         _d(this._heatmapStaging);
 
-        // Excitation and disintegration
+        // Excitation
         _dObj(this._excitationBuffers);
-        _dObj(this._disintBuffers);
-        _d(this._disintUniformBuffer);
         _d(this._bosonDispatchArgs);
 
         // Expansion
@@ -4815,8 +4670,7 @@ export default class GPUPhysics {
         this._atomicGrid = null;
         this._heatmapBuffers = null;
         this._excitationBuffers = null;
-        this._disintBuffers = null;
-        this._disintBGs = null;
+        this._extremalBGs = null;
         this._bosonDispatchArgs = null;
         this._bosonDispatchArgsBG = null;
         this._fieldUniformBuffer = null;
@@ -4826,7 +4680,6 @@ export default class GPUPhysics {
         this._fieldParticleGravUniform = null;
         this._heatmapUniformBuffer = null;
         this._expansionUniformBuffer = null;
-        this._disintUniformBuffer = null;
         this._fftParamsBuffer = null;
         this._colorUniformBuffer = null;
         this._hitUniformBuffer = null;

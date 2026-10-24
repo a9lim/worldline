@@ -17,7 +17,6 @@ export const TOGGLE_KEYS = Object.freeze([
     'barnesHutEnabled',
     'radiationEnabled',
     'blackHoleEnabled',
-    'disintegrationEnabled',
     'spinOrbitEnabled',
     'onePNEnabled',
     'yukawaEnabled',
@@ -55,11 +54,6 @@ export const GPU_PARAMETER_SLOTS = Object.freeze({
 });
 
 export const CONSERVATION_CONTRACTS = Object.freeze({
-    rocheTransfer: Object.freeze({
-        conserved: Object.freeze(['mass', 'charge']),
-        cpu: 'integrator.checkDisintegration -> main CPU transfer handler',
-        gpu: 'disintegration.wgsl -> GPUBackend._processDisintegrationEvents',
-    }),
     saveState: Object.freeze({
         conserved: Object.freeze(['toggles', 'parameters', 'modes', 'camera']),
         cpu: 'save-load._cpuSaveState',

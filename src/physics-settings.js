@@ -14,7 +14,6 @@ export function createPhysicsSettings() {
         barnesHutEnabled: false,
         radiationEnabled: true,
         blackHoleEnabled: false,
-        disintegrationEnabled: false,
         spinOrbitEnabled: true,
         onePNEnabled: true,
         yukawaEnabled: false,

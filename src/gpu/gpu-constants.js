@@ -197,7 +197,6 @@ const RELATIVITY_BIT: u32 = 32u;
 const SPIN_ORBIT_BIT: u32 = 64u;
 const RADIATION_BIT: u32 = 128u;
 const BLACK_HOLE_BIT: u32 = 256u;
-const DISINTEGRATION_BIT: u32 = 512u;
 const EXPANSION_BIT: u32 = 1024u;
 const YUKAWA_BIT: u32 = 2048u;
 const HIGGS_BIT: u32 = 4096u;
@@ -219,9 +218,6 @@ const QT_MAX_NODES: u32 = ${GPU_MAX_PARTICLES * 6}u;
 
 // Boundary
 const DESPAWN_MARGIN: f32 = ${wf(DESPAWN_MARGIN)};
-
-// Disintegration
-const MAX_DISINT_EVENTS: u32 = 64u;
 
 // Kugelblitz collapse
 const MIN_KUGELBLITZ_ENERGY: f32 = ${wf(MIN_KUGELBLITZ_ENERGY)};
@@ -257,7 +253,6 @@ export const RELATIVITY_BIT  = 32;
 export const SPIN_ORBIT_BIT  = 64;
 export const RADIATION_BIT   = 128;
 export const BLACK_HOLE_BIT  = 256;
-export const DISINTEGRATION_BIT = 512;
 export const EXPANSION_BIT   = 1024;
 export const YUKAWA_BIT      = 2048;
 export const HIGGS_BIT       = 4096;

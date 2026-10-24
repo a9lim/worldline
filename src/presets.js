@@ -11,7 +11,7 @@ export const PRESETS = {
         toggles: {
             gravity: false, coulomb: true, magnetic: true, gravitomag: false,
             relativity: true, onepn: false, blackhole: false,
-            radiation: true, spinorbit: false, disintegration: false,
+            radiation: true, spinorbit: false,
             barneshut: false, bosonInter: false, yukawa: false, axion: false, expansion: false, higgs: false,
         },
         settings: { collision: 'pass', boundary: 'loop', topology: 'torus', speed: 16, extBz: 0.8, extElectric: 0.12, extElectricAngle: 90 },
@@ -37,7 +37,7 @@ export const PRESETS = {
         toggles: {
             gravity: false, coulomb: false, magnetic: false, gravitomag: false,
             relativity: true, onepn: false, blackhole: false,
-            radiation: false, spinorbit: false, disintegration: false,
+            radiation: false, spinorbit: false,
             barneshut: false, bosonInter: false, yukawa: false, axion: false, expansion: false, higgs: false,
         },
         settings: { collision: 'pass', boundary: 'bounce', speed: 16 },
@@ -58,7 +58,7 @@ export const PRESETS = {
         toggles: {
             gravity: false, coulomb: false, magnetic: false, gravitomag: false,
             relativity: true, onepn: false, blackhole: false,
-            radiation: false, spinorbit: false, disintegration: false,
+            radiation: false, spinorbit: false,
             barneshut: false, bosonInter: false, yukawa: false, axion: false, expansion: false, higgs: false,
         },
         settings: { collision: 'pass', boundary: 'loop', topology: 'torus', speed: 16 },
@@ -78,7 +78,7 @@ export const PRESETS = {
         toggles: {
             gravity: false, coulomb: true, magnetic: true, gravitomag: false,
             relativity: true, onepn: false, blackhole: false,
-            radiation: true, spinorbit: false, disintegration: false,
+            radiation: true, spinorbit: false,
             barneshut: false, bosonInter: false, yukawa: false, axion: false, expansion: false, higgs: false,
         },
         settings: { collision: 'pass', boundary: 'despawn', speed: 32 },
@@ -114,7 +114,7 @@ export const PRESETS = {
         toggles: {
             gravity: false, coulomb: false, magnetic: false, gravitomag: false,
             relativity: false, onepn: false, blackhole: false,
-            radiation: false, spinorbit: false, disintegration: false,
+            radiation: false, spinorbit: false,
             barneshut: false, bosonInter: false, yukawa: false, axion: false, expansion: false, higgs: true,
         },
         settings: { collision: 'pass', boundary: 'loop', topology: 'torus', speed: 16, higgsMass: 0.75 },
@@ -137,7 +137,7 @@ export const PRESETS = {
         toggles: {
             gravity: true, coulomb: false, magnetic: false, gravitomag: false,
             relativity: false, onepn: false, blackhole: false,
-            radiation: false, spinorbit: false, disintegration: false,
+            radiation: false, spinorbit: false,
             barneshut: false, bosonInter: false, yukawa: false, axion: false, expansion: false, higgs: false,
         },
         settings: { collision: 'pass', boundary: 'loop', topology: 'torus', speed: 16 },
@@ -174,7 +174,6 @@ const TOGGLE_MAP = {
     blackhole: 'blackhole-toggle',
     radiation: 'radiation-toggle',
     spinorbit: 'spinorbit-toggle',
-    disintegration: 'disintegration-toggle',
     barneshut: 'barneshut-toggle',
     yukawa: 'yukawa-toggle',
     axion: 'axion-toggle',
@@ -187,7 +186,7 @@ const TOGGLE_ORDER = [
     'gravity', 'coulomb', 'relativity',
     'bosonInter', 'gravitomag', 'magnetic',
     'onepn', 'blackhole',
-    'spinorbit', 'radiation', 'disintegration', 'barneshut',
+    'spinorbit', 'radiation', 'barneshut',
     'yukawa', 'axion', 'expansion', 'higgs',
 ];
 

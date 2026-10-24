@@ -13,7 +13,6 @@ const TOGGLE_SYNC = [
     ['blackHoleEnabled', 'blackhole-toggle'],
     ['spinOrbitEnabled', 'spinorbit-toggle'],
     ['radiationEnabled', 'radiation-toggle'],
-    ['disintegrationEnabled', 'disintegration-toggle'],
     ['barnesHutEnabled', 'barneshut-toggle'],
     ['yukawaEnabled', 'yukawa-toggle'],
     ['axionEnabled', 'axion-toggle'],

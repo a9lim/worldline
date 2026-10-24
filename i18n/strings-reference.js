@@ -493,29 +493,6 @@ const REF_EN = {
 <p>An expanding universe has no conserved global energy. The Stats tab books what the expansion takes or gives (redshifted kinetic energy and photons, stretched potentials, the fields' friction and dilution) as a separate line, so the drift measures numerical error alone.</p>
 `,
 
-    'ref.disintegration.title': 'Disintegration & Roche limit',
-    'ref.disintegration.body': `
-<p>A body approaching a more massive companion can be torn apart by tidal forces when the differential gravity across its diameter exceeds its own self-gravity. The critical distance at which this occurs is the Roche limit.</p>
-
-<h3>Disintegration criterion</h3>
-<p>A particle fragments when combined disruptive stresses exceed self-binding:</p>
-<p>$$\\underbrace{\\frac{M_{\\text{other}}\\cdot R}{d^3}}_{\\text{tidal}} + \\underbrace{\\omega^2 R}_{\\text{centrifugal}} + \\underbrace{\\frac{q^2}{4R^2}}_{\\text{Coulomb self-repulsion}} > \\underbrace{\\frac{m}{R^2}}_{\\text{self-gravity}}$$</p>
-<p>Each term represents a different mechanism trying to tear the particle apart, balanced against the gravitational binding that holds it together.</p>
-
-<h3>Roche lobe overflow</h3>
-<p>Before catastrophic disruption, a particle can gradually transfer mass to its companion through the <em>Roche lobe</em> — the teardrop-shaped region around each body where its own gravity dominates. The lobe radius (Eggleton formula):</p>
-<p>$$r_R \\approx 0.462\\,d\\left(\\frac{m}{m+M}\\right)^{1/3}$$</p>
-<p>When a particle's radius exceeds $r_R$, surface material feels a stronger pull toward the companion and flows through the inner Lagrange point (L1) at a rate proportional to the overflow.</p>
-
-<h3>Astrophysical context</h3>
-<p>Roche lobe overflow powers some of the most dramatic phenomena in astrophysics:</p>
-<ul>
-<li><b>Cataclysmic variables</b>: a white dwarf accreting from a red giant companion, sometimes detonating as a Type Ia supernova</li>
-<li><b>X-ray binaries</b>: a neutron star or black hole accreting material heated to X-ray temperatures</li>
-<li><b>Saturn's rings</b>: likely formed when a moon crossed inside Saturn's Roche limit and was torn apart by tidal forces</li>
-</ul>
-`,
-
     'ref.barneshut.title': 'Barnes-Hut algorithm',
     'ref.barneshut.body': `
 <p>Direct computation of all pairwise forces scales as $O(N^2)$ — doubling the particle count quadruples the work. The Barnes-Hut algorithm reduces this to $O(N\\log N)$ using a spatial tree, enabling simulations with hundreds of particles at interactive framerates.</p>
@@ -637,7 +614,7 @@ const REF_EN = {
 <p>The charge slider sets the electric charge of newly placed particles. Charge determines the strength of Coulomb and magnetic interactions, and is one of the three quantities (mass, charge, spin) that fully characterize a black hole.</p>
 
 <h3>Quantization</h3>
-<p>All charges are quantized in units of the <b>boson charge</b> $e$ (default 0.1). Particle charges are rounded to the nearest multiple of $e$ on creation. Every charge-transfer process — pion emission, Schwinger discharge, extremal black-hole shedding, disintegration — conserves charge in discrete $\\pm e$ increments.</p>
+<p>All charges are quantized in units of the <b>boson charge</b> $e$ (default 0.1). Particle charges are rounded to the nearest multiple of $e$ on creation. Every charge-transfer process — pion emission, Schwinger discharge, extremal black-hole shedding — conserves charge in discrete $\\pm e$ increments.</p>
 
 <h3>Consequences</h3>
 <p>Quantization means a black hole cannot shed an arbitrary fraction of its charge. Schwinger discharge removes exactly $e$ per event, so a BH with charge $Q$ requires $|Q|/e$ discharge events to reach neutrality. Extremal censorship sheds enough same-sign lepton quanta to restore $M^2 \\geq a^2 + Q^2$, with the final clamp only acting as a numerical backstop. Pion emission similarly transfers $\\pm e$ or $0$ (neutral pion). This discreteness prevents continuous charge drift and makes conservation exact up to floating-point precision.</p>
@@ -1267,29 +1244,6 @@ const REF_JA = {
 <p>膨張宇宙には保存される大域的なエネルギーがありません。統計タブは、膨張が奪い与えるもの（赤方偏移した運動エネルギーと光子、引き伸ばされたポテンシャル、場の摩擦と希釈）を別の行に記録するので、ドリフトは数値誤差だけを表します。</p>
 `,
 
-    'ref.disintegration.title': '分裂とロッシュ限界',
-    'ref.disintegration.body': `
-<p>より重い相手に近づく天体は、直径方向の重力差がその自己重力を超えると、潮汐力により引き裂かれます。これが起きる臨界距離がロッシュ限界です。</p>
-
-<h3>分裂条件</h3>
-<p>合計の破壊応力が自己束縛を超えると粒子は分裂します：</p>
-<p>$$\\underbrace{\\frac{M_{\\text{other}}\\cdot R}{d^3}}_{\\text{潮汐}} + \\underbrace{\\omega^2 R}_{\\text{遠心}} + \\underbrace{\\frac{q^2}{4R^2}}_{\\text{クーロン自己反発}} > \\underbrace{\\frac{m}{R^2}}_{\\text{自己重力}}$$</p>
-<p>各項は粒子を引き裂こうとする異なる機構を表し、束ねている重力束縛と釣り合います。</p>
-
-<h3>ロッシュローブ・オーバーフロー</h3>
-<p>致命的な破壊の前に、粒子は <em>ロッシュローブ</em> — 各天体の重力が支配する涙滴形領域 — を通じて徐々に質量を相手へ移すことがあります。ローブ半径（エグルトンの公式）：</p>
-<p>$$r_R \\approx 0.462\\,d\\left(\\frac{m}{m+M}\\right)^{1/3}$$</p>
-<p>粒子半径が $r_R$ を超えると、表面物質は相手側へより強く引かれ、内側のラグランジュ点 (L1) を通って溢れた量に比例した割合で流れます。</p>
-
-<h3>天体物理学的文脈</h3>
-<p>ロッシュローブ・オーバーフローは天体物理で最も劇的な現象のいくつかを駆動します：</p>
-<ul>
-<li><b>激変変光星</b>：白色矮星が赤色巨星の伴星から降着し、Ia型超新星として爆発することもある</li>
-<li><b>X線連星</b>：中性子星またはBHがX線温度まで加熱された物質を降着</li>
-<li><b>土星のリング</b>：おそらく衛星が土星のロッシュ限界内へ入り潮汐力で引き裂かれて形成された</li>
-</ul>
-`,
-
     'ref.barneshut.title': 'バーンズ＝ハットアルゴリズム',
     'ref.barneshut.body': `
 <p>すべてのペア力を直接計算すると $O(N^2)$ — 粒子数を倍にすれば計算量は4倍になります。バーンズ＝ハット・アルゴリズムは空間ツリーを用いてこれを $O(N\\log N)$ に減らし、数百個の粒子でも対話的フレームレートのシミュレーションを可能にします。</p>
@@ -1411,7 +1365,7 @@ const REF_JA = {
 <p>電荷スライダーは新しく配置する粒子の電荷を設定します。電荷はクーロンと磁気相互作用の強さを決め、BHを完全に特徴づける3量（質量・電荷・スピン）の1つです。</p>
 
 <h3>量子化</h3>
-<p>すべての電荷は<b>ボソン電荷</b> $e$（既定値0.1）の単位で量子化されます。粒子電荷は生成時に最も近い $e$ の整数倍へ丸められます。すべての電荷移動過程 — パイオン放出、レプトン対生成、シュウィンガー放電、極限BHの電荷シェディング、分裂 — は離散的な $\\pm e$ 増分で電荷を保存します。</p>
+<p>すべての電荷は<b>ボソン電荷</b> $e$（既定値0.1）の単位で量子化されます。粒子電荷は生成時に最も近い $e$ の整数倍へ丸められます。すべての電荷移動過程 — パイオン放出、レプトン対生成、シュウィンガー放電、極限BHの電荷シェディング — は離散的な $\\pm e$ 増分で電荷を保存します。</p>
 
 <h3>帰結</h3>
 <p>量子化は、BHが任意の割合で電荷を放出できないことを意味します。シュウィンガー放電は1事象で正確に $e$ を取り除くので、電荷 $Q$ のBHが中性になるには $|Q|/e$ 回の放電事象が必要です。極限検閲では、$M^2 \\geq a^2 + Q^2$ を回復するのに十分な同符号レプトン量子を放出し、最後のクランプは数値的バックストップとしてのみ働きます。パイオン放出も同様に $\\pm e$ または $0$（中性パイオン）を移します。この離散性は連続的な電荷ドリフトを防ぎ、保存を浮動小数点精度で厳密にします。</p>

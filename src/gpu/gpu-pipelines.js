@@ -4,12 +4,12 @@
  * Each function creates a pipeline + bind group layout for one shader.
  * Shaders are loaded via fetch() and prepended with common.wgsl.
  *
- * Buffer packing: ParticleState (36B), ParticleAux (20B), RadiationState (48B),
+ * Buffer packing: ParticleState (36B), ParticleAux (20B), RadiationState (40B),
  * Photon (32B), Pion (48B) packed structs reduce storage buffer count per stage to ≤10.
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 152;
+const SHADER_VERSION = 153;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -1526,19 +1526,26 @@ export async function createExpansionPipeline(device, wgslConstants = '') {
 }
 
 /**
- * Create disintegration compute pipeline (Phase 5).
+ * Create the extremal charge shedding pipeline (Phase 5).
  * Bind groups:
- *   Group 0: particleState (ro) + particleAux (ro) + derived (ro) = 3
- *   Group 1: events + eventCounter + DisintUniforms = 3
+ *   Group 0: SimUniforms
+ *   Group 1: particleState + particleAux + derived = 3
  *   Group 2: pionPool + piCount = 2
  */
-export async function createDisintegrationPipeline(device, wgslConstants = '') {
+export async function createExtremalPipeline(device, wgslConstants = '') {
     const prefix = await getSharedPrefix(wgslConstants);
-    const code = await fetchShader('disintegration.wgsl', prefix);
-    const module = device.createShaderModule({ label: 'disintegration', code });
+    const code = await fetchShader('extremal.wgsl', prefix);
+    const module = device.createShaderModule({ label: 'extremal', code });
 
     const group0Layout = device.createBindGroupLayout({
-        label: 'disint_g0',
+        label: 'extremal_g0',
+        entries: [
+            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        ],
+    });
+
+    const group1Layout = device.createBindGroupLayout({
+        label: 'extremal_g1',
         entries: [
             { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // particleState (rw for encoder compat)
             { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // particleAux (rw for encoder compat)
@@ -1546,29 +1553,19 @@ export async function createDisintegrationPipeline(device, wgslConstants = '') {
         ],
     });
 
-    const group1Layout = device.createBindGroupLayout({
-        label: 'disint_g1',
-        entries: [
-            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
-        ],
-    });
-
     const group2Layout = device.createBindGroupLayout({
-        label: 'disint_g2',
+        label: 'extremal_g2',
         entries: [
             { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
             { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // radiationState (Roche accumulator)
         ],
     });
 
     const bindGroupLayouts = [group0Layout, group1Layout, group2Layout];
     const pipeline = device.createComputePipeline({
-        label: 'checkDisintegration',
+        label: 'shedExtremalCharge',
         layout: device.createPipelineLayout({ bindGroupLayouts }),
-        compute: { module, entryPoint: 'checkDisintegration' },
+        compute: { module, entryPoint: 'shedExtremalCharge' },
     });
 
     return { pipeline, bindGroupLayouts };

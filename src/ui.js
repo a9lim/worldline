@@ -156,7 +156,6 @@ export function setupUI(sim) {
         { id: 'onepn-toggle', prop: 'onePNEnabled' },
         { id: 'relativity-toggle', prop: 'relativityEnabled' },
         { id: 'radiation-toggle', prop: 'radiationEnabled' },
-        { id: 'disintegration-toggle', prop: 'disintegrationEnabled' },
         { id: 'spinorbit-toggle', prop: 'spinOrbitEnabled' },
         { id: 'barneshut-toggle', prop: 'barnesHutEnabled' },
         { id: 'yukawa-toggle', prop: 'yukawaEnabled' },
@@ -184,7 +183,6 @@ export function setupUI(sim) {
         { target: tEl['bosoninter-toggle'], enable: () => tEl['barneshut-toggle'].checked && (tEl['gravity-toggle'].checked || tEl['coulomb-toggle'].checked) },
         { target: tEl['magnetic-toggle'], enable: () => tEl['coulomb-toggle'].checked },
         { target: tEl['radiation-toggle'], enable: () => tEl['gravity-toggle'].checked || tEl['coulomb-toggle'].checked || tEl['yukawa-toggle'].checked },
-        { target: tEl['disintegration-toggle'], enable: () => tEl['gravity-toggle'].checked },
         { target: tEl['axion-toggle'], enable: () => tEl['coulomb-toggle'].checked || tEl['yukawa-toggle'].checked || tEl['blackhole-toggle'].checked },
         { target: tEl['blackhole-toggle'], enable: () => tEl['relativity-toggle'].checked && tEl['gravity-toggle'].checked },
         // Children of toggles that may have been disabled above
@@ -208,10 +206,8 @@ export function setupUI(sim) {
     const updateAllDeps = () => {
         updateDeps();
 
-        // Black hole or disintegration locks collision to merge
-        const bhOn = tEl['blackhole-toggle'].checked;
-        const disintOn = tEl['disintegration-toggle'].checked;
-        if (bhOn || disintOn) {
+        // Black hole locks collision to merge
+        if (tEl['blackhole-toggle'].checked) {
             collisionToggles.querySelector('[data-collision="merge"]').click();
             collisionToggles.classList.add('ctrl-disabled');
         } else {
@@ -622,7 +618,7 @@ export function setupUI(sim) {
 
     const INFO_KEYS = [
         'energy', 'conserved', 'spin', 'gravity', 'coulomb', 'magnetic',
-        'gravitomag', 'relativity', 'radiation', 'disintegration', 'spinorbit',
+        'gravitomag', 'relativity', 'radiation', 'spinorbit',
         'barneshut', 'collision', 'boundary', 'topology', 'charge', 'blackhole',
         'onepn', 'yukawa', 'axion', 'expansion', 'higgs', 'external', 'pion',
         'fieldExcitation', 'bosoninter', 'frames', 'lensing',
