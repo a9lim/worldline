@@ -204,6 +204,7 @@ export default class GPUPhysics {
         // What the stats can't see: escaped radiation (culled boson pools, which redshift
         // with everything else) and the energy the expansion has taken (stats-display.js)
         this.ledger = Object.assign({}, EMPTY_LEDGER);
+        this.substepsRun = 0;         // substeps since construction (the ?perf profiler reads it)
         this._frameA = null;          // update(): the frame's midpoint a while the substeps run
         this._frameH = 0;             // update(): the Hubble rate the substeps see
         // A stats readback describes the state it was requested in: stateVersion bumps on
@@ -3588,6 +3589,7 @@ export default class GPUPhysics {
 
         // One submit per substep: each substep's queue.writeBuffer() calls (simTime above
         // all) must land before that substep's passes, not before the whole frame's.
+        this.substepsRun += numSubsteps;
         for (let step = 0; step < numSubsteps; step++) {
             this.simTime += dtSub;
             this.conformalTime += dtSub / this.scaleA;

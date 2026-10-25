@@ -17,6 +17,7 @@ import LensPanel from './src/lens-panel.js';
 import SpacetimeView, { EL_SPACETIME, AZ_SPACETIME } from './src/spacetime.js';
 import Caption from './src/caption.js';
 import SceneKey, { decorateMargin } from './src/scene-key.js';
+import GPUProfiler, { PERF } from './src/gpu/gpu-profiler.js';
 
 /**
  * Request a WebGPU device with the limits the simulation needs.
@@ -27,7 +28,10 @@ async function requestDevice() {
     try {
         const adapter = await navigator.gpu.requestAdapter();
         if (!adapter) return null;
+        // ?perf times every pass (src/gpu/gpu-profiler.js)
+        const requiredFeatures = PERF && adapter.features.has('timestamp-query') ? ['timestamp-query'] : [];
         return await adapter.requestDevice({
+            requiredFeatures,
             requiredLimits: {
                 maxStorageBufferBindingSize: 256 * 1024 * 1024,
                 maxBufferSize: 256 * 1024 * 1024,
@@ -287,6 +291,11 @@ class Simulation {
 
     /** Build the GPU backend on a device, optionally restoring a saved state into it. */
     async _attachDevice(device, restore = null) {
+        if (PERF) {
+            this.perf = new GPUProfiler(device);
+            this.perf.mark('device');
+            this._mountPerfHud();
+        }
         let backend;
         try {
             backend = await GPUBackend.create(this, device);
@@ -301,6 +310,19 @@ class Simulation {
         if (restore) loadState(restore, this);
         device.lost.then((info) => this._onDeviceLost(backend, info));
         this._dirty = true;
+        this.perf?.mark('ready');
+    }
+
+    /** ?perf: a plain-text digest of the profiler at the stage's top left, twice a second. */
+    _mountPerfHud() {
+        if (this._perfHud) return;
+        const hud = document.createElement('pre');
+        hud.id = 'perf-hud';
+        hud.style.cssText = 'position:absolute;left:12px;top:64px;z-index:5;margin:0;padding:6px 8px;' +
+            'font:11px/1.35 var(--font-code);color:var(--text);background:var(--canvas);border:1px solid var(--border);pointer-events:none;';
+        this.canvas.parentElement.appendChild(hud);
+        this._perfHud = hud;
+        setInterval(() => { if (this.perf && !this._hidden) hud.textContent = this.perf.digest(); }, 500);
     }
 
     /** Recreate the device and restore the latest auto-save. */
@@ -566,13 +588,22 @@ class Simulation {
             this.overlay.draw(this.camera, this.input);
             return;
         }
+        const perf = this.perf;
+        if (perf) { perf.frameBegin(timestamp); this._perfSubsteps = gpu.physics.substepsRun; }
+        try { this._frame(rawDt, gpu, perf); }
+        finally { perf?.frameEnd(gpu.physics.substepsRun - this._perfSubsteps); }
+    }
+
+    _frame(rawDt, gpu, perf) {
         if (this.running) {
             this._dirty = true;
             this.accumulator += rawDt * this.speedScale;
             const maxAccum = PHYSICS_DT * MAX_SUBSTEPS * ACCUMULATOR_CAP;
             if (this.accumulator > maxAccum) this.accumulator = maxAccum;
+            perf?.phase('step');
             gpu.step(this);
             if (this.presetTick) this.presetTick();
+            perf?.phase('frame');
         }
 
         this.input.pollGPUHitResult();
@@ -589,7 +620,9 @@ class Simulation {
         // Skip render entirely when nothing has changed (paused, no interaction)
         if (this._dirty) {
             this._dirty = false;
+            perf?.phase('render');
             gpu.render(this);
+            perf?.mark('firstFrame');
         }
     }
 }

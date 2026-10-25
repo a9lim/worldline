@@ -27,9 +27,11 @@ export default class GPUBackend {
         const renderer = new GPURenderer(gpuCanvas, device, physics.buffers);
         renderer.resize(sim.width, sim.height, sim.dpr);
         await physics.init();
+        sim.perf?.mark('physics');
         renderer.frameBuffers = physics.frameBuffers;
         renderer.lensBuffers = physics.lensBuffers;
         await renderer.init();
+        sim.perf?.mark('renderer');
         // The theme was synced before this async backend existed; adopt it now
         // (after init, which creates the light/dark pipeline pairs setTheme swaps).
         renderer.setTheme(sim.overlay.isLight);
