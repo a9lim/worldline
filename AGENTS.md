@@ -33,7 +33,12 @@ open decisions, and the model's known boundaries. This file describes the code a
   per-phase `stepSpan` and `renderSpan` are the wall times. Startup marks: device, physics,
   renderer, first frame. Under `?perf` the tree builds take a pass per stage (`tree:…`,
   `bosonTree:…`). A light scene lets the GPU clock down, so its per-pass times read high:
-  compare loaded scenes, or the same scene A/B.
+  compare loaded scenes, or the same scene A/B. Two trees A/B'd live still differ in how
+  they hold the clocks, and passes that overlap inflate each other, so settle a difference by
+  timing back to back: `docs/second-pass/tools/bench-b2b.mjs OUT URL_A URL_B` stops the loop
+  after each scenario's warm-up and times `sim.gpu.stepOnce(sim)` and `sim.gpu.render(sim)`
+  called many times in a row, the wall time each after `onSubmittedWorkDone()`
+  (`docs/ROADMAP.md` §11).
 - Benchmarks: `docs/second-pass/tools/tour.mjs` (Playwright and the WebGPU Chrome; see its
   header) runs any scenario with `bench: { warm, measure }` under `?perf` and writes p50/p95
   per scenario to `OUTDIR/bench.json`; `bench-scenarios.json` beside it is the standing set

@@ -296,7 +296,13 @@ What changed (§10 has the commits):
   with the per-pair light-cone hints; the search guesses its first bracket from the distance.
 - **The stats readback over workgroups** with fixed-order partials (lane), and the zero-momentum
   frame's anchor likewise.
-- **World lines drawn from compacted points** (lane): NUMBERS-B
+- **World lines decimated before they are drawn** (lane): three compute passes ahead of the
+  scene's render pass keep only the points the drawing needs (a chord until it would miss a
+  skipped sample by 0.03 device px; every sample where the ribbon folds) and list them in slot
+  order, so one strip draws them all and every screenshot matches the undecimated drawing
+  within 8/255. Timed back to back (§11), the world lines at 4000 bodies cost 6.5 → 3.8 ms
+  tilted and 3.7 → 2.7 in the plane, at 500 tilted 0.59 → 0.37; the presets pay about 0.07 ms
+  more, a serial chain of 32 points a thread. The lists follow the store's tier.
 - **Pion annihilation** by proposals through the bosons' tree; **pools** sized by live counts;
   **field lines** binned and budgeted.
 
@@ -310,14 +316,43 @@ Cleared by measurement:
 - **Observers in Morton order** for the pair force: slower (3.7 → 4.2 ms). The relativistic pair
   force is bound by arithmetic, not by world-line reads.
 
-NUMBERS-TABLE
+What it costs now (§3.1's M5 Max, 1440×900 at 2×), timed back to back (`bench-b2b.mjs`, §11:
+steps or renders one after another, wall time each, the GPU's clocks up), the lower of two
+runs. 2.1 is `ab45a58` at its 512 cap, and for 4000 bodies the same tree with the cap raised
+to 4096.
+
+| Scenario | Step, 2.1 → 2.2 (ms) | Render (ms) | |
+|---|---|---|---|
+| Cyclotron | 0.135 → 0.163 | 0.120 → 0.19 | the trees' dozen dispatches; the decimation's serial chain |
+| Cyclotron, tilted | 0.135 → 0.165 | 0.127 → 0.21 | |
+| Wheel | 0.123 → 0.150 | 0.087 → 0.097 | |
+| Both fields, grid gravity, 64 bodies | 0.375 → 0.383 | 0.30 → 0.375 | |
+| Black holes and pools, 200 bodies | 0.35 → 0.51 | 0.215 → 0.193 | boson gravity, lensing and absorption through trees that hold their items |
+| 500 relativistic, pairwise | 0.313 → 0.252 | 0.313 → 0.315 | |
+| 500 relativistic, Barnes–Hut, tilted | 0.305 → 0.245 | 0.475 → 0.358 | |
+| 500 gravity, Barnes–Hut | 0.21 → 0.233 | 0.28 → 0.425 | 2.1 applied no force; the bodies now clump |
+| 4000 relativistic, pairwise | 2.60 → 2.43–2.55 | 2.00 → 1.29 | |
+| 4000 relativistic, tilted | 2.60 → 2.42 | 4.11 → 1.30 | |
+| 4000 gravity, Barnes–Hut | 0.315 → 0.605 | 1.85 → 1.74 | 2.1's walk did nothing |
+
+Besides: `statsPE` at 4000 bodies, every eighth frame, 1.3 → 0.03 ms; the field atlas's CPU
+4.95 s → 0.9 ms a frame (p95 6); the bodies' tree at 4000, about 0.14 ms. Live under `?perf` the
+presets' GPU span reads 1.0 → 1.4 ms, a twelfth of a frame, at the low clocks a light scene runs
+at. The last A/B found one regression the clocks didn't explain: on a torus every pass over the
+ghost slots scanned the whole ghost buffer, 4096 slots for an eight-body preset (`7b3275f`
+bounds them by eight a body; the cyclotron's step was 0.20).
 
 Open:
 - **The heatmap with Relativity** solves 128² cells × N light cones every fourth frame: about
   9 ms at 4000 bodies, the overlay's one remaining hitch.
-- **The relativistic pair force** is O(N²) and arithmetic-bound, about 3.7 ms at 4000 here, so
-  4096 relativistic bodies run near 15 ms on a base M-series GPU. Past it lies a retarded far
+- **The relativistic pair force** is O(N²) and arithmetic-bound: at 4000 bodies here it is most
+  of a 2.4 ms step back to back (3.7 ms of pass time live), so 4096 relativistic bodies run
+  near 10–15 ms on a base M-series GPU. Past it lies a retarded far
   field: fixed cells keep moment histories, read at each cell's light-crossing time [speculative].
+- **World lines at 4000 bodies tilted** still keep 1.6M of 4.1M points (beads kept exact under
+  a varying screen speed, and cusps) and cost about 3.8 ms, 134K events among them. A seam's or
+  merge's ends keep the stray pixels the old ribbon left there, reproduced for exactness; a
+  direction taken from one side would remove them, as a visible change.
 - **Ledger accumulators** add f32 by compare-and-swap across workgroups (`cullBosons`,
   `expansion.wgsl`), so those readback words aren't bitwise reproducible.
 - **Kugelblitz's rate in Hawking gas** (one a frame, the limit) is the model's, untested until
@@ -804,6 +839,12 @@ and benchmark harnesses (§3.1).
 | 2.1 | 2026-10-24 | `937fadc`, `479e3a4`, `4a420a5` | Presets as data through `applyConfig` with saves; the fields in `gpu-fields.js`; the heatmap's own rectangle, the named `dt` offset, the torque table. |
 | 2.1 | 2026-10-24 | `cc857bc`, `f0e9fa5`, `319d2a9`, `93515a3` | Bugs the checks found: extremal shedding overshot and created charge; absorption lost energy at the seam; the field kicks raced on φ̇; a flipped theme kept the old inks; hidden panel sections showed. |
 | 2.1 | 2026-10-24 | `74a8fad`, `ec3fae2`, `9eb8c48`, `08da183`, `432713c` | Receipts: the twin fits its history; Kibble–Zurek measures its walls, with a quench-time knob and no tracer; captions follow the state; `about.md`; the social card. |
+| 2.2 | 2026-10-25 | `1eaa1f0`, `5e5fbab`, `63b655f` | Trees from sorted Morton keys (radix tree, compressed quadtree, each node summing its own range), sorts sized on the GPU; Barnes–Hut as a group walk from a ring; the world-line store growing in tiers to the 4096-body cap. |
+| 2.2 | 2026-10-25 | `4d3dc05`, `48ce0f8`, `3e9baa5` | The stats readback and the zero-momentum anchor over workgroups in a fixed order (lane). |
+| 2.2 | 2026-10-25 | `e57e1c3`, `4394810`, `98cfeb3` | Searches pruned by each node's largest radius; pion annihilation by proposals through the bosons' tree; pools of 16384 photons and 4096 each of pions and leptons, sized by live counts. |
+| 2.2 | 2026-10-25 | `4650290`, `ab66afa` | The light-cone search's guess from the distance; field lines budgeted; the heatmap's sources in tiles. |
+| 2.2 | 2026-10-25 | `34a1716`, `888a26c`, `7b3275f` | World lines decimated on the GPU before they are drawn (lane); the selection ring draws one body; ghost slots bounded by eight a body. |
+| 2.2 | 2026-10-25 | `f89688c`, `7ab8fea`, `fda423a` | Fixes from Codex's review; three 4000-body benchmarks; Barnes–Hut's oracle at 4000 bodies. |
 
 ## 11. Gotchas
 
