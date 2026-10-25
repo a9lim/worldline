@@ -8,8 +8,6 @@
  * for shaders that immediately return.
  */
 
-import { COL_MERGE } from '../config.js';
-
 export function createGPUDispatchPlan() {
     return {
         spinOrbit: false,
@@ -19,19 +17,14 @@ export function createGPUDispatchPlan() {
         hawkingRadiation: false,
         pionEmission: false,
         schwingerDischarge: false,
-        bosonUpdate: false,
-        photonUpdate: false,
-        pionUpdate: false,
         bosonInteraction: false,
         kugelblitzReadback: false,
     };
 }
 
 export function updateGPUDispatchPlan(gpu, plan = createGPUDispatchPlan()) {
-    const canHavePions = gpu._yukawaEnabled || gpu._blackHoleEnabled;
-    // Radiation emits photons, and so does annihilation in merge mode (merge-photons.wgsl)
-    const canHavePhotons = gpu._radiationEnabled || gpu._collisionMode === COL_MERGE;
-
+    // Boson passes are not planned here: bosons outlive the switches that emit them, so they
+    // step every substep, sized by their pools' counts (GPUPhysics._dispatchBosonUpdate)
     plan.spinOrbit = gpu._spinOrbitEnabled &&
         (gpu._magneticEnabled || gpu._gravitomagEnabled);
     plan.applyTorques = (gpu._gravitomagEnabled && gpu._relativityEnabled) ||
@@ -44,12 +37,6 @@ export function updateGPUDispatchPlan(gpu, plan = createGPUDispatchPlan()) {
     plan.schwingerDischarge = gpu._radiationEnabled &&
         gpu._blackHoleEnabled && gpu._coulombEnabled;
 
-    plan.bosonUpdate = canHavePhotons || canHavePions;
-    plan.photonUpdate = canHavePhotons;
-    plan.pionUpdate = canHavePions;
-    // Existing bosons can remain after their source toggles are turned off, so
-    // interaction follows the explicit interaction toggle until active pool
-    // counters are available to the scheduler.
     plan.bosonInteraction = gpu._bosonInterEnabled;
     plan.kugelblitzReadback = gpu._bosonInterEnabled && gpu._gravityEnabled && !!gpu._kbBuffers;
 

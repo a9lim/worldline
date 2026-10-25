@@ -953,7 +953,7 @@ export default class GPUPhysics {
      * substep's count. 0 off a periodic boundary.
      */
     _ghostSlots() {
-        if (this.boundaryMode !== BOUND_LOOP) return 0;
+        if (this.boundaryMode !== BOUND_LOOP || this.aliveCount === 0) return 0;
         return Math.min(MAX_PARTICLES, Math.max(32, Math.ceil(this._ghostCount * 1.25) + 8));
     }
 
@@ -1433,12 +1433,14 @@ export default class GPUPhysics {
      * Photon/pion drift, absorption, pion decay.
      * Skipped entirely when radiation and Yukawa are both off (no bosons can exist).
      */
-    _dispatchBosonUpdate(encoder, plan = updateGPUDispatchPlan(this, this._dispatchPlan)) {
-        // Pions exist from Yukawa emission; leptons exist from Yukawa (pion decay) or Schwinger (BH+Coulomb)
-        if (!plan.bosonUpdate) return;
+    _dispatchBosonUpdate(encoder) {
+        // Every substep, whatever emitted them: bosons outlive their sources' switches, and the
+        // indirect dispatch sizes each pass by its pool's count. Without bodies there is no
+        // tree (and nothing to absorb), so lensing takes the pairwise loop over none.
         const p4 = this._phase4;
         const bgs = this._phase4BindGroups;
-        const useBHTree = this._barnesHutEnabled;
+        const bodies = this.aliveCount > 0;
+        const useBHTree = this._barnesHutEnabled && bodies;
 
         // Select tree or pairwise pipelines for lensing + absorption
         const phUpdatePipeline = useBHTree ? p4.updatePhotonsTree.pipeline : p4.updatePhotons.pipeline;
@@ -1447,13 +1449,9 @@ export default class GPUPhysics {
         const piAbsorbPipeline = useBHTree ? p4.absorbPionsTree.pipeline : p4.absorbPions.pipeline;
         const g1 = useBHTree ? bgs.bosTreeG1 : bgs.bosG1;
 
-        // G12: Skip photon passes when radiation is off (no photons can exist).
-        // Pion/lepton passes needed for Yukawa pions OR Schwinger leptons.
-        const hasPhotons = plan.photonUpdate;
-        const hasPions   = plan.pionUpdate;
         const useIndirect = this._writeBosonDispatchArgs(encoder);
 
-        if (hasPhotons) {
+        {
             // updatePhotons: drift + lensing
             const passPhotons = encoder.beginComputePass({ label: 'updatePhotons' });
             passPhotons.setPipeline(phUpdatePipeline);
@@ -1466,7 +1464,7 @@ export default class GPUPhysics {
             passPhotons.end();
         }
 
-        if (hasPions) {
+        {
             // updatePions: drift with proper velocity
             const passPions = encoder.beginComputePass({ label: 'updatePions' });
             passPions.setPipeline(piUpdatePipeline);
@@ -1479,7 +1477,7 @@ export default class GPUPhysics {
             passPions.end();
         }
 
-        if (hasPhotons) {
+        if (bodies) {
             // absorbPhotons (single-threaded: serialized to avoid f32 data races)
             const passAbsorbPh = encoder.beginComputePass({ label: 'absorbPhotons' });
             passAbsorbPh.setPipeline(phAbsorbPipeline);
@@ -1491,7 +1489,7 @@ export default class GPUPhysics {
             passAbsorbPh.end();
         }
 
-        if (hasPions) {
+        if (bodies) {
             // absorbPions (single-threaded: serialized to avoid f32 data races)
             const passAbsorbPi = encoder.beginComputePass({ label: 'absorbPions' });
             passAbsorbPi.setPipeline(piAbsorbPipeline);
@@ -1509,8 +1507,6 @@ export default class GPUPhysics {
      * over the frame's whole lab interval.
      */
     _dispatchPionDecay(encoder) {
-        // G12: Pions only exist when Yukawa is on; skip entirely otherwise.
-        if (!this._yukawaEnabled) return;
         const p4 = this._phase4;
         const bgs = this._phase4BindGroups;
         const useIndirect = this._writeBosonDispatchArgs(encoder);
@@ -3530,7 +3526,8 @@ export default class GPUPhysics {
      * @param {number} dt - Total simulation time to advance this frame
      */
     update(dt) {
-        if (!this._ready || this.aliveCount === 0 || dt <= 0) return;
+        // Fields and bosons step without bodies: every body pass is sized by aliveCount
+        if (!this._ready || dt <= 0) return;
 
         // Adaptive substepping: use maxAccel from previous frame
         const softening = this._blackHoleEnabled ? BH_SOFTENING : SOFTENING;
@@ -3703,11 +3700,67 @@ export default class GPUPhysics {
             this.aliveCount + this._ghostSlots(), this._frameCount);
 
         const workgroups = Math.ceil(this.aliveCount / 64);
-        if (workgroups === 0) return; // no particles, skip dispatch
-        const p2 = this._phase2;
         const plan = this._dispatchPlan;
 
         let encoder = this.device.createCommandEncoder({ label: 'physics-substep' });
+
+        // Passes 0–14, the bodies: forces, kicks, drift, clocks (skipped without bodies, whose
+        // passes would all be empty; the fields and bosons below step regardless)
+        const bodies = workgroups > 0;
+        if (bodies) this._dispatchBodyStep(encoder, dtSub, workgroups, plan);
+
+        // Pass 15: scalar field evolution (Higgs, Axion), one joint KDK.
+        // Per-field uniform buffers carry each field's currentFieldType, so both
+        // fields share one encoder.
+        if (this._fieldDeposit) {
+            if (this._higgsEnabled) this._writeFieldUniforms(dtSub, 0);
+            if (this._axionEnabled) this._writeFieldUniforms(dtSub, 1);
+            // Hubble friction, its own operator, half a step either side of the KDK (Strang),
+            // each half metered by the ledger; the Higgs's Langevin bath, once per substep
+            const friction = this.expanding && this._frameH > 0 && this._phase5Ready;
+            this._noiseSeed = (this._noiseSeed + 0x9E3779B9) >>> 0;
+            if (friction) this._dispatchHubbleFriction(encoder);
+            this._dispatchHiggsLangevin(encoder);
+            this._dispatchFieldStep(encoder, dtSub);
+            if (friction) this._dispatchHubbleFriction(encoder);
+        }
+
+        // (Field forces already dispatched at Pass 5c, before Boris)
+
+        // Pass 17-18: collision detection + resolution
+        this._dispatchCollisions(encoder);
+
+        // Pass 19: field excitations from merge events
+        this._dispatchFieldExcitations(encoder);
+
+        // Pass 20: extremal charge shedding
+        this._dispatchExtremal(encoder);
+
+        // Pass 21: boson update (photon/pion drift, absorption, decay)
+        this._dispatchBosonUpdate(encoder);
+
+        // Pass 24: boundary
+        if (bodies) {
+            const passBoundary = encoder.beginComputePass({ label: 'boundary' });
+            passBoundary.setPipeline(this._boundaryPipeline);
+            passBoundary.setBindGroup(0, this._boundaryBindGroup);
+            passBoundary.dispatchWorkgroups(workgroups);
+            passBoundary.end();
+        }
+
+        // Pass 25: world lines — a sample when this substep crosses a WORLDLINE_DT mark,
+        // otherwise merge breaks and death snapshots only
+        // (on the world-line clock, so under expansion the ring spans WORLDLINE_LEN·DT of η)
+        const due = this.conformalTime >= this._nextWorldLineTime;
+        if (bodies) this._dispatchRecordWorldLines(encoder, due);
+        if (due) this._nextWorldLineTime = (Math.floor(this.conformalTime / WORLDLINE_DT) + 1) * WORLDLINE_DT;
+
+        return encoder.finish();
+    }
+
+    /** Passes 0–14 of a substep, everything the bodies do up to the field step. */
+    _dispatchBodyStep(encoder, dtSub, workgroups, plan) {
+        const p2 = this._phase2;
 
         // Pass 0: ghost generation (Phase 3 — before tree build)
         this._dispatchGhostGen(encoder);
@@ -3829,52 +3882,6 @@ export default class GPUPhysics {
 
         // Pass 14: 1PN velocity-Verlet correction
         this._dispatch1PNVV(encoder);
-
-        // Pass 15: scalar field evolution (Higgs, Axion), one joint KDK.
-        // Per-field uniform buffers carry each field's currentFieldType, so both
-        // fields share one encoder.
-        if (this._fieldDeposit) {
-            if (this._higgsEnabled) this._writeFieldUniforms(dtSub, 0);
-            if (this._axionEnabled) this._writeFieldUniforms(dtSub, 1);
-            // Hubble friction, its own operator, half a step either side of the KDK (Strang),
-            // each half metered by the ledger; the Higgs's Langevin bath, once per substep
-            const friction = this.expanding && this._frameH > 0 && this._phase5Ready;
-            this._noiseSeed = (this._noiseSeed + 0x9E3779B9) >>> 0;
-            if (friction) this._dispatchHubbleFriction(encoder);
-            this._dispatchHiggsLangevin(encoder);
-            this._dispatchFieldStep(encoder, dtSub);
-            if (friction) this._dispatchHubbleFriction(encoder);
-        }
-
-        // (Field forces already dispatched at Pass 5c, before Boris)
-
-        // Pass 17-18: collision detection + resolution
-        this._dispatchCollisions(encoder);
-
-        // Pass 19: field excitations from merge events
-        this._dispatchFieldExcitations(encoder);
-
-        // Pass 20: extremal charge shedding
-        this._dispatchExtremal(encoder);
-
-        // Pass 21: boson update (photon/pion drift, absorption, decay)
-        this._dispatchBosonUpdate(encoder, plan);
-
-        // Pass 24: boundary
-        const passBoundary = encoder.beginComputePass({ label: 'boundary' });
-        passBoundary.setPipeline(this._boundaryPipeline);
-        passBoundary.setBindGroup(0, this._boundaryBindGroup);
-        passBoundary.dispatchWorkgroups(workgroups);
-        passBoundary.end();
-
-        // Pass 25: world lines — a sample when this substep crosses a WORLDLINE_DT mark,
-        // otherwise merge breaks and death snapshots only
-        // (on the world-line clock, so under expansion the ring spans WORLDLINE_LEN·DT of η)
-        const due = this.conformalTime >= this._nextWorldLineTime;
-        this._dispatchRecordWorldLines(encoder, due);
-        if (due) this._nextWorldLineTime = (Math.floor(this.conformalTime / WORLDLINE_DT) + 1) * WORLDLINE_DT;
-
-        return encoder.finish();
     }
 
     /**
