@@ -4314,6 +4314,16 @@ export default class GPUPhysics {
     }
 
     /**
+     * The Higgs field φ over the FIELD_GRID_RES² grid, as it stands after the work already
+     * submitted (quench.js reads it a few times a second); null without the field.
+     */
+    async readHiggsField() {
+        if (!this._higgsBuffers) return null;
+        const N = FIELD_GRID_RES;
+        return new Float32Array(await this._readRanges([[this._higgsBuffers.field, 0, N * N * 4]], 'higgsField'));
+    }
+
+    /**
      * Set a field ('higgs' or 'axion') at rest: `value` is a number (uniform) or a function
      * (ix, iy) → φ over the FIELD_GRID_RES² grid. Presets use it for initial conditions.
      */

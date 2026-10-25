@@ -7,6 +7,7 @@
 import { DEFAULT_DOMAIN, DEFAULT_SPEED_SCALE, PI } from './config.js';
 import { TOGGLE_KEYS } from './physics-contract.js';
 import { createPhysicsSettings, applyConfig } from './physics-settings.js';
+import { startQuench } from './quench.js';
 
 // The view a preset starts from: what it doesn't turn on is off (the rulers and key are the
 // visitor's own choice and stay as they are)
@@ -105,15 +106,13 @@ export const PRESETS = {
         desc: 'A Higgs field quenched through its symmetry-breaking transition freezes into ±v domains; a slower quench leaves fewer walls',
         domain: [128, 128],
         toggles: ['higgsEnabled'],
-        settings: { higgsMass: 0.75 },
+        settings: { higgsMass: 0.75, quenchTime: 120 },
         modes: { collision: 'pass', boundary: 'loop', topology: 'torus' },
         speed: 16,
         spawn(sim) {
             // The symmetric phase, φ ≈ 0, with a Langevin bath; the mass term crosses the
-            // transition 120 time units in
-            const gp = sim._gpuPhysics;
-            gp.setField('higgs', () => 1e-3 * (Math.random() - 0.5));
-            gp.setHiggsQuench(120, 1e-4);
+            // transition τ_Q in (the Quench time slider re-runs it)
+            startQuench(sim);
             // The simulation steps only with a body: one tracer, too light to bias the field
             sim.addParticle(sim.domainW / 2, sim.domainH / 2, 0, 0, { mass: 1e-3, charge: 0, spin: 0 });
         },

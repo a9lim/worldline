@@ -30,6 +30,9 @@ export function createPhysicsSettings() {
         cosmoSchedule: 0,          // cosmology.js SCHEDULE_KEYS: the Friedmann closure
         fieldDamping: 1,           // 0 turns off the fields' ether damping (Higgs 2m_H, axion g·m_a)
         higgsMass: DEFAULT_HIGGS_MASS,
+        // The Higgs quench's τ_Q (quench.js): the protocol a run follows, not a law of the
+        // model, so saves leave it out with the field it shapes
+        quenchTime: 120,
 
         // Uniform background fields, independent of the force toggles
         extGravity: 0,

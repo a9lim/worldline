@@ -159,6 +159,7 @@ const UI_EN = {
     'force.pionMass': 'Pion mass',
     'force.axionMass': 'Axion mass',
     'force.higgsMass': 'Higgs mass',
+    'force.quenchTime': 'Quench time',
     'force.gravityAria': 'Gravity info',
     'force.gravitomagAria': 'Gravitomagnetic info',
     'force.coulombAria': 'Coulomb info',
@@ -224,6 +225,12 @@ const UI_EN = {
     'cosmo.eventHorizonShort': 'event horizon',
     'cosmo.capped': 'The universe stopped expanding at a = 1000: past that, single precision can’t resolve bound pairs.',
     'force.fieldDamping': 'Field damping',
+    'group.quench': 'Quench',
+    'quench.epsilon': 'Quench parameter ε',
+    'quench.ordered': 'Ordered',
+    'quench.formed': 'Wall length per area, as formed',
+    'quench.walls': 'Wall length per area, now',
+    'quench.hint': 'A cell counts as ordered within v/2 of +v or −v, the vacuum √ε. Walls are where φ changes sign between neighbouring cells, counted once the field first orders: a slower quench forms fewer, and then they shrink.',
 
     // ── External fields ──
     'ext.aria': 'External fields info',
@@ -587,6 +594,7 @@ const UI_JA = {
     'force.pionMass': 'パイオン質量',
     'force.axionMass': 'アクシオン質量',
     'force.higgsMass': 'ヒッグス質量',
+    'force.quenchTime': 'クエンチ時間',
     'force.gravityAria': '重力の説明',
     'force.gravitomagAria': '重力磁気の説明',
     'force.coulombAria': 'クーロンの説明',
@@ -652,6 +660,12 @@ const UI_JA = {
     'cosmo.eventHorizonShort': '事象の地平面',
     'cosmo.capped': 'a = 1000 で膨張を止めました。それ以上は単精度で束縛された対を分解できません。',
     'force.fieldDamping': '場の減衰',
+    'group.quench': 'クエンチ',
+    'quench.epsilon': 'クエンチパラメータ ε',
+    'quench.ordered': '秩序化した割合',
+    'quench.formed': '単位面積あたりの壁の長さ（形成時）',
+    'quench.walls': '単位面積あたりの壁の長さ（現在）',
+    'quench.hint': '真空 √ε を v として、+v か −v から v/2 以内にあるセルを秩序化したとみなします。壁は隣り合うセルの間で φ の符号が変わるところで、場が初めて秩序化した時点から数えます。転移がゆっくりなほど形成される壁は少なく、その後は縮んでいきます。',
 
     // ── External fields ──
     'ext.aria': '外部場の説明',

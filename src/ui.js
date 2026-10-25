@@ -1,6 +1,7 @@
 // ─── UI Setup ───
 // Wires all panel controls, toggles, presets, shortcuts, and info tips to the sim.
 import { loadPreset, PRESETS, PRESET_ORDER } from './presets.js';
+import { startQuench } from './quench.js';
 import { DEFAULT_DOMAIN, COL_BOUNCE, BOUND_BOUNCE, BOUND_LOOP, SPEED_OPTIONS, COL_NAMES, BOUND_NAMES, TOPO_NAMES, colFromString, boundFromString, topoFromString } from './config.js';
 import { REFERENCE } from './reference.js';
 import { quickSave, quickLoad, downloadState, uploadState } from './save-load.js';
@@ -296,8 +297,8 @@ export function setupUI(sim) {
     // ─── Parameter sliders over the store ───
     // `{id}Input` holds to(value) and `{id}Value` shows it; input writes from(control) to the
     // store, and show() puts the store back in the control without firing its handler.
-    // Hubble is logarithmic (log₁₀ H, from 10⁻⁴, effectively none, to 0.5); the field
-    // angles are degrees on the control and radians in the store
+    // Hubble is logarithmic (log₁₀ H, from 10⁻⁴, effectively none, to 0.5), and so is the
+    // quench time (10 to 1000); the field angles are degrees on the control, radians in the store
     const LOG = { to: v => Math.log10(Math.max(v, 1e-4)), from: v => 10 ** v };
     const DEG = { to: r => Math.round(r * 180 / Math.PI), from: d => d * Math.PI / 180, fmt: d => d + '°' };
     const angleGroup = (id, prop) => {
@@ -310,6 +311,7 @@ export function setupUI(sim) {
         { prop: 'axionMass', id: 'axionMass' },
         { prop: 'hubbleParam', id: 'hubble', ...LOG, fmt: v => (10 ** v).toPrecision(2) },
         { prop: 'higgsMass', id: 'higgsMass' },
+        { prop: 'quenchTime', id: 'quenchTime', ...LOG, fmt: v => Math.round(10 ** v) },
         { prop: 'extGravity', id: 'extGravity', after: angleGroup('extGravityAngleGroup', 'extGravity') },
         { prop: 'extGravityAngle', id: 'extGravityAngle', ...DEG },
         { prop: 'extElectric', id: 'extElectric', after: angleGroup('extElectricAngleGroup', 'extElectric') },
@@ -334,6 +336,9 @@ export function setupUI(sim) {
             },
         };
     });
+
+    // A new quench time re-runs the quench from the symmetric phase, once the slider settles
+    document.getElementById('quenchTimeInput').addEventListener('change', () => startQuench(sim));
 
     // The expansion history; the slider is H₀ for the imposed schedules, the vacuum H_Λ for
     // the Friedmann closure
