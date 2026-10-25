@@ -107,10 +107,7 @@ fn candidate(b: Boson, j: u32) -> f32 {
 fn findAbsorber(b: Boson, useTree: bool) -> u32 {
     var best = 0u;
     var bestSq = 3.4e38;
-    // A body's radius bounds the search, so one radius across a quarter of the domain (a
-    // grown black hole) sends every walk through most of the tree: the plain loop is cheaper
-    let searchR = max(u.radiusMax, 0.0) + ABSORB_SLOP;
-    if (!useTree || 4.0 * searchR > min(u.domainW, u.domainH)) {
+    if (!useTree) {
         for (var j = 0u; j < u.aliveCount; j++) {
             let dSq = candidate(b, j);
             if (dSq >= 0.0 && dSq < bestSq) { best = j + 1u; bestSq = dSq; }
@@ -124,6 +121,9 @@ fn findAbsorber(b: Boson, useTree: bool) -> u32 {
     while (top > 0) {
         top--;
         let nIdx = stack[u32(top)];
+        // A body under the node is no further than its largest radius, so a grown hole widens
+        // the search near itself only
+        let searchR = max(getMaxRadius(nIdx), 0.0) + ABSORB_SLOP;
         if (b.pos.x + searchR < getMinX(nIdx) || b.pos.x - searchR > getMaxX(nIdx) ||
             b.pos.y + searchR < getMinY(nIdx) || b.pos.y - searchR > getMaxY(nIdx)) {
             continue;

@@ -1812,9 +1812,14 @@ export default class GPUPhysics {
 
         // Keys for every slot up to a power of two, at least a sort block
         const M = Math.max(TREE_SORT_BLOCK, 2 ** Math.ceil(Math.log2(slots)));
-        let pass = encoder.beginComputePass({ label });
+        // Under ?perf a pass per stage, so the profiler times each (an empty pass writes no
+        // timestamps on Metal, and its stale ones would stretch the frame's span)
+        let pass = null;
         const run = (pipeline, workgroups, step = 0) => {
-            if (PERF) { pass.end(); pass = encoder.beginComputePass({ label: label + ':' + pipeline.label }); }
+            if (PERF || !pass) {
+                if (pass) pass.end();
+                pass = encoder.beginComputePass({ label: PERF ? label + ':' + pipeline.label : label });
+            }
             pass.setPipeline(pipeline);
             pass.setBindGroup(0, groups[0]);
             pass.setBindGroup(1, groups[1]);

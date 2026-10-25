@@ -15,6 +15,7 @@ struct Leaf {
     magMoment: f32,
     angMomentum: f32,
     momentum: vec2<f32>,
+    radius: f32,        // the body's (its horizon in black-hole mode); the walks prune by it
 };
 
 fn photonsLive() -> u32 { return min(phCount[0], MAX_PHOTONS); }

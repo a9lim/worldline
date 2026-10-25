@@ -13,6 +13,7 @@ struct Leaf {
     magMoment: f32,
     angMomentum: f32,
     momentum: vec2<f32>,
+    radius: f32,        // the body's (its horizon in black-hole mode); the walks prune by it
 };
 
 fn itemSlots() -> u32 { return uniforms.particleCount; }
@@ -33,6 +34,7 @@ fn itemLeaf(i: u32) -> Leaf {
         // Ghosts stay in the tree for seam collisions and hit tests, but weigh nothing:
         // every tree walk takes minimum-image displacements, so the original already
         // supplies the nearest image and a weighted ghost would count the pair twice.
+        l.radius = particleAux[i].radius;
         return l;
     }
     if ((ps.flags & FLAG_ALIVE) == 0u) {
@@ -49,6 +51,7 @@ fn itemLeaf(i: u32) -> Leaf {
         return l;
     }
     let drvd = derived_in[i];
+    l.radius = particleAux[i].radius;
     l.mass = ps.mass;
     l.charge = ps.charge;
     l.magMoment = drvd.magMoment;

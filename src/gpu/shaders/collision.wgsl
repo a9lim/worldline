@@ -65,9 +65,6 @@ fn detectCollisions(@builtin(global_invocation_id) gid: vec3<u32>) {
     let py = ps.posY;
     let pAux = particleAux[pIdx];
     let p1Radius = pAux.radius;
-    // Far enough to meet any partner's radius (a horizon in black-hole mode, which also
-    // finds a small body deep inside a large hole)
-    let searchR = p1Radius + uniforms.radiusMax;
     let p1Id = pAux.particleId;
 
     // Stack-based tree query (overlap search)
@@ -81,6 +78,13 @@ fn detectCollisions(@builtin(global_invocation_id) gid: vec3<u32>) {
         stackTop -= 1u;
         let nodeIdx = stack[stackTop];
 
+        // Each pair is found by its smaller body (ties by slot), so a body looks only for
+        // partners at least its size: none under a node whose largest radius is smaller, and
+        // the rest within that largest radius (a horizon in black-hole mode, which also finds
+        // a small body deep inside a large hole). A grown body's own walk stays short.
+        let nodeR = getMaxRadius(nodeIdx);
+        if (nodeR < p1Radius) { continue; }
+        let searchR = p1Radius + nodeR;
         if (!nodeIntersects(nodeIdx, px, py, searchR, searchR)) { continue; }
 
         let isLeaf = getNW(nodeIdx) == NONE;
@@ -101,22 +105,23 @@ fn detectCollisions(@builtin(global_invocation_id) gid: vec3<u32>) {
             let realPs = particleState[realIdx];
             if (realPs.mass == 0.0) { continue; }
 
-            // Only process pair once: lower ID writes
-            if (pIdx >= realIdx) { continue; }
+            // Only process pair once: the smaller body writes it, the lower slot of two alike
+            let realAux = particleAux[realIdx];
+            let r2 = realAux.radius;
+            if (r2 < p1Radius || (r2 == p1Radius && realIdx < pIdx)) { continue; }
 
             let sx = sPs.posX;
             let sy = sPs.posY;
             let dx = sx - px;
             let dy = sy - py;
             let distSq = dx * dx + dy * dy;
-            let realAux = particleAux[realIdx];
-            let minDist = p1Radius + realAux.radius;
+            let minDist = p1Radius + r2;
 
             if (distSq < minDist * minDist) {
                 let slot = atomicAdd(&pairCounter, 1u);
                 if (slot < arrayLength(&collisionPairs) / 2u) {
-                    collisionPairs[slot * 2u] = pIdx;
-                    collisionPairs[slot * 2u + 1u] = realIdx;
+                    collisionPairs[slot * 2u] = min(pIdx, realIdx);
+                    collisionPairs[slot * 2u + 1u] = max(pIdx, realIdx);
                 }
             }
         } else if (!isLeaf) {

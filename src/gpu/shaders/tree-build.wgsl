@@ -60,7 +60,7 @@ const FP_INV_SCALE: f32 = 0.0000152587890625; // 1/65536
 // [16]: particleIndex (i32, leaves; NONE on internal nodes)
 // [17]: particleCount: items under the node (during aggregate, the arrival counter)
 // [18]: parentIndex (i32)
-// [19]: padding
+// [19]: maxRadius: the largest body radius under the node (f32), which searches prune by
 
 @group(0) @binding(0) var<storage, read_write> nodes: array<atomic<u32>>;
 @group(0) @binding(1) var<storage, read_write> nActive: atomic<u32>;
@@ -373,6 +373,7 @@ fn quadLink(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (i != 0u && levelOf(parent) == lvl) {
         stF(i, 6u, 0.0);
         stI(i, 17u, 0);
+        stF(i, 19u, 0.0);
         return;
     }
 
@@ -434,6 +435,7 @@ fn aggregate(@builtin(global_invocation_id) gid: vec3<u32>) {
     for (var w = 12u; w < 16u; w++) { stI(leaf, w, NONE); }
     stI(leaf, 16u, i32(pIdx));
     stI(leaf, 17u, 1);
+    stF(leaf, 19u, d.radius);
     if (n == 1u) { stI(leaf, 18u, NONE); }
 
     // Up the tree: the last child to arrive sums the node, so each node is summed once,
@@ -455,6 +457,7 @@ fn aggregate(@builtin(global_invocation_id) gid: vec3<u32>) {
         var cx = 0.0;
         var cy = 0.0;
         var bodies = 0u;
+        var rMax = 0.0;
         for (var s = 0u; s < expected; s++) {
             let c = u32(ldI(node, 12u + s));
             let cm = ldF(c, 6u);
@@ -467,7 +470,9 @@ fn aggregate(@builtin(global_invocation_id) gid: vec3<u32>) {
             cx += ldF(c, 4u) * cm;
             cy += ldF(c, 5u) * cm;
             bodies += atomicLoad(&nodes[nodeOffset(c) + 17u]);
+            rMax = max(rMax, ldF(c, 19u));
         }
+        stF(node, 19u, rMax);
         stF(node, 6u, tm);
         stF(node, 7u, tq);
         stF(node, 8u, tmm);

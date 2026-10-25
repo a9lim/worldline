@@ -24,6 +24,7 @@ fn getSW(idx: u32) -> i32 { return bitcast<i32>(nodes[nodeOffset(idx) + 14u]); }
 fn getSE(idx: u32) -> i32 { return bitcast<i32>(nodes[nodeOffset(idx) + 15u]); }
 fn getParticleIndex(idx: u32) -> i32 { return bitcast<i32>(nodes[nodeOffset(idx) + 16u]); }
 fn getParticleCount(idx: u32) -> u32 { return nodes[nodeOffset(idx) + 17u]; }
+fn getMaxRadius(idx: u32) -> f32 { return bitcast<f32>(nodes[nodeOffset(idx) + 19u]); }
 
 /** On a periodic domain, true when node idx's whole cell lies within half a domain of the
  *  observer at (ox, oy), so every body in it has the image its centre has: only then may a

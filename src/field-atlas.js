@@ -158,6 +158,25 @@ export default class FieldAtlas {
             const i = Math.floor((x - m.viewLeft) / sep), j = Math.floor((y - m.viewTop) / sep);
             return i >= 0 && j >= 0 && i < sn && j < sn ? j * sn + i : -1;
         };
+        // The charges lines end on, binned at their largest radius so a step tests its own
+        // and the neighbouring bins instead of every charge
+        const sinks = charges.filter((o) => Math.sign(o.q) !== from);
+        const binR = Math.max(1e-3, ...sinks.map((o) => o.r));
+        const bins = new Map();
+        const binKey = (i, j) => i * 73856093 ^ j * 19349663;
+        for (const o of sinks) {
+            const k = binKey(Math.floor(o.x / binR), Math.floor(o.y / binR));
+            const list = bins.get(k);
+            if (list) list.push(o); else bins.set(k, [o]);
+        }
+        const onSink = (x, y) => {
+            const bi = Math.floor(x / binR), bj = Math.floor(y / binR);
+            for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+                const list = bins.get(binKey(bi + di, bj + dj));
+                if (list) for (const o of list) if (Math.hypot(x - o.x, y - o.y) < o.r) return true;
+            }
+            return false;
+        };
         const lines = [];
         for (const c of charges) {
             if (Math.sign(c.q) !== from) continue;
@@ -180,7 +199,7 @@ export default class FieldAtlas {
                     if (l2 < 1e-9) break;
                     x += h * e2[0] / l2; y += h * e2[1] / l2;
                     pts.push([x, y]);
-                    if (charges.some(o => Math.sign(o.q) !== from && Math.hypot(x - o.x, y - o.y) < o.r)) break;
+                    if (onSink(x, y)) break;
                     // Away from its own charge, a line ends on reaching one already drawn
                     const cell = cellOf(x, y);
                     if (cell >= 0) {
