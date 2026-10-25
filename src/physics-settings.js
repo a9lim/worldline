@@ -49,7 +49,8 @@ const VIEW_KEYS = ['trails', 'showClocks', 'showVelocity', 'showForce', 'showFor
  * - `modes`: { collision, boundary, topology } by name (config.js COL_NAMES …), a missing
  *   name taking the first;
  * - `speed`: the speed scale, snapped to the nearest of SPEED_OPTIONS;
- * - `view`: sim.view keys, `fields` (the Fields overlay), `lensing` and `lensDistance` (sim.lens).
+ * - `view`: sim.view keys, `fields` (the Fields overlay), `lensing` and `lensDistance`
+ *   (sim.lens), and `depth`, the least time the spacetime view shows (SpacetimeView.minDepth).
  * Then sim.syncControls() (ui.js) has every control show the store, runs the dependency
  * cascade and the mode locks once, which may turn more off, and pushes the result to the GPU.
  */
@@ -71,6 +72,7 @@ export function applyConfig(sim, { settings, modes, speed, view } = {}) {
         if ('fields' in view) sim.heatmap.enabled = view.fields;
         if ('lensing' in view) sim.lens.on = view.lensing;
         if ('lensDistance' in view) sim.lens.distance = view.lensDistance;
+        if ('depth' in view) sim.spacetime.minDepth = view.depth;
     }
     sim.syncControls?.();
 }

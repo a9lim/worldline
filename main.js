@@ -524,6 +524,7 @@ class Simulation {
     /** Clear the simulation: particles, bosons, fields, selection. */
     reset() {
         this.presetTick = null;
+        this.spacetime.minDepth = 0;
         this.select(-1);
         if (this.gpu) this.gpu.reset(this);
         this.camera.minZoom = ZOOM_MIN;

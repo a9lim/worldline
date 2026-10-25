@@ -12,7 +12,7 @@ import { createPhysicsSettings, applyConfig } from './physics-settings.js';
 // visitor's own choice and stay as they are)
 const PRESET_VIEW = {
     trails: false, showClocks: false, showVelocity: false, showForce: false, showForceComponents: false,
-    fields: false, lensing: false, lensDistance: 1,
+    fields: false, lensing: false, lensDistance: 1, depth: 0,
 };
 
 // Each preset may set `domain: [w, h]` in world units; the default is DEFAULT_DOMAIN square.
@@ -46,14 +46,17 @@ export const PRESETS = {
         toggles: ['relativityEnabled'],
         modes: { collision: 'pass', boundary: 'bounce' },
         speed: 16,
-        visuals: { showClocks: true },
-        domain: [160, 40],
+        // The round trip, about 109, fits the world lines' reach (127), and the spacetime view
+        // shows all of that reach, so the tilted plate holds a whole trip as it ends
+        visuals: { showClocks: true, depth: Infinity },
+        domain: [46, 32],
         spawn(sim) {
-            // Home at rest; the traveller leaves at 0.8c (γ = 5/3), turns at the far wall and
-            // comes back, ageing 0.6 of home's time apart from the turn
+            // Home at rest by the near wall; the traveller leaves at 0.8c (γ = 5/3), turns at the
+            // far wall and comes home, ageing 0.6 of home's time apart from the turn. Then it
+            // turns again at the near wall just behind home, so each trip starts as the last ends
             const y = sim.domainH / 2;
-            sim.addParticle(12, y - 3, 0, 0, { mass: 1, charge: 0, spin: 0 });
-            sim.addParticle(12, y + 3, 0.8, 0, { mass: 1, charge: 0, spin: 0 });
+            sim.addParticle(3, y - 3, 0, 0, { mass: 1, charge: 0, spin: 0 });
+            sim.addParticle(3, y + 3, 0.8, 0, { mass: 1, charge: 0, spin: 0 });
         },
     },
 
