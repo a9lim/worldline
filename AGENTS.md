@@ -277,8 +277,9 @@ pair twice. So a ghost needs to reach only as far as a contact: each substep `gh
 first reduces the largest body radius (`maxRadius`, the horizon in black-hole mode, into the
 `radiusMax` buffer and, by an in-encoder copy, `SimUniforms.radiusMax`), then ghosts each body
 within its radius + that largest radius + `GHOST_SLOP` (2) of an edge, about 140 ghosts for
-500 bodies. The host copies a ghost count read back a frame late, with headroom
-(`_ghostSlots()`), and `trimGhosts` clears the copied slots past the substep's own count. The
+500 bodies. The host learns a substep's ghost count only a frame later, so it copies the whole
+ghost buffer (`_ghostSlots()`) and `trimGhosts` clears the slots past the substep's own count;
+`cacheDerived` runs first, so the reduced radius is this substep's. The
 same largest radius sizes the tree collision search (a body's radius plus it, which also
 finds a small body deep inside a large horizon) and widens the hit test, which ignores
 ghosts. With Higgs on, the Yukawa range is `yukawaMu·√(higgsMod_i·higgsMod_j)`,
@@ -653,9 +654,12 @@ per stage would land before the whole encoder ran (that bug left Φ ≡ 0 until
   acceleration, the ghost count, merge and kugelblitz events and the free-slot stack at the
   end of the frame's last encoder into a slot of a three-deep ring, clears the GPU free stack
   in that same encoder (so each freed slot reaches the host once), and maps once; events
-  append until consumed (`consumeMergeEvents`, `consumeKugelblitzEvents`, from which
-  `GPUBackend` spawns kugelblitz particles), and a readback from before a `reset()` is
-  dropped. Hit tests, stats, the scene snapshot, the heatmap, the lens probe and the frame
+  append until consumed, and a readback from before a `reset()` is dropped (which also clears
+  the GPU event counters). Merge events are read only while a field can take their energy
+  (`_dispatchFieldExcitations`, 64 a substep) and come from a frame's last substep only, since
+  each substep's collision pass resets the counter; a kugelblitz collapse waits for a frame with
+  a free readback slot, since its bosons are consumed on the GPU and its body is spawned by
+  `GPUBackend` from `consumeKugelblitzEvents()`. Hit tests, stats, the scene snapshot, the heatmap, the lens probe and the frame
   state have their own on-demand channels.
 - `_phase5Ready` holds field dispatches until the async field pipelines exist.
 

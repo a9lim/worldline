@@ -933,13 +933,13 @@ export default class GPUPhysics {
     }
 
     /**
-     * Ghost slots copied in after the alive slots each substep: the last read-back count with
-     * headroom, since the count arrives a frame late; trimGhosts clears the ones past this
-     * substep's count. 0 off a periodic boundary.
+     * Ghost slots copied in after the alive slots each substep: the whole ghost buffer, since
+     * the host learns a substep's count only a frame later, and trimGhosts clears the slots past
+     * the substep's own count (sizing by the last count missed ghosts the moment it grew).
+     * 0 off a periodic boundary.
      */
     _ghostSlots() {
-        if (this.boundaryMode !== BOUND_LOOP || this.aliveCount === 0) return 0;
-        return Math.min(MAX_PARTICLES, Math.max(32, Math.ceil(this._ghostCount * 1.25) + 8));
+        return this.boundaryMode === BOUND_LOOP && this.aliveCount > 0 ? MAX_PARTICLES : 0;
     }
 
     /**
@@ -1624,8 +1624,11 @@ export default class GPUPhysics {
             passAnnihilate.end();
         }
 
-        // Kugelblitz: boson energy density exceeds hoop conjecture → massive particle
-        if (this._gravityEnabled && p4.checkKugelblitz && this._kbBuffers && bgs.kbG3) {
+        // Kugelblitz: boson energy density exceeds hoop conjecture → massive particle. A collapse
+        // consumes its bosons on the GPU and leaves the body for the host to spawn from the frame's
+        // readback, so it waits for a frame with a free readback slot rather than be lost
+        if (this._gravityEnabled && p4.checkKugelblitz && this._kbBuffers && bgs.kbG3 &&
+            this._frameReadback.some((r) => !r.busy)) {
             encoder.clearBuffer(this._kbBuffers.counter, 0, 4);
             const passKB = encoder.beginComputePass({ label: 'checkKugelblitz' });
             passKB.setPipeline(p4.checkKugelblitz.pipeline);
@@ -1775,16 +1778,6 @@ export default class GPUPhysics {
             passResolve.dispatchWorkgroups(resolveWG);
             passResolve.end();
         }
-    }
-
-    /**
-     * Consume pending merge events.
-     * @returns {Array} Array of { x, y, energy, px, py, type } events
-     */
-    consumeMergeEvents() {
-        const events = this._pendingMergeEvents;
-        this._pendingMergeEvents = [];
-        return events;
     }
 
     consumeKugelblitzEvents() {
@@ -2735,7 +2728,10 @@ export default class GPUPhysics {
         if (!slot) return null;
         slot.busy = true;
         slot.gen = this._resetGen;
-        slot.merges = this._collisionMode === COL_MERGE;
+        // Merge events go only to the fields' excitation (gpu-fields.js), so they are read only
+        // while it can consume them, and only after a frame whose collision pass reset the counter
+        slot.merges = this._collisionMode === COL_MERGE && this.aliveCount > 0 &&
+            !!this._fieldExcitation && (this._higgsEnabled || this._axionEnabled);
         slot.kugelblitz = this._dispatchPlan.kugelblitzReadback;
         const b = this.buffers, dst = slot.buf, max = b.maxParticles;
         encoder.copyBufferToBuffer(b.maxAccelBuffer, 0, dst, RB_MAX_ACCEL, 4);
@@ -2870,10 +2866,18 @@ export default class GPUPhysics {
     _dispatchBodyStep(encoder, dtSub, workgroups, plan) {
         const p2 = this._phase2;
 
-        // Pass 0: ghost generation (Phase 3 — before tree build)
+        // Pass 0: cacheDerived, first, so the radii (horizons in black-hole mode) that ghost-gen
+        // reduces to the largest are this substep's
+        const pass2 = encoder.beginComputePass({ label: 'cacheDerived' });
+        pass2.setPipeline(p2.cacheDerived.pipeline);
+        pass2.setBindGroup(0, this._bg_cacheDerived);
+        pass2.dispatchWorkgroups(workgroups);
+        pass2.end();
+
+        // Pass 0b: ghost generation (Phase 3 — before tree build)
         this._dispatchGhostGen(encoder);
 
-        // Pass 0b: tree build (Phase 3 — after ghost gen, before force computation)
+        // Pass 0c: tree build (Phase 3 — after ghost gen, before force computation)
         this._dispatchTreeBuild(encoder);
 
         // Clear maxAccel for adaptive substepping (reset before force computation)
@@ -2882,12 +2886,6 @@ export default class GPUPhysics {
         // Pass 1: resetForces (DMA clear is faster than compute dispatch for zeroing)
         encoder.clearBuffer(this.buffers.allForces, 0, this.aliveCount * 160);
 
-        // Pass 2: cacheDerived
-        const pass2 = encoder.beginComputePass({ label: 'cacheDerived' });
-        pass2.setPipeline(p2.cacheDerived.pipeline);
-        pass2.setBindGroup(0, this._bg_cacheDerived);
-        pass2.dispatchWorkgroups(workgroups);
-        pass2.end();
 
         // Pass 5: force computation — BH tree walk or O(N^2) pairwise. With Barnes–Hut and
         // Relativity, EM runs pairwise first (Liénard–Wiechert needs each source's world line)
@@ -3261,6 +3259,14 @@ export default class GPUPhysics {
 
     reset() {
         this._resetGen++;
+        // The event counters outlive the bodies: a frame without bodies runs no collision pass
+        // to reset them, so the frame readback would replay the last merge into the new scene
+        {
+            const enc = this.device.createCommandEncoder({ label: 'reset-events' });
+            enc.clearBuffer(this.buffers.mergeResultCounter, 0, 4);
+            if (this._kbBuffers) enc.clearBuffer(this._kbBuffers.counter, 0, 4);
+            this.device.queue.submit([enc.finish()]);
+        }
         this.aliveCount = 0;
         this.simTime = 0;
         this.conformalTime = 0;

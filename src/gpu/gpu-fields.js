@@ -676,15 +676,18 @@ const FieldMethods = {
      * Deposits Gaussian wave packets from merge events into active field(s).
      */
     _dispatchFieldExcitations(encoder) {
-        if (!this._fieldExcitation) return;
-        if (!this._higgsEnabled && !this._axionEnabled) return;
+        // Without a field to excite, pending events are dropped, not saved for a later one
+        if (!this._fieldExcitation || (!this._higgsEnabled && !this._axionEnabled)) {
+            this._pendingMergeEvents.length = 0;
+            return;
+        }
 
         // Excitation events come from merge results, consumed once (they used to replay every
-        // substep until the next readback). Annihilation energy is all in its photons
-        // (merge-photons.wgsl); an inelastic merge's lost kinetic energy is shared among the
-        // active fields, not given whole to each.
-        const events = this._pendingMergeEvents;
-        this._pendingMergeEvents = [];
+        // substep until the next readback), up to 64 a substep with the rest left for the next.
+        // Annihilation energy is all in its photons (merge-photons.wgsl); an inelastic merge's
+        // lost kinetic energy is shared among the active fields, not given whole to each.
+        const events = this._pendingMergeEvents.filter((me) => me.energy > 0 && me.type !== 'annihilation');
+        this._pendingMergeEvents = events.splice(64);
         const mergeCount = events.length;
         if (mergeCount === 0) return;
         const nFields = (this._higgsEnabled ? 1 : 0) + (this._axionEnabled ? 1 : 0);
