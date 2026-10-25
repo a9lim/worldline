@@ -585,7 +585,7 @@ const _substepF32 = new Float32Array(1);
 const _substepU32 = new Uint32Array(1);
 
 // Byte offsets of substep-varying fields within SimUniforms (index * 4)
-const UNIFORM_DT_OFFSET = 0;           // f[0]
+export const UNIFORM_DT_OFFSET = 0;    // f[0]
 const UNIFORM_SIMTIME_OFFSET = 4;      // f[1]
 const UNIFORM_ALIVE_OFFSET = 68;       // u[17]
 const UNIFORM_PCOUNT_OFFSET = 120;     // u[30]

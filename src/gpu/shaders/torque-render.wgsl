@@ -8,8 +8,8 @@
 //   0: spinOrbit      (torques.x)  offset 2.5
 //   1: frameDrag      (torques.y)  offset 2.0
 //   2: tidal          (torques.z)  offset 1.5
-//   3: contact        (torques.w)  offset 1.0
-//   4: superradiance  (f5.z)       offset 0.5
+//   3: contact        (torques.w)  offset 0.5
+//   4: superradiance  (f5.z)       offset 1.0
 //  11: total          (sum of all) offset 3.0
 //
 // Two sets of entry points:

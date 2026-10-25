@@ -4,7 +4,7 @@
  */
 import {
     PHYSICS_DT,
-    GPU_HEATMAP_GRID, STATS_THROTTLE_MASK, INERTIA_K, EPSILON, BOUND_LOOP, TORUS,
+    STATS_THROTTLE_MASK, INERTIA_K, EPSILON, BOUND_LOOP, TORUS,
 } from '../config.js';
 import GPUPhysics, { LENS_RES } from './gpu-physics.js';
 import { PARTICLE_STATE_SIZE } from './gpu-buffers.js';
@@ -242,15 +242,13 @@ export default class GPUBackend {
             const hmBufs = this.physics.getHeatmapBuffers();
             if (hmBufs) {
                 renderOpts.heatmapBuffers = hmBufs;
-                const cam = sim.spacetime ? sim.spacetime.planeBox() : sim.camera;
-                const viewW = cam.viewportW / cam.zoom;
-                const viewH = cam.viewportH / cam.zoom;
+                const rect = this.physics.heatmapRect;
                 const hmMode = sim.heatmap.mode;
                 const ho = sim._heatmapOpts;
-                ho.viewLeft = cam.x - viewW / 2;
-                ho.viewTop = cam.y - viewH / 2;
-                ho.cellW = viewW / GPU_HEATMAP_GRID;
-                ho.cellH = viewH / GPU_HEATMAP_GRID;
+                ho.viewLeft = rect.left;
+                ho.viewTop = rect.top;
+                ho.cellW = rect.cellW;
+                ho.cellH = rect.cellH;
                 ho.doGravity = ph.gravityEnabled && (hmMode === 'all' || hmMode === 'gravity');
                 ho.doCoulomb = ph.coulombEnabled && (hmMode === 'all' || hmMode === 'electric');
                 ho.doYukawa = ph.yukawaEnabled && (hmMode === 'all' || hmMode === 'yukawa');

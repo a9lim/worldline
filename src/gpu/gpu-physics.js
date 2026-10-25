@@ -37,7 +37,7 @@
  *  Under expansion the domain is a × the comoving domain and the world-line clock is
  *  conformal time (cosmology.js, expansion.wgsl).
  */
-import { createParticleBuffers, createUniformBuffer, writeFrameUniforms, writeSubstepUniforms, UNIFORM_RADIUS_MAX_OFFSET, createFieldBuffers, createGravityGridBuffers, createAtomicGridBuffer, createHeatmapBuffers, createExcitationBuffers, createKugelblitzBuffers, createFrameBuffers, FRAME_PARAMS_SIZE, FRAME_STATE_SIZE, FIELD_GRID_RES, PARTICLE_STATE_SIZE, PARTICLE_AUX_SIZE, RADIATION_STATE_SIZE, PHOTON_SIZE, PION_SIZE, DERIVED_SIZE } from './gpu-buffers.js';
+import { createParticleBuffers, createUniformBuffer, writeFrameUniforms, writeSubstepUniforms, UNIFORM_DT_OFFSET, UNIFORM_RADIUS_MAX_OFFSET, createFieldBuffers, createGravityGridBuffers, createAtomicGridBuffer, createHeatmapBuffers, createExcitationBuffers, createKugelblitzBuffers, createFrameBuffers, FRAME_PARAMS_SIZE, FRAME_STATE_SIZE, FIELD_GRID_RES, PARTICLE_STATE_SIZE, PARTICLE_AUX_SIZE, RADIATION_STATE_SIZE, PHOTON_SIZE, PION_SIZE, DERIVED_SIZE } from './gpu-buffers.js';
 import { fetchShader, createLensPipeline, createPhase2Pipelines, createGhostGenPipeline, createTreeBuildPipelines, createTreeForcePipeline, createCollisionPipelines, createMergePhotonPipeline, createDeadGCPipeline, createPhase4Pipelines, createFieldDepositPipelines, createFieldEvolvePipelines, createFieldForcesPipelines, createFieldParticleGravPipeline, createFieldGravityPipelines, createFFTPipelines, createFieldExcitationPipeline, createHeatmapPipelines, createExpansionPipeline, createExtremalPipeline, createBosonDispatchArgsPipeline, createUpdateColorsPipeline, createHitTestPipeline, createComputeStatsPipeline, createFrameSlicePipelines } from './gpu-pipelines.js';
 import { buildWGSLConstants, GRAVITY_BIT, COULOMB_BIT, MAGNETIC_BIT, GRAVITOMAG_BIT, ONE_PN_BIT, RELATIVITY_BIT, SPIN_ORBIT_BIT, RADIATION_BIT, BLACK_HOLE_BIT, EXPANSION_BIT, YUKAWA_BIT, HIGGS_BIT, AXION_BIT, BARNES_HUT_BIT, BOSON_INTER_BIT, FIELD_GRAV_BIT_T1, HERTZ_BOUNCE_BIT_T1, EM_PAIRWISE_BIT_T1, WL_STRIDE, WL_META_STRIDE } from './gpu-constants.js';
 import { createGPUDispatchPlan, updateGPUDispatchPlan } from './pass-graph.js';
@@ -205,6 +205,7 @@ export default class GPUPhysics {
         // with everything else) and the energy the expansion has taken (stats-display.js)
         this.ledger = Object.assign({}, EMPTY_LEDGER);
         this.substepsRun = 0;         // substeps since construction (the ?perf profiler reads it)
+        this.heatmapRect = { left: 0, top: 0, cellW: 1, cellH: 1 };   // dispatchHeatmap's grid
         this._frameA = null;          // update(): the frame's midpoint a while the substeps run
         this._frameH = 0;             // update(): the Hubble rate the substeps see
         // A stats readback describes the state it was requested in: stateVersion bumps on
@@ -3338,6 +3339,10 @@ export default class GPUPhysics {
         const viewTop = (camera?.y || 0) - halfH;
         const cellW = (2 * halfW) / GPU_HEATMAP_GRID;
         const cellH = (2 * halfH) / GPU_HEATMAP_GRID;
+        // The overlay draws the grid over the rectangle it was computed for, not the camera's
+        // now: the grid is a few frames old
+        const rect = this.heatmapRect;
+        rect.left = viewLeft; rect.top = viewTop; rect.cellW = cellW; rect.cellH = cellH;
 
         // Write HeatmapUniforms
         // Write HeatmapUniforms (pre-allocated buffers, no per-frame GC)
@@ -3638,9 +3643,8 @@ export default class GPUPhysics {
             }
 
             // Pion decay: once per frame, so the shader gets the frame's whole dt.
-            // FRAGILE: assumes dt is at byte offset 0 in SimUniforms — do not reorder struct
             _postSubDt[0] = dt;
-            this.device.queue.writeBuffer(this.uniformBuffer, 0, _postSubDt);
+            this.device.queue.writeBuffer(this.uniformBuffer, UNIFORM_DT_OFFSET, _postSubDt);
             this._dispatchPionDecay(encoder);
 
             // Boson interaction (if enabled): build boson tree + particle<-boson + boson<->boson + pion Coulomb + annihilation
