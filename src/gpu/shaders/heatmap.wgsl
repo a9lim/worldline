@@ -171,39 +171,31 @@ fn lwKappa(ret: Retarded) -> f32 {
     return max(1.0 + dot(ret.rel / R, ret.vel), LW_KAPPA_MIN);
 }
 
-/** Retired particles keep sourcing until the light from their world line's end has passed. */
-fn accumulateRetired(
-    wx: f32, wy: f32, doG: bool, doC: bool, doY: bool, isPeriodic: bool, yCutSq: f32,
-    gPhi: ptr<function, f32>, ePhi: ptr<function, f32>, yPhi: ptr<function, f32>,
-    doM: bool, bz: ptr<function, f32>, eF: ptr<function, vec2<f32>>,
-) {
-    for (var di = 0u; di < hu.particleCount; di++) {
-        let dp = particles[di];
-        if ((dp.flags & FLAG_RETIRED) == 0u) { continue; }
-        if ((dp.flags & FLAG_ALIVE) != 0u) { continue; }
-
-        let ret = retardedState(di, wx, wy, hu.simTime,
-            vec2(dp.posX, dp.posY), vec2(0.0), 0.0, 0.0, dp.charge,
-            false, isPeriodic, hu.domainW, hu.domainH, hu.topologyMode, hu.scaleA);
-        if (!ret.valid) { continue; }
-
-        accumulatePotential(ret.rel.x, ret.rel.y, ret.mass, ret.charge, bhSourceRadius(ret.mass, ret.charge),
-            lwKappa(ret), doG, doC, doY, hu.softeningSq, yCutSq, hu.yukawaCoupling, hu.yukawaMu,
-            gPhi, ePhi, yPhi);
-        if (doM) { accumulateBz(ret.rel, ret.vel, ret.acc, ret.charge, ret.mass, ret.angw, true, bz); }
-        if (doC) { *eF += lwField(ret.rel, ret.vel, ret.acc, ret.charge); }
-    }
-}
-
 // ─── Entry 1: Pairwise with signal delay support ───
+// Sources a tile at a time. With signal delay, one thread per source of the tile finds its
+// light-cone bracket at the workgroup's centre cell and shares it with where the light left
+// from; each cell then starts its own search there, shifted by the change in distance across
+// the block, which leaves a probe or two where a guess from the distance alone left many.
+const HM_TILE: u32 = 64u;
+struct HmSourceHint {
+    hint: u32,          // the centre's bracket, points back from the line's last
+    spacing: f32,       // the line's mean time between samples
+    rel: vec2<f32>,     // the retarded source − the centre cell, physical
+};
+var<workgroup> hmHints: array<HmSourceHint, HM_TILE>;
+
 @compute @workgroup_size(8, 8)
-fn computeHeatmap(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn computeHeatmap(@builtin(global_invocation_id) gid: vec3<u32>,
+                  @builtin(workgroup_id) wid: vec3<u32>,
+                  @builtin(local_invocation_index) t: u32) {
     let gx = gid.x;
     let gy = gid.y;
-    if (gx >= HGRID || gy >= HGRID) { return; }
 
     let wx = hu.viewLeft + (f32(gx) + 0.5) * hu.cellW;
     let wy = hu.viewTop + (f32(gy) + 0.5) * hu.cellH;
+    // The block's centre (a cell corner), where the tile's brackets are found
+    let cx = hu.viewLeft + f32(wid.x * 8u + 4u) * hu.cellW;
+    let cy = hu.viewTop + f32(wid.y * 8u + 4u) * hu.cellH;
 
     var gPhi: f32 = 0.0;
     var ePhi: f32 = 0.0;
@@ -218,38 +210,82 @@ fn computeHeatmap(@builtin(global_invocation_id) gid: vec3<u32>) {
     let useDelay = hu.useDelay != 0u;
     let isPeriodic = hu.periodic != 0u;
     let yCutSq = select(1e30, yukawaCutoffSq(hu.yukawaMu), doY);
+    let n = hu.particleCount;
 
-    // Alive particles
-    for (var i = 0u; i < hu.particleCount; i++) {
-        let p = particles[i];
-        if ((p.flags & FLAG_ALIVE) == 0u) { continue; }
-
+    for (var base = 0u; base < n; base += HM_TILE) {
         if (useDelay) {
-            let ret = retardedState(i, wx, wy, hu.simTime,
-                vec2(p.posX, p.posY), vec2(p.velWX, p.velWY), p.angW, p.mass, p.charge,
-                true, isPeriodic, hu.domainW, hu.domainH, hu.topologyMode, hu.scaleA);
-            if (!ret.valid) { continue; } // outside past light cone — particle not yet visible
-            accumulatePotential(ret.rel.x, ret.rel.y, ret.mass, ret.charge, particleAux[i].radius,
-                lwKappa(ret), doG, doC, doY, hu.softeningSq, yCutSq, hu.yukawaCoupling, hu.yukawaMu,
-                &gPhi, &ePhi, &yPhi);
-            if (doM) { accumulateBz(ret.rel, ret.vel, ret.acc, ret.charge, ret.mass, ret.angw, true, &bz); }
-            if (doC) { eF += lwField(ret.rel, ret.vel, ret.acc, ret.charge); }
-        } else {
-            var d = vec2(p.posX - wx, p.posY - wy);
-            if (isPeriodic) { d = fullMinImageP(wx, wy, p.posX, p.posY, hu.domainW, hu.domainH, hu.topologyMode); }
-            accumulatePotential(d.x, d.y, p.mass, p.charge, particleAux[i].radius, 1.0,
-                doG, doC, doY, hu.softeningSq, yCutSq, hu.yukawaCoupling, hu.yukawaMu,
-                &gPhi, &ePhi, &yPhi);
-            if (doM) { accumulateBz(d, coordVelOf(vec2(p.velWX, p.velWY)), vec2(0.0), p.charge, p.mass, p.angW, false, &bz); }
-            if (doC) { eF += coulombField(d, p.charge); }
+            // This thread's source of the tile: its bracket at the centre
+            var h: HmSourceHint;
+            h.hint = WL_NO_HINT;
+            h.spacing = WL_DT;
+            h.rel = vec2(0.0);
+            let si = base + t;
+            if (si < n) {
+                let p = particles[si];
+                let alive = (p.flags & FLAG_ALIVE) != 0u;
+                if (alive || (p.flags & FLAG_RETIRED) != 0u) {
+                    var hint = WL_NO_HINT;
+                    let ret = retardedStateHinted(si, cx, cy, hu.simTime,
+                        vec2(p.posX, p.posY), select(vec2(0.0), vec2(p.velWX, p.velWY), alive),
+                        select(0.0, p.angW, alive), select(0.0, p.mass, alive), p.charge,
+                        alive, isPeriodic, hu.domainW, hu.domainH, hu.topologyMode, hu.scaleA, &hint);
+                    if (ret.valid && hint != WL_NO_HINT) {
+                        let mb = si * WL_META_STRIDE;
+                        let count = wlMeta[mb + 1u];
+                        let newest = wlData[wlSampleBase(si, wlMeta[mb] + WL_LEN - 1u)];
+                        let oldest = wlData[wlSampleBase(si, wlMeta[mb] + WL_LEN - count)];
+                        h.hint = hint;
+                        h.spacing = select(WL_DT, max((newest - oldest) / f32(count - 1u), 1e-3), count > 1u);
+                        h.rel = ret.rel;
+                    }
+                }
+            }
+            hmHints[t] = h;
         }
+        workgroupBarrier();
+
+        let m = min(HM_TILE, n - base);
+        for (var j = 0u; j < m; j++) {
+            let i = base + j;
+            let p = particles[i];
+            let alive = (p.flags & FLAG_ALIVE) != 0u;
+            if (useDelay) {
+                if (!alive && (p.flags & FLAG_RETIRED) == 0u) { continue; }
+                // The centre's bracket, moved by how much further the cell is from where the
+                // light left (it left that much earlier)
+                let h = hmHints[j];
+                var hint = h.hint;
+                if (hint != WL_NO_HINT) {
+                    let dR = (length(h.rel - vec2(wx - cx, wy - cy)) - length(h.rel)) / hu.scaleA;
+                    hint = u32(max(f32(hint) + dR / h.spacing, 1.0) + 0.5);
+                }
+                // A retired source's world line ends at its death snapshot
+                let ret = retardedStateHinted(i, wx, wy, hu.simTime,
+                    vec2(p.posX, p.posY), select(vec2(0.0), vec2(p.velWX, p.velWY), alive),
+                    select(0.0, p.angW, alive), select(0.0, p.mass, alive), p.charge,
+                    alive, isPeriodic, hu.domainW, hu.domainH, hu.topologyMode, hu.scaleA, &hint);
+                if (!ret.valid) { continue; } // outside past light cone — particle not yet visible
+                let radius = select(bhSourceRadius(ret.mass, ret.charge), particleAux[i].radius, alive);
+                accumulatePotential(ret.rel.x, ret.rel.y, ret.mass, ret.charge, radius,
+                    lwKappa(ret), doG, doC, doY, hu.softeningSq, yCutSq, hu.yukawaCoupling, hu.yukawaMu,
+                    &gPhi, &ePhi, &yPhi);
+                if (doM) { accumulateBz(ret.rel, ret.vel, ret.acc, ret.charge, ret.mass, ret.angw, true, &bz); }
+                if (doC) { eF += lwField(ret.rel, ret.vel, ret.acc, ret.charge); }
+            } else {
+                if (!alive) { continue; }
+                var d = vec2(p.posX - wx, p.posY - wy);
+                if (isPeriodic) { d = fullMinImageP(wx, wy, p.posX, p.posY, hu.domainW, hu.domainH, hu.topologyMode); }
+                accumulatePotential(d.x, d.y, p.mass, p.charge, particleAux[i].radius, 1.0,
+                    doG, doC, doY, hu.softeningSq, yCutSq, hu.yukawaCoupling, hu.yukawaMu,
+                    &gPhi, &ePhi, &yPhi);
+                if (doM) { accumulateBz(d, coordVelOf(vec2(p.velWX, p.velWY)), vec2(0.0), p.charge, p.mass, p.angW, false, &bz); }
+                if (doC) { eF += coulombField(d, p.charge); }
+            }
+        }
+        workgroupBarrier();
     }
 
-    // Dead/retired particles: signal delay fade-out
-    if (useDelay) {
-        accumulateRetired(wx, wy, doG, doC, doY, isPeriodic, yCutSq, &gPhi, &ePhi, &yPhi, doM, &bz, &eF);
-    }
-
+    if (gx >= HGRID || gy >= HGRID) { return; }
     let idx = gy * HGRID + gx;
     gravPotential[idx] = gPhi;
     elecPotential[idx] = ePhi;
@@ -370,10 +406,7 @@ fn computeHeatmapTree(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
 
-    // Dead/retired particles: always pairwise (signal delay needed)
-    if (hu.useDelay != 0u) {
-        accumulateRetired(wx, wy, doG, doC, doY, hu.periodic != 0u, yCutSq, &gPhi, &ePhi, &yPhi, doM, &bz, &eF);
-    }
+    // (The tree runs without signal delay, so retired bodies source nothing here)
 
     let idx = gy * HGRID + gx;
     gravPotential[idx] = gPhi;

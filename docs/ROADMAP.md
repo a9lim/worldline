@@ -25,13 +25,13 @@ serial sessions, and parallel lanes (subagents, worktrees) fit a whole version i
 
 | Date | Decision |
 |---|---|
+| 2026-10-25 | **The caps are 4096 bodies, 16384 photons and 4096 each of pions and leptons** (2.2, §3.3): a9 asked for a second performance pass to raise them. The world-line store grows with the bodies in use, so a small scene costs what it did. |
 | 2026-10-24 | **Worldline is a planar spacetime laboratory** (§1). No volumetric 3D physics, no gas, no quantum layer. |
 | 2026-10-24 | **The versions:** 2.1 is performance and receipts (§3); 2.5 is the record, then sight, then the instrument (§4–§6); 3.0 is the model, honest gravity and curved spacetime, after a decision point (§7). |
 | 2026-10-24 | **The model is held through 2.5.** 2.1 and 2.5 build on the physics as it is: bug fixes only, no new force laws or regimes. Apparatus (pinned bodies, light pulses) are instruments, not physics. |
 | 2026-10-24 | **Delete the hidden Disintegration toggle** (tidal breakup and Roche transfer); black-hole extremal censorship stays. |
 | 2026-10-24 | **Canvas labels arrive with the instrument** (§6.1), attached to picked events and named bodies. |
 | 2026-10-24 | **Six curated presets** (2.0); the eighteen cut presets stay cut. A preset earns its place as an experiment (§6.5), not as coverage. |
-| 2026-10-24 | **The caps stay** at 512 bodies, 4096 photons and 2048 pions and leptons through 2.5, by 2.1's measurements (§3.1): 2.1's savings go to the archive and the second universe. |
 | 2026-10-23 | **WebGPU only.** No CPU physics or Canvas renderer. |
 | 2026-10-23 | **The planar convention:** the scene is a symmetry plane of a 3+1 world, with named reductions (§1.2). |
 | 2026-10-23 | **Lengths: two knobs.** ℓ, the sheet thickness (physical, comoving under expansion) for fields and grid gravity; ε, numerical softening, for particle forces only. ℓ = 8 for grid gravity. |
@@ -45,7 +45,7 @@ serial sessions, and parallel lanes (subagents, worktrees) fit a whole version i
 | 2026-10-24 | **2.0's grammar:** trails are world lines seen from above; field lines replace the comb; one red for the selection. |
 
 Superseded rows (the 1.5–3.0 version plan, parked 3D views, hidden Disintegration kept,
-no labels in 2.0, the 1+1 Minkowski panel) are in git history.
+no labels in 2.0, the 1+1 Minkowski panel, 2.1's caps of 512 bodies) are in git history.
 
 ### Open
 
@@ -126,6 +126,7 @@ use the 3D quadrupole and TT projection.
 | **1.5** | WebGPU only; relativity you can see; frames; cosmology; lensing | done 2026-10-23 (§10) | — |
 | **2.0** | The visual overhaul | done 2026-10-24 (§10) | — |
 | **2.1** | Performance and receipts | done 2026-10-24 (§3, §10) | — |
+| **2.2** | Performance at scale: the caps raised eightfold | done 2026-10-25 (§3.3, §10) | — |
 | **2.5** | The laboratory | the record (§4), then sight (§5), then the instrument (§6) | L |
 | **3.0** | The model | a decision point, then honest gravity and/or curved spacetime (§7) | L |
 
@@ -206,14 +207,14 @@ Carried forward:
 - **The tree build** (`insertParticles`, a lock-free CAS insertion that spins while another
   thread subdivides) costs about 0.65 ms at 500 bodies, as much as the pair forces now. A
   Morton-ordered build (an LBVH) would be faster and deterministic, which open decision 4
-  (replay) cares about.
+  (replay) cares about. (2.2 built it, and found the CAS tree had been losing bodies, §3.3.)
 - **Fixed costs in small scenes** (`quadrupoleApply`, `updateColors` near 0.15 ms with eight
   bodies) may be clock ramp-up rather than work; unexamined.
 
-**Caps** (an open decision until now, decided by these numbers, §0): 512 bodies and the
-pools stay through 2.5. Relativistic pairwise cost grows as N², so 1024 bodies would spend
-about four times `pairForce`, and 2.1's savings are better spent on the archive (§4.1) and
-the second universe (§6.6), which runs a whole second `GPUPhysics`.
+**Caps** (decided by these numbers then, and superseded by 2.2, §0): 512 bodies and the
+pools were to stay through 2.5, since relativistic pairwise cost grows as N². 2.2 measured
+that 500 bodies had left most of the GPU idle: the pair force grew sixfold, not 64-fold, from
+500 to 4000.
 
 ### 3.2 Receipts
 
@@ -239,6 +240,76 @@ the second universe (§6.6), which runs a whole second `GPUPhysics`.
   deutans, verdigris and viridian for tritans; and in dark deuteranopia the accent falls to
   ΔE₀₀ 2.1–2.9 against sap and sienna, so the instrument's red marks (§6.1) need their pattern
   too. Reproducibility found a race in the field kicks (§10).
+
+### 3.3 2.2: scale (done)
+
+Done 2026-10-25 in one session, at a9's ask for a second performance pass that raises the caps
+substantially. Two lanes ran in worktrees (the stats readback; world-line drawing), the rest in
+the main tree. The caps went from 512 bodies, 4096 photons and 2048 pions and leptons to 4096,
+16384 and 8192.
+
+What measurement found first, with the 2.1 tree's cap raised to 4096 (4000 random bodies on a
+torus, M5 Max, as in §3.1):
+- **World lines** took 5.5 ms of a 6.2 ms render, in the plane view too (trails are world
+  lines): every sample of every line drawn, each of its four vertices redoing the line's setup.
+- **`statsPE`** took about 10 ms every eighth frame; **the tree build** 1–4 ms, contended.
+- **The relativistic pair force** took 3.1 ms, six times its 500-body cost rather than 64:
+  500 bodies had left most of the GPU idle. From here it grows as N².
+- **The Fields overlay** took 4.95 s of CPU a frame: every step of every field line tested
+  every charge.
+
+Bugs the new oracles found, all older than 2.2:
+- **Barnes–Hut applied no force** at a few hundred bodies. The CAS-built tree lost a body when
+  a subdivision raced a claim, so a node's expected count never arrived and the root was never
+  summed; 2.1 measured that empty walk as cheap.
+- **The bosons' tree never summed above its deepest level** (a leaf's count wasn't reset when it
+  split): boson gravity, pion Coulomb and kugelblitz saw an empty tree. Kugelblitz now runs; in
+  dense Hawking gas with Boson interaction it collapses at its one-a-frame limit.
+- **π⁺π⁻ pairs never annihilated:** each pion claimed itself before claiming a partner, so both
+  halves of a pair in lockstep claimed themselves.
+- **Barnes–Hut on a torus** took nodes straddling the half-domain at one image: 31% rms error
+  against pairwise on a uniform torus, now 0.3% (the group walk's box criterion counts too).
+- The tree walk's stack bound read 128 against an array of 48.
+
+What changed (§10 has the commits):
+- **Trees from sorted keys** (`tree-build.wgsl`): Morton codes, a bitonic sort sized on the GPU
+  by the live count, the radix tree (Karras 2012), and a compressed quadtree in the old node
+  layout, for the bodies and, over the pools, the bosons. The same positions give the same tree.
+  Each node keeps its largest radius, which collisions and absorption prune by, and a collision
+  pair is found by its smaller body.
+- **Barnes–Hut as a group walk** (32 Morton-adjacent bodies, one traversal, a shared list, eight
+  threads a body), and only without Relativity: with it every force acts pairwise from the
+  world lines, which a node's aggregate lacks (EM already did).
+- **A world-line store that grows** through 512, 1024, 2048 and 4096 slots, keeping every ring,
+  with the per-pair light-cone hints; the search guesses its first bracket from the distance.
+- **The stats readback over workgroups** with fixed-order partials (lane), and the zero-momentum
+  frame's anchor likewise.
+- **World lines drawn from compacted points** (lane): NUMBERS-B
+- **Pion annihilation** by proposals through the bosons' tree; **pools** sized by live counts;
+  **field lines** binned and budgeted.
+
+Cleared by measurement:
+- **Fusing a substep's compute passes** into one serialized them: Metal overlaps separate passes,
+  so small presets got slower (cyclotron's step 0.55 → 1.9 ms). Only the field step, a chain of
+  dependent passes, gained (3.7 → 1.7 ms). Not done.
+- **Hints from the current distance alone**, without the N² table: in a crowded scene the paths
+  curve too much over a light-crossing time, and the pair force took 4.9 ms against 3.3. The
+  table stays, the distance seeding new pairs.
+- **Observers in Morton order** for the pair force: slower (3.7 → 4.2 ms). The relativistic pair
+  force is bound by arithmetic, not by world-line reads.
+
+NUMBERS-TABLE
+
+Open:
+- **The heatmap with Relativity** solves 128² cells × N light cones every fourth frame: about
+  9 ms at 4000 bodies, the overlay's one remaining hitch.
+- **The relativistic pair force** is O(N²) and arithmetic-bound, about 3.7 ms at 4000 here, so
+  4096 relativistic bodies run near 15 ms on a base M-series GPU. Past it lies a retarded far
+  field: fixed cells keep moment histories, read at each cell's light-crossing time [speculative].
+- **Ledger accumulators** add f32 by compare-and-swap across workgroups (`cullBosons`,
+  `expansion.wgsl`), so those readback words aren't bitwise reproducible.
+- **Kugelblitz's rate in Hawking gas** (one a frame, the limit) is the model's, untested until
+  now: whether it is the experiment or a tuning question is open.
 
 ## 4. 2.5, first: the record
 
@@ -746,5 +817,18 @@ and benchmark harnesses (§3.1).
   the count on the GPU.
 - **Data races hide as noise:** a kernel that reads neighbours of the buffer it writes passes
   every oracle and fails only a bitwise reproducibility check (`shots.mjs`).
+- **Test a tree by its root:** both CAS-built trees had empty roots at scale, and every walk
+  over them quietly returned nothing. An oracle that the root holds every item, and a walk
+  against the pairwise sum at a few hundred items, catch it.
+- **Lock-free GPU structures lose items** when one thread's subdivision races another's claim;
+  build from sorted keys instead, which is also the same every run.
+- **A light scene clocks the GPU down,** so its per-pass times read high and a paused redraw
+  loop measures little: compare loaded scenes, or the same scene A/B, alternating.
+- **An empty compute pass writes no timestamps** on Metal, and its stale ones stretch the
+  profiler's span by seconds.
+- **A dispatch can't read its indirect size** from a buffer bound for writing in that dispatch;
+  the tree plan writes its own buffer through its own bind group.
+- **One compute pass serializes its dispatches** on Metal where separate passes overlap: fuse
+  only chains that depend on each other anyway.
 - Citations here are names and years. Verify each against its primary source (DOI resolver,
   Crossref) before it reaches `about.md` or JSON-LD.
