@@ -1,6 +1,9 @@
 // O(N^2) tiled pairwise force computation.
-// Each workgroup loads TILE_SIZE source particles into shared memory,
-// then each thread accumulates forces from all sources onto its particle.
+// Each workgroup serves OBSERVERS observers with LANES threads apiece: it loads TILE_SIZE
+// source particles into shared memory at a time, each lane accumulates the forces from every
+// LANES-th source onto its observer, and the lanes' sums are added at the end. One thread
+// per observer left most of the GPU idle (ceil(N/64) workgroups), with each thread's
+// world-line reads in series.
 //
 // With Relativity on, every source acts from its retarded state on its world line
 // (shared-worldline.wgsl): charges through their Liénard–Wiechert fields, everything else
@@ -12,7 +15,10 @@
 // Uses packed ParticleState + ParticleDerived + ParticleAux structs. Jerk written to AllForces.
 // Requires shared-worldline.wgsl and shared-1pn.wgsl prepended.
 
-const TILE_SIZE: u32 = 64u;
+const OBSERVERS: u32 = PAIR_FORCE_OBSERVERS;   // observers per workgroup (gpu-constants.js)
+const LANES: u32 = 256u / OBSERVERS;           // threads per observer
+const WG_SIZE: u32 = OBSERVERS * LANES;
+const TILE_SIZE: u32 = 64u;            // sources per tile, at most WG_SIZE
 
 // Source particle data loaded into shared memory per tile
 struct TileParticle {
@@ -36,6 +42,8 @@ struct TileParticle {
 };
 
 var<workgroup> tile: array<TileParticle, TILE_SIZE>;
+// The lanes' partial sums, a third of ForceAccum at a time (8 KB)
+var<workgroup> laneSums: array<array<f32, 8>, WG_SIZE>;
 
 // Bind group 0: uniforms
 @group(0) @binding(0) var<uniform> uniforms: SimUniforms;
@@ -50,9 +58,11 @@ var<workgroup> tile: array<TileParticle, TILE_SIZE>;
 @group(2) @binding(0) var<storage, read_write> allForces: array<AllForces>;
 @group(2) @binding(1) var<storage, read_write> maxAccel: array<atomic<u32>>;
 
-// Bind group 3: world lines (shared-worldline.wgsl)
+// Bind group 3: world lines (shared-worldline.wgsl) and the per-pair light-cone hints,
+// source-major (wlHints[src * MAX_PARTICLES + observer]) so a workgroup's reads coalesce
 @group(3) @binding(0) var<storage, read_write> wlData: array<f32>;
 @group(3) @binding(1) var<storage, read_write> wlMeta: array<u32>;
+@group(3) @binding(2) var<storage, read_write> wlHints: array<u32>;
 
 // ── Source data struct for force computation (used by both tile loop and dead loop) ──
 struct SourceData {
@@ -365,173 +375,243 @@ fn makeDelayedSource(ret: Retarded, sAxMod: f32, sYukMod: f32, sHiggsMod: f32) -
     return src;
 }
 
-@compute @workgroup_size(TILE_SIZE)
+fn accumToArray(a: ForceAccum) -> array<f32, 24> {
+    return array<f32, 24>(
+        a.gravX, a.gravY, a.coulX, a.coulY, a.magX, a.magY, a.gmX, a.gmY,
+        a.pnX, a.pnY, a.yukX, a.yukY, a.totalX, a.totalY, a.jerkX, a.jerkY,
+        a.bz, a.bgz, a.dbzdx, a.dbzdy, a.dbgzdx, a.dbgzdy, a.frameDrag, a.tidal);
+}
+
+fn accumFromArray(v: array<f32, 24>) -> ForceAccum {
+    return ForceAccum(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7],
+                      v[8], v[9], v[10], v[11], v[12], v[13], v[14], v[15],
+                      v[16], v[17], v[18], v[19], v[20], v[21], v[22], v[23]);
+}
+
+@compute @workgroup_size(WG_SIZE)
 fn main(
-    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(workgroup_id) wid: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
     @builtin(local_invocation_id) lid: vec3<u32>,
 ) {
-    let idx = gid.x;
-    let localIdx = lid.x;
+    let localIdx = lid.x % OBSERVERS;   // the observer within the workgroup
+    let lane = lid.x / OBSERVERS;
     let N = uniforms.aliveCount;
 
-    // Load this thread's particle (observer)
-    let alive = idx < N && (particles[idx].flags & FLAG_ALIVE) != 0u;
+    // Each workgroup strides over groups of OBSERVERS observers, so any dispatch size is
+    // correct; ceil(N / OBSERVERS) gives each group its own workgroup
+    for (var groupBase = wid.x * OBSERVERS; groupBase < N; groupBase += nwg.x * OBSERVERS) {
+        let idx = groupBase + localIdx;
 
-    var pPosX: f32 = 0.0;
-    var pPosY: f32 = 0.0;
-    var pVelX: f32 = 0.0;
-    var pVelY: f32 = 0.0;
-    var pMass: f32 = 0.0;
-    var pCharge: f32 = 0.0;
-    var pAngVel: f32 = 0.0;
-    var pMagMom: f32 = 0.0;
-    var pAngMom: f32 = 0.0;
-    var pAxMod: f32 = 1.0;
-    var pYukMod: f32 = 1.0;
-    var pHiggsMod: f32 = 1.0;
-    var pInvMass: f32 = 0.0;
-    // Pre-hoisted tidal locking constant: ri5 = mass^(5/3) = bodyRadiusSq^2 * bodyRadius
-    var pRi5: f32 = 0.0;
+        // Load this thread's particle (observer)
+        let alive = idx < N && (particles[idx].flags & FLAG_ALIVE) != 0u;
 
-    if (alive) {
-        let p = particles[idx];
-        pPosX = p.posX;
-        pPosY = p.posY;
-        pMass = p.mass;
-        pCharge = p.charge;
-        let d = derived[idx];
-        pVelX = d.velX;
-        pVelY = d.velY;
-        pAngVel = d.angVel;
-        pMagMom = d.magMoment;
-        pAngMom = d.angMomentum;
-        pInvMass = d.invMass;
-        let aym = axYukMod[idx];
-        pAxMod = aym.x;
-        pYukMod = aym.y;
-        pHiggsMod = aym.z;
-        let pBodyRSq = d.bodyRSq;
-        pRi5 = pBodyRSq * pBodyRSq * sqrt(pBodyRSq);
-    }
+        var pPosX: f32 = 0.0;
+        var pPosY: f32 = 0.0;
+        var pVelX: f32 = 0.0;
+        var pVelY: f32 = 0.0;
+        var pMass: f32 = 0.0;
+        var pCharge: f32 = 0.0;
+        var pAngVel: f32 = 0.0;
+        var pMagMom: f32 = 0.0;
+        var pAngMom: f32 = 0.0;
+        var pAxMod: f32 = 1.0;
+        var pYukMod: f32 = 1.0;
+        var pHiggsMod: f32 = 1.0;
+        var pInvMass: f32 = 0.0;
+        // Pre-hoisted tidal locking constant: ri5 = mass^(5/3) = bodyRadiusSq^2 * bodyRadius
+        var pRi5: f32 = 0.0;
 
-    // With Barnes–Hut and Relativity this pass carries EM alone; the tree walk adds the rest
-    let emOnly = hasToggle1(EM_PAIRWISE_BIT);
-    let gravOn = hasToggle0(GRAVITY_BIT) && !emOnly;
-    let coulOn = hasToggle0(COULOMB_BIT);
-    let magOn = hasToggle0(MAGNETIC_BIT);
-    let gmOn = hasToggle0(GRAVITOMAG_BIT) && !emOnly;
-    let onePNOn = hasToggle0(ONE_PN_BIT) && !emOnly;
-    let relOn = hasToggle0(RELATIVITY_BIT);
-    let yukawaOn = hasToggle0(YUKAWA_BIT) && !emOnly;
-    let higgsOn = hasToggle0(HIGGS_BIT);
-    let radOn = hasToggle0(RADIATION_BIT);
-    let bhOn = hasToggle0(BLACK_HOLE_BIT);
-    let isPeriodic = uniforms.boundaryMode == BOUND_LOOP;
-    let domW = uniforms.domainW;
-    let domH = uniforms.domainH;
-    let topo = uniforms.topologyMode;
-
-    let softeningSq = uniforms.softeningSq;
-
-    // Axion EM modulation flag
-    let needAxMod = (coulOn || magOn) && hasToggle0(AXION_BIT);
-
-    // Yukawa cutoff: exp(-mu*r) < 0.002 when mu*r > 6
-    // When Higgs enabled, muEff can be as small as yukawaMu * HIGGS_MASS_FLOOR — widen cutoff
-    let yukMu = uniforms.yukawaMu;
-    let muMin = select(yukMu, yukMu * HIGGS_MASS_FLOOR, higgsOn);
-    let yukCutoffSq = select(1e30, (6.0 / muMin) * (6.0 / muMin), yukawaOn && muMin > EPSILON);
-
-    // Forces are computed at pre-drift positions, so the observer sits one substep back
-    // on the world-line clock: dη = dt/a
-    let sdTime = uniforms.simTime - uniforms.dt / uniforms.scaleA;
-
-    // Per-thread force accumulator
-    var accum: ForceAccum;
-    accum.gravX = 0.0; accum.gravY = 0.0;
-    accum.coulX = 0.0; accum.coulY = 0.0;
-    accum.magX = 0.0; accum.magY = 0.0;
-    accum.gmX = 0.0; accum.gmY = 0.0;
-    accum.pnX = 0.0; accum.pnY = 0.0;
-    accum.yukX = 0.0; accum.yukY = 0.0;
-    accum.totalX = 0.0; accum.totalY = 0.0;
-    accum.jerkX = 0.0; accum.jerkY = 0.0;
-    accum.bz = 0.0; accum.bgz = 0.0;
-    accum.dbzdx = 0.0; accum.dbzdy = 0.0;
-    accum.dbgzdx = 0.0; accum.dbgzdy = 0.0;
-    accum.frameDrag = 0.0; accum.tidal = 0.0;
-
-    // Number of tiles needed to cover all particles
-    let numTiles = (N + TILE_SIZE - 1u) / TILE_SIZE;
-
-    for (var t: u32 = 0u; t < numTiles; t++) {
-        // Collaborative tile load: each thread loads one source particle
-        let tileSrcIdx = t * TILE_SIZE + localIdx;
-        if (tileSrcIdx < N && (particles[tileSrcIdx].flags & FLAG_ALIVE) != 0u) {
-            let sp = particles[tileSrcIdx];
-            tile[localIdx].posX = sp.posX;
-            tile[localIdx].posY = sp.posY;
-            let sd = derived[tileSrcIdx];
-            tile[localIdx].velX = sd.velX;
-            tile[localIdx].velY = sd.velY;
-            tile[localIdx].wX = sp.velWX;
-            tile[localIdx].wY = sp.velWY;
-            tile[localIdx].angW = sp.angW;
-            tile[localIdx].mass = sp.mass;
-            tile[localIdx].charge = sp.charge;
-            tile[localIdx].angVel = sd.angVel;
-            tile[localIdx].magMoment = sd.magMoment;
-            tile[localIdx].angMomentum = sd.angMomentum;
-            let saym = axYukMod[tileSrcIdx];
-            tile[localIdx].axMod = saym.x;
-            tile[localIdx].yukMod = saym.y;
-            tile[localIdx].higgsMod = saym.z;
-            tile[localIdx].bodyRadSq = sd.bodyRSq;
-            tile[localIdx].srcIdx = tileSrcIdx;
-        } else {
-            // Mark as invalid (zero mass = no force contribution)
-            tile[localIdx].mass = 0.0;
-            tile[localIdx].srcIdx = 0xFFFFFFFFu;
+        if (alive) {
+            let p = particles[idx];
+            pPosX = p.posX;
+            pPosY = p.posY;
+            pMass = p.mass;
+            pCharge = p.charge;
+            let d = derived[idx];
+            pVelX = d.velX;
+            pVelY = d.velY;
+            pAngVel = d.angVel;
+            pMagMom = d.magMoment;
+            pAngMom = d.angMomentum;
+            pInvMass = d.invMass;
+            let aym = axYukMod[idx];
+            pAxMod = aym.x;
+            pYukMod = aym.y;
+            pHiggsMod = aym.z;
+            let pBodyRSq = d.bodyRSq;
+            pRi5 = pBodyRSq * pBodyRSq * sqrt(pBodyRSq);
         }
 
-        workgroupBarrier();
+        // With Barnes–Hut and Relativity this pass carries EM alone; the tree walk adds the rest
+        let emOnly = hasToggle1(EM_PAIRWISE_BIT);
+        let gravOn = hasToggle0(GRAVITY_BIT) && !emOnly;
+        let coulOn = hasToggle0(COULOMB_BIT);
+        let magOn = hasToggle0(MAGNETIC_BIT);
+        let gmOn = hasToggle0(GRAVITOMAG_BIT) && !emOnly;
+        let onePNOn = hasToggle0(ONE_PN_BIT) && !emOnly;
+        let relOn = hasToggle0(RELATIVITY_BIT);
+        let yukawaOn = hasToggle0(YUKAWA_BIT) && !emOnly;
+        let higgsOn = hasToggle0(HIGGS_BIT);
+        let radOn = hasToggle0(RADIATION_BIT);
+        let bhOn = hasToggle0(BLACK_HOLE_BIT);
+        let isPeriodic = uniforms.boundaryMode == BOUND_LOOP;
+        let domW = uniforms.domainW;
+        let domH = uniforms.domainH;
+        let topo = uniforms.topologyMode;
 
-        // Each thread accumulates forces from all sources in this tile
-        if (alive) {
-            for (var j: u32 = 0u; j < TILE_SIZE; j++) {
-                let sIdx = t * TILE_SIZE + j;
-                if (sIdx >= N || sIdx == idx) { continue; }
-                let s = tile[j];
-                if (s.mass < EPSILON) { continue; }
+        let softeningSq = uniforms.softeningSq;
 
-                var src: SourceData;
-                if (relOn) {
-                    let ret = retardedState(
-                        s.srcIdx, pPosX, pPosY, sdTime,
-                        vec2(s.posX, s.posY), vec2(s.wX, s.wY), s.angW, s.mass, s.charge,
-                        true, isPeriodic, domW, domH, topo, uniforms.scaleA,
+        // Axion EM modulation flag
+        let needAxMod = (coulOn || magOn) && hasToggle0(AXION_BIT);
+
+        // Yukawa cutoff: exp(-mu*r) < 0.002 when mu*r > 6
+        // When Higgs enabled, muEff can be as small as yukawaMu * HIGGS_MASS_FLOOR — widen cutoff
+        let yukMu = uniforms.yukawaMu;
+        let muMin = select(yukMu, yukMu * HIGGS_MASS_FLOOR, higgsOn);
+        let yukCutoffSq = select(1e30, (6.0 / muMin) * (6.0 / muMin), yukawaOn && muMin > EPSILON);
+
+        // Forces are computed at pre-drift positions, so the observer sits one substep back
+        // on the world-line clock: dη = dt/a
+        let sdTime = uniforms.simTime - uniforms.dt / uniforms.scaleA;
+
+        // Per-thread force accumulator
+        var accum: ForceAccum;
+        accum.gravX = 0.0; accum.gravY = 0.0;
+        accum.coulX = 0.0; accum.coulY = 0.0;
+        accum.magX = 0.0; accum.magY = 0.0;
+        accum.gmX = 0.0; accum.gmY = 0.0;
+        accum.pnX = 0.0; accum.pnY = 0.0;
+        accum.yukX = 0.0; accum.yukY = 0.0;
+        accum.totalX = 0.0; accum.totalY = 0.0;
+        accum.jerkX = 0.0; accum.jerkY = 0.0;
+        accum.bz = 0.0; accum.bgz = 0.0;
+        accum.dbzdx = 0.0; accum.dbzdy = 0.0;
+        accum.dbgzdx = 0.0; accum.dbgzdy = 0.0;
+        accum.frameDrag = 0.0; accum.tidal = 0.0;
+
+        // Number of tiles needed to cover all particles
+        let numTiles = (N + TILE_SIZE - 1u) / TILE_SIZE;
+
+        for (var t: u32 = 0u; t < numTiles; t++) {
+            // Collaborative tile load: each of the first TILE_SIZE threads loads one source
+            let tileIdx = lid.x;
+            let tileSrcIdx = t * TILE_SIZE + tileIdx;
+            if (tileIdx >= TILE_SIZE) {
+            } else if (tileSrcIdx < N && (particles[tileSrcIdx].flags & FLAG_ALIVE) != 0u) {
+                let sp = particles[tileSrcIdx];
+                tile[tileIdx].posX = sp.posX;
+                tile[tileIdx].posY = sp.posY;
+                let sd = derived[tileSrcIdx];
+                tile[tileIdx].velX = sd.velX;
+                tile[tileIdx].velY = sd.velY;
+                tile[tileIdx].wX = sp.velWX;
+                tile[tileIdx].wY = sp.velWY;
+                tile[tileIdx].angW = sp.angW;
+                tile[tileIdx].mass = sp.mass;
+                tile[tileIdx].charge = sp.charge;
+                tile[tileIdx].angVel = sd.angVel;
+                tile[tileIdx].magMoment = sd.magMoment;
+                tile[tileIdx].angMomentum = sd.angMomentum;
+                let saym = axYukMod[tileSrcIdx];
+                tile[tileIdx].axMod = saym.x;
+                tile[tileIdx].yukMod = saym.y;
+                tile[tileIdx].higgsMod = saym.z;
+                tile[tileIdx].bodyRadSq = sd.bodyRSq;
+                tile[tileIdx].srcIdx = tileSrcIdx;
+            } else {
+                // Mark as invalid (zero mass = no force contribution)
+                tile[tileIdx].mass = 0.0;
+                tile[tileIdx].srcIdx = 0xFFFFFFFFu;
+            }
+
+            workgroupBarrier();
+
+            // Each thread accumulates forces from all sources in this tile
+            if (alive) {
+                for (var j: u32 = lane; j < TILE_SIZE; j += LANES) {
+                    let sIdx = t * TILE_SIZE + j;
+                    if (sIdx >= N || sIdx == idx) { continue; }
+                    let s = tile[j];
+                    if (s.mass < EPSILON) { continue; }
+
+                    var src: SourceData;
+                    if (relOn) {
+                        let hIdx = s.srcIdx * MAX_PARTICLES + idx;
+                        let hintIn = wlHints[hIdx];
+                        var hint = hintIn;
+                        let ret = retardedStateHinted(
+                            s.srcIdx, pPosX, pPosY, sdTime,
+                            vec2(s.posX, s.posY), vec2(s.wX, s.wY), s.angW, s.mass, s.charge,
+                            true, isPeriodic, domW, domH, topo, uniforms.scaleA, &hint,
+                        );
+                        if (hint != hintIn) { wlHints[hIdx] = hint; }
+                        if (!ret.valid) { continue; }
+                        src = makeDelayedSource(ret, s.axMod, s.yukMod, s.higgsMod);
+                    } else {
+                        var d = vec2(s.posX - pPosX, s.posY - pPosY);
+                        if (isPeriodic) { d = fullMinImage(pPosX, pPosY, s.posX, s.posY); }
+                        src.rx = d.x;
+                        src.ry = d.y;
+                        src.velX = s.velX;
+                        src.velY = s.velY;
+                        src.accX = 0.0;
+                        src.accY = 0.0;
+                        src.mass = s.mass;
+                        src.charge = s.charge;
+                        src.angVel = s.angVel;
+                        src.magMoment = s.magMoment;
+                        src.angMomentum = s.angMomentum;
+                        src.axMod = s.axMod;
+                        src.yukMod = s.yukMod;
+                        src.higgsMod = s.higgsMod;
+                        src.delayed = false;
+                    }
+
+                    accumulatePairForce(
+                        pVelX, pVelY,
+                        pMass, pCharge, pAngVel,
+                        pMagMom, pAngMom,
+                        pAxMod, pYukMod, pHiggsMod, pRi5,
+                        src, softeningSq,
+                        yukMu, yukCutoffSq,
+                        gravOn, coulOn, magOn, gmOn,
+                        onePNOn, yukawaOn, higgsOn, radOn,
+                        bhOn, relOn, needAxMod,
+                        &accum,
                     );
-                    if (!ret.valid) { continue; }
-                    src = makeDelayedSource(ret, s.axMod, s.yukMod, s.higgsMod);
-                } else {
-                    var d = vec2(s.posX - pPosX, s.posY - pPosY);
-                    if (isPeriodic) { d = fullMinImage(pPosX, pPosY, s.posX, s.posY); }
-                    src.rx = d.x;
-                    src.ry = d.y;
-                    src.velX = s.velX;
-                    src.velY = s.velY;
-                    src.accX = 0.0;
-                    src.accY = 0.0;
-                    src.mass = s.mass;
-                    src.charge = s.charge;
-                    src.angVel = s.angVel;
-                    src.magMoment = s.magMoment;
-                    src.angMomentum = s.angMomentum;
-                    src.axMod = s.axMod;
-                    src.yukMod = s.yukMod;
-                    src.higgsMod = s.higgsMod;
-                    src.delayed = false;
                 }
+            }
+
+            workgroupBarrier();
+        }
+
+        // ── Retired particles keep acting until the light from their world line's end has passed ──
+        if (alive && relOn) {
+            let totalCount = uniforms.particleCount;
+            for (var ri: u32 = lane; ri < totalCount; ri += LANES) {
+                let flags = particles[ri].flags;
+                if ((flags & FLAG_RETIRED) == 0u || (flags & FLAG_ALIVE) != 0u) { continue; }
+
+                let rp = particles[ri];
+                let hIdx = ri * MAX_PARTICLES + idx;
+                let hintIn = wlHints[hIdx];
+                var hint = hintIn;
+                let ret = retardedStateHinted(
+                    ri, pPosX, pPosY, sdTime,
+                    vec2(rp.posX, rp.posY), vec2(0.0), 0.0, 0.0, rp.charge,
+                    false, isPeriodic, domW, domH, topo, uniforms.scaleA, &hint,
+                );
+                if (hint != hintIn) { wlHints[hIdx] = hint; }
+                if (!ret.valid) { continue; }
+
+                let deadAxYuk = axYukMod[ri];
+                let src = makeDelayedSource(
+                    ret,
+                    select(deadAxYuk.x, 1.0, abs(deadAxYuk.x) < EPSILON),
+                    select(deadAxYuk.y, 1.0, abs(deadAxYuk.y) < EPSILON),
+                    select(deadAxYuk.z, 1.0, abs(deadAxYuk.z) < EPSILON),
+                );
 
                 accumulatePairForce(
                     pVelX, pVelY,
@@ -548,86 +628,62 @@ fn main(
             }
         }
 
-        workgroupBarrier();
-    }
-
-    // ── Retired particles keep acting until the light from their world line's end has passed ──
-    if (alive && relOn) {
-        let totalCount = uniforms.particleCount;
-        for (var ri: u32 = 0u; ri < totalCount; ri++) {
-            let flags = particles[ri].flags;
-            if ((flags & FLAG_RETIRED) == 0u || (flags & FLAG_ALIVE) != 0u) { continue; }
-
-            let rp = particles[ri];
-            let ret = retardedState(
-                ri, pPosX, pPosY, sdTime,
-                vec2(rp.posX, rp.posY), vec2(0.0), 0.0, 0.0, rp.charge,
-                false, isPeriodic, domW, domH, topo, uniforms.scaleA,
-            );
-            if (!ret.valid) { continue; }
-
-            let deadAxYuk = axYukMod[ri];
-            let src = makeDelayedSource(
-                ret,
-                select(deadAxYuk.x, 1.0, abs(deadAxYuk.x) < EPSILON),
-                select(deadAxYuk.y, 1.0, abs(deadAxYuk.y) < EPSILON),
-                select(deadAxYuk.z, 1.0, abs(deadAxYuk.z) < EPSILON),
-            );
-
-            accumulatePairForce(
-                pVelX, pVelY,
-                pMass, pCharge, pAngVel,
-                pMagMom, pAngMom,
-                pAxMod, pYukMod, pHiggsMod, pRi5,
-                src, softeningSq,
-                yukMu, yukCutoffSq,
-                gravOn, coulOn, magOn, gmOn,
-                onePNOn, yukawaOn, higgsOn, radOn,
-                bhOn, relOn, needAxMod,
-                &accum,
-            );
+        // Add the lanes' sums, in lane order, a third of the accumulator per round
+        var sums = accumToArray(accum);
+        for (var round = 0u; round < 3u; round++) {
+            for (var k = 0u; k < 8u; k++) { laneSums[lid.x][k] = sums[round * 8u + k]; }
+            workgroupBarrier();
+            if (lane == 0u) {
+                for (var k = 0u; k < 8u; k++) {
+                    var total = laneSums[localIdx][k];
+                    for (var l = 1u; l < LANES; l++) { total += laneSums[l * OBSERVERS + localIdx][k]; }
+                    sums[round * 8u + k] = total;
+                }
+            }
+            workgroupBarrier();
         }
-    }
+        accum = accumFromArray(sums);
 
-    // Write accumulated forces to packed AllForces struct
-    if (alive) {
-        var af: AllForces;
-        af.f0 = vec4(accum.gravX, accum.gravY, accum.coulX, accum.coulY);
-        af.f1 = vec4(accum.magX, accum.magY, accum.gmX, accum.gmY);
-        af.f2 = vec4(accum.pnX, accum.pnY, 0.0, 0.0);  // spinCurv filled by spin-orbit pass
-        af.f3 = vec4(0.0, 0.0, accum.yukX, accum.yukY);   // radiation.xy filled by Phase 4
-        af.f4 = vec4(0.0, 0.0, 0.0, 0.0);           // external/higgs filled by later passes
-        af.f5 = vec4(0.0, 0.0, 0.0, 0.0);           // axion filled by later passes
-        af.torques = vec4(0.0, accum.frameDrag, accum.tidal, 0.0);
-        // NaN guard on B-field accumulators — corruption here propagates to Boris rotation + spin-orbit
-        af.bFields = vec4(
-            select(accum.bz, 0.0, accum.bz != accum.bz),
-            select(accum.bgz, 0.0, accum.bgz != accum.bgz),
-            0.0, 0.0);  // extBz added by external fields pass
-        af.bFieldGrads = vec4(
-            select(accum.dbzdx, 0.0, accum.dbzdx != accum.dbzdx),
-            select(accum.dbzdy, 0.0, accum.dbzdy != accum.dbzdy),
-            select(accum.dbgzdx, 0.0, accum.dbgzdx != accum.dbgzdx),
-            select(accum.dbgzdy, 0.0, accum.dbgzdy != accum.dbgzdy));
-        // NaN guard on total force and jerk — must happen BEFORE writing to global memory
-        af.totalForce = vec2(
-            select(accum.totalX, 0.0, accum.totalX != accum.totalX),
-            select(accum.totalY, 0.0, accum.totalY != accum.totalY)
-        );
-        af.jerk = vec2(
-            select(accum.jerkX, 0.0, accum.jerkX != accum.jerkX),
-            select(accum.jerkY, 0.0, accum.jerkY != accum.jerkY)
-        );
+        // Write accumulated forces to packed AllForces struct
+        if (alive && lane == 0u) {
+            var af: AllForces;
+            af.f0 = vec4(accum.gravX, accum.gravY, accum.coulX, accum.coulY);
+            af.f1 = vec4(accum.magX, accum.magY, accum.gmX, accum.gmY);
+            af.f2 = vec4(accum.pnX, accum.pnY, 0.0, 0.0);  // spinCurv filled by spin-orbit pass
+            af.f3 = vec4(0.0, 0.0, accum.yukX, accum.yukY);   // radiation.xy filled by Phase 4
+            af.f4 = vec4(0.0, 0.0, 0.0, 0.0);           // external/higgs filled by later passes
+            af.f5 = vec4(0.0, 0.0, 0.0, 0.0);           // axion filled by later passes
+            af.torques = vec4(0.0, accum.frameDrag, accum.tidal, 0.0);
+            // NaN guard on B-field accumulators — corruption here propagates to Boris rotation + spin-orbit
+            af.bFields = vec4(
+                select(accum.bz, 0.0, accum.bz != accum.bz),
+                select(accum.bgz, 0.0, accum.bgz != accum.bgz),
+                0.0, 0.0);  // extBz added by external fields pass
+            af.bFieldGrads = vec4(
+                select(accum.dbzdx, 0.0, accum.dbzdx != accum.dbzdx),
+                select(accum.dbzdy, 0.0, accum.dbzdy != accum.dbzdy),
+                select(accum.dbgzdx, 0.0, accum.dbgzdx != accum.dbgzdx),
+                select(accum.dbgzdy, 0.0, accum.dbgzdy != accum.dbgzdy));
+            // NaN guard on total force and jerk — must happen BEFORE writing to global memory
+            af.totalForce = vec2(
+                select(accum.totalX, 0.0, accum.totalX != accum.totalX),
+                select(accum.totalY, 0.0, accum.totalY != accum.totalY)
+            );
+            af.jerk = vec2(
+                select(accum.jerkX, 0.0, accum.jerkX != accum.jerkX),
+                select(accum.jerkY, 0.0, accum.jerkY != accum.jerkY)
+            );
 
-        allForces[idx] = af;
+            allForces[idx] = af;
 
-        // Adaptive substepping: atomicMax of |F/m|^2 as fixed-point u32
-        let totalFSq = af.totalForce.x * af.totalForce.x + af.totalForce.y * af.totalForce.y;
-        let accelSq = totalFSq * pInvMass * pInvMass;
-        // Guard against NaN/Inf which would corrupt adaptive stepping
-        if (accelSq == accelSq && accelSq < 1e20) {
-            let accelBits = bitcast<u32>(sqrt(accelSq));
-            atomicMax(&maxAccel[0], accelBits);
+            // Adaptive substepping: atomicMax of |F/m|^2 as fixed-point u32
+            let totalFSq = af.totalForce.x * af.totalForce.x + af.totalForce.y * af.totalForce.y;
+            let accelSq = totalFSq * pInvMass * pInvMass;
+            // Guard against NaN/Inf which would corrupt adaptive stepping
+            if (accelSq == accelSq && accelSq < 1e20) {
+                let accelBits = bitcast<u32>(sqrt(accelSq));
+                atomicMax(&maxAccel[0], accelBits);
+            }
         }
     }
 }

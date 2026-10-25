@@ -86,6 +86,9 @@ export function createParticleBuffers(device, maxParticles) {
     // particle (~25 MB at 512 particles), plus WL_META_STRIDE u32 of ring metadata
     const wlData = storageBuffer('wlData', WL_STRIDE * 4, maxParticles * WORLDLINE_LEN);
     const wlMeta = storageBuffer('wlMeta', WL_META_STRIDE * 4, maxParticles);
+    // Per-pair light-cone search hints (pair-force.wgsl): the bracket's distance back from
+    // the last world-line point, source-major, 1 MB at 512 particles. Any value is safe.
+    const wlHints = storageBuffer('wlHints', 4, maxParticles * maxParticles);
 
     // ── Radiation state (packed struct) ──
     // RadiationState (40 bytes): accumulators, display, quadrupole contrib
@@ -281,7 +284,7 @@ export function createParticleBuffers(device, maxParticles) {
         // Color (separate — renderer only)
         color,
         // Clocks and world lines
-        clocks, wlData, wlMeta,
+        clocks, wlData, wlMeta, wlHints,
         // Forces (packed AllForces struct)
         allForces,
         // Radiation (packed RadiationState struct)

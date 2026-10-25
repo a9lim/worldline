@@ -157,8 +157,18 @@ fn wlExtrapolate(p: WLPoint, s: f32) -> WLPoint {
 
 // ─── The past light cone ───
 // g(t) = |C(t) − X_o| − (T − t) increases strictly along a subluminal world line, so the
-// root is bracketed by a binary search over the points, then found on its segment by
-// Newton's method on the Hermite (g' = n̂·v + 1 ≥ 1 − |v| > 0).
+// root is bracketed among the points, then found on its segment by Newton's method on the
+// Hermite (g' = n̂·v + 1 ≥ 1 − |v| > 0).
+//
+// The bracket comes from a bisection over every point or, given a hint, a gallop out from
+// it (1, 2, 4 … points, then a bisection inside). A pair's retarded point stays a nearly
+// constant number of points back from the last as samples arrive, so the pair force keeps
+// that distance per pair from one call to the next. The hint only places the first probe:
+// where g is monotone the bracket is unique, so every hint finds the same one, and a stale
+// or garbage hint (a recycled slot, a reset, an epoch rebase, a merge break) costs probes.
+
+/** retardedStateHinted() with no hint: a full bisection. */
+const WL_NO_HINT: u32 = 0xFFFFFFFFu;
 
 struct Retarded {
     rel: vec2<f32>,    // source − observer, in the observer's orientation
@@ -172,6 +182,10 @@ struct Retarded {
 
 fn wlConeG(p: vec2<f32>, t: f32, xo: vec2<f32>, T: f32) -> f32 {
     return length(p - xo) - (T - t);
+}
+
+fn wlConeAt(v: WLView, i: u32, xo: vec2<f32>, T: f32) -> f32 {
+    return wlConeG(wlPosAt(v, i), wlTimeAt(v, i), xo, T);
 }
 
 /**
@@ -190,6 +204,21 @@ fn retardedState(
     src: u32, obsX: f32, obsY: f32, T: f32,
     nowPos: vec2<f32>, nowW: vec2<f32>, nowAngw: f32, nowMass: f32, nowCharge: f32,
     alive: bool, periodic: bool, domW: f32, domH: f32, topo: u32, scaleA: f32,
+) -> Retarded {
+    var hint = WL_NO_HINT;
+    return retardedStateHinted(src, obsX, obsY, T, nowPos, nowW, nowAngw, nowMass, nowCharge,
+                               alive, periodic, domW, domH, topo, scaleA, &hint);
+}
+
+/**
+ * retardedState() with a search hint: *hint is the bracket's distance back from the last
+ * point (any value, or WL_NO_HINT), and on return holds this call's, for the next.
+ */
+fn retardedStateHinted(
+    src: u32, obsX: f32, obsY: f32, T: f32,
+    nowPos: vec2<f32>, nowW: vec2<f32>, nowAngw: f32, nowMass: f32, nowCharge: f32,
+    alive: bool, periodic: bool, domW: f32, domH: f32, topo: u32, scaleA: f32,
+    hint: ptr<function, u32>,
 ) -> Retarded {
     var r: Retarded;
     r.valid = false;
@@ -220,15 +249,48 @@ fn retardedState(
     now.charge = nowCharge;
     var v = wlView(src, alive, now);
     if (v.count == 0u) { return r; }
-    // The current point carries the newest sample's acceleration
-    let newest = wlPointAt(v, v.count - 1u);
-    if (v.n > v.count) { v.now.acc = newest.acc; v.now.tau = newest.tau; }
+
+    // Where the root lies: 0 between points lo and hi, 1 before the first point (the light
+    // left before the first sample), 2 after the last (a retired source whose signal has
+    // passed). Invariants: g(lo) ≤ 0 < g(hi).
+    let lastIdx = v.n - 1u;
+    var side = 0u;
+    var lo = 0u;
+    var hi = lastIdx;
+    if (*hint == WL_NO_HINT || lastIdx == 0u) {
+        if (wlConeAt(v, 0u, xo, T) > 0.0) { side = 1u; }
+        else if (wlConeAt(v, lastIdx, xo, T) <= 0.0) { side = 2u; }
+    } else {
+        // 12 doublings reach past every point (2¹¹ − 1 ≥ WL_LEN)
+        let start = lastIdx - clamp(*hint, 1u, lastIdx);
+        var step = 1u;
+        if (wlConeAt(v, start, xo, T) <= 0.0) {
+            lo = start;
+            for (var it = 0; it < 12; it++) {
+                let probe = min(lo + step, lastIdx);
+                if (wlConeAt(v, probe, xo, T) > 0.0) { hi = probe; break; }
+                lo = probe;
+                if (probe == lastIdx) { side = 2u; break; }
+                step = step << 1u;
+            }
+        } else {
+            hi = start;
+            for (var it = 0; it < 12; it++) {
+                if (hi == 0u) { side = 1u; break; }
+                let probe = hi - min(step, hi);
+                if (wlConeAt(v, probe, xo, T) <= 0.0) { lo = probe; break; }
+                hi = probe;
+                step = step << 1u;
+            }
+        }
+    }
 
     var p: WLPoint;
-    let oldest = wlPointAt(v, 0u);
-    if (wlConeG(oldest.pos, oldest.t, xo, T) > 0.0) {
-        // The light left before the first sample: uniform motion back from it, no further
-        // than the source's creation (−∞ for preset and loaded bodies)
+    if (side == 1u) {
+        *hint = lastIdx;
+        // Uniform motion back from the first sample, no further than the source's creation
+        // (−∞ for preset and loaded bodies)
+        let oldest = wlPointAt(v, 0u);
         let dx = oldest.pos - xo;
         let Tr = T - oldest.t;
         let a = dot(oldest.vel, oldest.vel) - 1.0;
@@ -241,19 +303,21 @@ fn retardedState(
         let s = (-h + sqrt(disc)) / a;
         if (s > 0.0 || oldest.t + s < v.creation) { return r; }
         p = wlExtrapolate(oldest, s);
+    } else if (side == 2u) {
+        *hint = 1u;
+        return r;
     } else {
-        let lastIdx = v.n - 1u;
-        if (wlConeG(wlPosAt(v, lastIdx), wlTimeAt(v, lastIdx), xo, T) <= 0.0) {
-            // Inside the cone of the last point: a retired source whose signal has passed
-            return r;
-        }
-        // g(i_lo) ≤ 0 < g(i_hi)
-        var lo = 0u;
-        var hi = lastIdx;
         for (var it = 0; it < 12; it++) {
             if (hi - lo <= 1u) { break; }
             let mid = (lo + hi) >> 1u;
-            if (wlConeG(wlPosAt(v, mid), wlTimeAt(v, mid), xo, T) <= 0.0) { lo = mid; } else { hi = mid; }
+            if (wlConeAt(v, mid, xo, T) <= 0.0) { lo = mid; } else { hi = mid; }
+        }
+        *hint = lastIdx - lo;
+        // The current point carries the newest sample's acceleration and τ
+        if (hi >= v.count) {
+            let newest = wlPointAt(v, v.count - 1u);
+            v.now.acc = newest.acc;
+            v.now.tau = newest.tau;
         }
         let p0 = wlPointAt(v, lo);
         let p1 = wlPointAt(v, hi);
