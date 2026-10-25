@@ -39,7 +39,7 @@
  */
 import { createParticleBuffers, createUniformBuffer, writeFrameUniforms, writeSubstepUniforms, UNIFORM_DT_OFFSET, UNIFORM_RADIUS_MAX_OFFSET, createFieldBuffers, createGravityGridBuffers, createAtomicGridBuffer, createHeatmapBuffers, createKugelblitzBuffers, createFrameBuffers, FRAME_PARAMS_SIZE, FRAME_STATE_SIZE, FIELD_GRID_RES, PARTICLE_STATE_SIZE, PARTICLE_AUX_SIZE, RADIATION_STATE_SIZE, DERIVED_SIZE, MERGE_RESULT_SIZE } from './gpu-buffers.js';
 import { fetchShader, createLensPipeline, createPhase2Pipelines, createGhostGenPipeline, createTreeBuildPipelines, createTreeForcePipeline, createCollisionPipelines, createMergePhotonPipeline, createDeadGCPipeline, createPhase4Pipelines, createFieldDepositPipelines, createFieldEvolvePipelines, createFieldForcesPipelines, createFieldParticleGravPipeline, createFieldGravityPipelines, createFFTPipelines, createFieldExcitationPipeline, createHeatmapPipelines, createExpansionPipeline, createExtremalPipeline, createBosonDispatchArgsPipeline, createUpdateColorsPipeline, createHitTestPipeline, createComputeStatsPipeline, createFrameSlicePipelines } from './gpu-pipelines.js';
-import { buildWGSLConstants, GRAVITY_BIT, COULOMB_BIT, MAGNETIC_BIT, GRAVITOMAG_BIT, ONE_PN_BIT, RELATIVITY_BIT, SPIN_ORBIT_BIT, RADIATION_BIT, BLACK_HOLE_BIT, EXPANSION_BIT, YUKAWA_BIT, HIGGS_BIT, AXION_BIT, BARNES_HUT_BIT, BOSON_INTER_BIT, FIELD_GRAV_BIT_T1, HERTZ_BOUNCE_BIT_T1, EM_PAIRWISE_BIT_T1, WL_STRIDE, WL_META_STRIDE, OBSERVERS_PER_GROUP } from './gpu-constants.js';
+import { buildWGSLConstants, GRAVITY_BIT, COULOMB_BIT, MAGNETIC_BIT, GRAVITOMAG_BIT, ONE_PN_BIT, RELATIVITY_BIT, SPIN_ORBIT_BIT, RADIATION_BIT, BLACK_HOLE_BIT, EXPANSION_BIT, YUKAWA_BIT, HIGGS_BIT, AXION_BIT, BARNES_HUT_BIT, BOSON_INTER_BIT, FIELD_GRAV_BIT_T1, HERTZ_BOUNCE_BIT_T1, EM_PAIRWISE_BIT_T1, WL_STRIDE, WL_META_STRIDE, OBSERVERS_PER_GROUP, STATS_LAYOUT } from './gpu-constants.js';
 import { createGPUDispatchPlan, updateGPUDispatchPlan } from './pass-graph.js';
 import { WORLDLINE_DT, WORLDLINE_LEN, GPU_MAX_PHOTONS, GPU_MAX_PIONS, GPU_MAX_LEPTONS, GPU_MAX_PARTICLES, GPU_HEATMAP_GRID, HEATMAP_INTERVAL_MASK, COL_MERGE, COL_BOUNCE, BOUND_LOOP, TORUS, COL_NAMES, BOUND_NAMES, TOPO_NAMES, SOFTENING, BH_SOFTENING, SOFTENING_SQ, BH_SOFTENING_SQ, CLOCK_PERIOD, HIGGS_COUPLING, AXION_COUPLING, BOSON_CHARGE, EPOCH_SPAN, EPOCH_STEP, kerrNewmanRadius } from '../config.js';
 import { installFieldMethods } from './gpu-fields.js';
@@ -110,6 +110,7 @@ export const LENS_RES = 512;
 const LENS_CORE_FRAC = 1e-4;
 const PROBE_RES = 1024;   // the probe's ray-shooting grid, finer: magnifications to ~1%
 const _ledgerAData = new Float32Array(4);           // boson-ledger.wgsl LedgerA
+const _ledgerAU32 = new Uint32Array(_ledgerAData.buffer);
 // The energy accounts the stats can't see (stats-display.js): escaped radiation (redshifting),
 // escaped leptons (matter), and the work the expansion has done
 // (escapedE: culled photons and culled leptons' kinetic energy, both redshifting as 1/a, the
@@ -416,7 +417,7 @@ export default class GPUPhysics {
         this._hitStagingI32 = null;
         this._hitStagingF32 = null;
 
-        // Stats readback (compute-stats.wgsl — 4 entry points)
+        // Stats readback (compute-stats.wgsl: per-workgroup partials, then statsReduce)
         this._statsPipelines = null;
         this._statsBindGroup0 = null;
         this._statsBindGroup1 = null;
@@ -3505,48 +3506,41 @@ export default class GPUPhysics {
             this._statsFieldHasAxion = !!this._axionBuffers;
         }
 
-        // Dispatch 4 entry points sequentially in one encoder
+        // Each pass writes per-workgroup partials and statsReduce adds them in a fixed order
+        // (compute-stats.wgsl); the workgroup counts follow from the aliveCount written above
         const encoder = this.device.createCommandEncoder({ label: 'computeStats' });
         const sp = this._statsPipelines;
-
-        // Pass 1+2: KE, momentum, COM, angular momentum (parallel, 64 threads)
-        const p1 = encoder.beginComputePass({ label: 'statsKEMom' });
-        p1.setPipeline(sp.statsKEMom);
-        p1.setBindGroup(0, this._statsBindGroup0);
-        p1.setBindGroup(1, this._statsBindGroup1);
-        p1.dispatchWorkgroups(1);
-        p1.end();
-
-        // Pass 3: PE + Darwin (serial O(N²))
-        const p2 = encoder.beginComputePass({ label: 'statsPE' });
-        p2.setPipeline(sp.statsPE);
-        p2.setBindGroup(0, this._statsBindGroup0);
-        p2.setBindGroup(1, this._statsBindGroup1);
-        p2.dispatchWorkgroups(1);
-        p2.end();
-
-        // Pass 4: Scalar field energy + momentum (parallel, 64 threads)
-        const p3 = encoder.beginComputePass({ label: 'statsField' });
-        p3.setPipeline(sp.statsField);
-        p3.setBindGroup(0, this._statsBindGroup0);
-        p3.setBindGroup(1, this._statsBindGroup1);
-        p3.dispatchWorkgroups(1);
-        p3.end();
-
-        // Pass 5+6: PFI + selected particle (serial)
-        const p4 = encoder.beginComputePass({ label: 'statsPFISel' });
-        p4.setPipeline(sp.statsPFISel);
-        p4.setBindGroup(0, this._statsBindGroup0);
-        p4.setBindGroup(1, this._statsBindGroup1);
-        p4.dispatchWorkgroups(1);
-        p4.end();
-
-        // The boson pools, and the ledger's accumulators since the last readback
+        const n = this.aliveCount;
+        const statsPass = (label, pipeline, workgroups) => {
+            const p = encoder.beginComputePass({ label });
+            p.setPipeline(pipeline);
+            p.setBindGroup(0, this._statsBindGroup0);
+            p.setBindGroup(1, this._statsBindGroup1);
+            p.dispatchWorkgroups(workgroups);
+            p.end();
+        };
+        if (n > 0) {
+            // KE, momentum, mass moments, angular momentum, the particle-field interaction,
+            // the reference body: 64 bodies a workgroup
+            statsPass('statsBodies', sp.statsBodies, Math.ceil(n / 64));
+            // The pairs: OBSERVERS_PER_GROUP rows a workgroup
+            statsPass('statsPE', sp.statsPE, Math.ceil(n / OBSERVERS_PER_GROUP));
+        }
+        // The scalar fields' energy and momentum, a cell a thread
+        if (this._toggles0 & (HIGGS_BIT | AXION_BIT)) {
+            statsPass('statsField', sp.statsField, STATS_LAYOUT.fieldGroups);
+        }
+        // The boson pools and pending radiation (bodies below the aliveCount)
+        _ledgerAU32[1] = n;
+        this.device.queue.writeBuffer(this._ledgerAUniform, 0, _ledgerAData);
         const p5 = encoder.beginComputePass({ label: 'statsBosons' });
         p5.setPipeline(this._ledgerPipelines.stats);
         p5.setBindGroup(0, this._ledgerBindGroup);
-        p5.dispatchWorkgroups(1);
+        p5.dispatchWorkgroups(STATS_LAYOUT.ledgerGroups);
         p5.end();
+        // The partials in order, the selected particle and the reference body
+        statsPass('statsReduce', sp.statsReduce, 1);
+        // The ledger's accumulators since the last readback
         encoder.copyBufferToBuffer(this._cosmoAccum, 0, this.buffers.statsBuffer, 96 * 4, 32);
         encoder.clearBuffer(this._cosmoAccum);
 

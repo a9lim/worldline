@@ -1,16 +1,35 @@
-// compute-stats.wgsl — Parallel stats reduction: KE, PE, momentum, angular momentum,
-// Darwin field energy/momentum, scalar field energy/momentum, selected particle readback.
+// compute-stats.wgsl — The stats readback: KE, PE, momentum, angular momentum, the Darwin
+// field energy and momentum, the scalar fields' energy and momentum, the particle-field
+// interaction, the selected particle and the reference body.
 //
-// Four entry points dispatched sequentially:
-//   statsKEMom:  (1,1,1) @workgroup_size(64) — Passes 1+2: KE, momentum, COM, angular momentum
-//   statsPE:     (1,1,1) @workgroup_size(256) — Pass 3: PE, the 1PN energies, Darwin field
-//                                              energy and momentum (O(N²), rows strided)
-//   statsField:  (1,1,1) @workgroup_size(64) — Pass 4: Scalar field energy + momentum
-//   statsPFISel: (1,1,1) @workgroup_size(1)  — Passes 5+6: PFI + selected particle
+// Every sum is spread over workgroups that write partials past the results (STATS_LAYOUT,
+// gpu-constants.js), and statsReduce adds them in a fixed order, so the same state reads back
+// the same numbers (WebGPU has no float atomics). Dispatched in order, in one encoder:
+//   statsBodies (ceil(N/64) × 64): KE, momentum, mass and its first moments, angular momentum
+//                about the workgroup's own centre of mass, spin, the particle-field
+//                interaction (PQS), and the heaviest body other than the selection
+//   statsPE     (ceil(N/OBSERVERS_PER_GROUP) × 256): the pairs j > i, OBSERVERS_PER_GROUP rows
+//                a workgroup with the rest of its threads as lanes over the sources (as in
+//                pair-force.wgsl), sources tiled through shared memory: PE, the 1PN energies,
+//                the Darwin field energy and momentum, peScale
+//   statsField  (STATS_FIELD_GROUPS × 256, with Higgs or axion): the fields' energy and
+//                momentum, a cell a thread
+//   statsBosons (boson-ledger.wgsl, STATS_LEDGER_GROUPS × 64): the pools, pending radiation
+//   statsReduce (1 × 256): adds the partials, moves the angular momenta to the total centre of
+//                mass, copies the selected particle and the reference body
+//
+// Partials, f32 words from each base for workgroup g:
+//   STATS_LEDGER_PART + 8g: photon E, px, py; pion and lepton E, px, py; pending radiation
+//   STATS_BODY_PART + 16g:  linearKE, spinKE, px, py; M, Σmx, Σmy, spin L; higgsPfi, axionPfi,
+//                           orbital L about the workgroup's centre of mass, reference mass;
+//                           reference index (f32, −1 for none)
+//   STATS_PE_PART + 8g:     pe, peScale, darwinE, darwinPx, darwinPy
+//   STATS_FIELD_PART + 4g:  higgsE, axionE, fieldMomX, fieldMomY
 //
 // Constants from wgslConstants: INERTIA_K, SOFTENING_SQ, BH_SOFTENING_SQ, YUKAWA_COUPLING,
 //   FLAG_ALIVE, FLAG_ANTIMATTER, ONE_PN_BIT, GRAVITY_BIT, COULOMB_BIT, MAGNETIC_BIT,
-//   GRAVITOMAG_BIT, YUKAWA_BIT, HIGGS_BIT, AXION_BIT, BLACK_HOLE_BIT, AXION_COUPLING
+//   GRAVITOMAG_BIT, YUKAWA_BIT, HIGGS_BIT, AXION_BIT, BLACK_HOLE_BIT, AXION_COUPLING,
+//   OBSERVERS_PER_GROUP, STATS_*
 
 struct StatsUniforms {
     aliveCount: u32,
@@ -51,7 +70,7 @@ struct AxYukMod {
 @group(1) @binding(2) var<storage, read> axionField: array<f32>;
 @group(1) @binding(3) var<storage, read> axionFieldDot: array<f32>;
 
-// Output layout (128 f32 = 512 bytes):
+// Output layout (the first 128 f32, 512 bytes, which are read back):
 // [0]  linearKE      [1]  spinKE       [2]  px           [3]  py
 // [4]  orbAngMom     [5]  spinAngMom   [6]  comX         [7]  comY
 // [8]  totalMass     [9]  aliveCount   [10] pe           [11] darwinFieldE
@@ -90,173 +109,223 @@ fn bhInvPotential(rawRSq: f32, m: f32, charge: f32, angVel: f32, angMomentum: f3
     return 1.0 / gap;
 }
 
+// ─── Workgroup reductions ───
+// Tree sums in a fixed order. Every invocation of the workgroup must call them, with the
+// workgroup's size; each returns the total to every invocation.
+
+var<workgroup> red4: array<vec4<f32>, 256>;
+var<workgroup> redRef: array<vec2<f32>, 256>;
+
+fn reduce4(lid: u32, v: vec4<f32>, size: u32) -> vec4<f32> {
+    red4[lid] = v;
+    workgroupBarrier();
+    for (var s = size >> 1u; s > 0u; s >>= 1u) {
+        if (lid < s) { red4[lid] += red4[lid + s]; }
+        workgroupBarrier();
+    }
+    let total = red4[0];
+    workgroupBarrier();
+    return total;
+}
+
+/** The heavier of two reference candidates (mass, index; none is (0, −1)), ties to the lower index */
+fn heavier(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
+    if (b.y < 0.0) { return a; }
+    if (a.y < 0.0 || b.x > a.x || (b.x == a.x && b.y < a.y)) { return b; }
+    return a;
+}
+
+fn reduceHeaviest(lid: u32, v: vec2<f32>, size: u32) -> vec2<f32> {
+    redRef[lid] = v;
+    workgroupBarrier();
+    for (var s = size >> 1u; s > 0u; s >>= 1u) {
+        if (lid < s) { redRef[lid] = heavier(redRef[lid], redRef[lid + s]); }
+        workgroupBarrier();
+    }
+    let best = redRef[0];
+    workgroupBarrier();
+    return best;
+}
+
+// Particle-field interaction energy of one body (PQS interpolation): Higgs, axion
+fn particleFieldEnergy(p: ParticleState, FGRID: u32, higgsOn: bool, axionOn: bool,
+                       coulOn: bool, yukOn: bool) -> vec2<f32> {
+    let cellW = params.domainW / f32(FGRID);
+    let cellH = params.domainH / f32(FGRID);
+    let invCellW = 1.0 / cellW;
+    let invCellH = 1.0 / cellH;
+    // PQS grid coords
+    let gx = p.posX * invCellW - 0.5;
+    let gy = p.posY * invCellH - 0.5;
+    let ix0 = i32(floor(gx));
+    let iy0 = i32(floor(gy));
+    let fx = gx - f32(ix0);
+    let fy = gy - f32(iy0);
+
+    // PQS (cubic B-spline) weights
+    var wx: array<f32, 4>;
+    var wy: array<f32, 4>;
+    let fx2 = fx * fx; let fx3 = fx2 * fx;
+    wx[0] = (1.0 - 3.0*fx + 3.0*fx2 - fx3) / 6.0;
+    wx[1] = (4.0 - 6.0*fx2 + 3.0*fx3) / 6.0;
+    wx[2] = (1.0 + 3.0*fx + 3.0*fx2 - 3.0*fx3) / 6.0;
+    wx[3] = fx3 / 6.0;
+    let fy2 = fy * fy; let fy3 = fy2 * fy;
+    wy[0] = (1.0 - 3.0*fy + 3.0*fy2 - fy3) / 6.0;
+    wy[1] = (4.0 - 6.0*fy2 + 3.0*fy3) / 6.0;
+    wy[2] = (1.0 + 3.0*fy + 3.0*fy2 - 3.0*fy3) / 6.0;
+    wy[3] = fy3 / 6.0;
+
+    // Interpolate field values
+    var higgsVal: f32 = 0.0;
+    var axionVal: f32 = 0.0;
+    for (var dy = 0; dy < 4; dy++) {
+        let ny = clamp(iy0 + dy - 1, 0, i32(FGRID) - 1);
+        let wwy = wy[dy];
+        for (var dx = 0; dx < 4; dx++) {
+            let nx = clamp(ix0 + dx - 1, 0, i32(FGRID) - 1);
+            let w = wx[dx] * wwy;
+            let ci = u32(ny) * FGRID + u32(nx);
+            if (higgsOn) { higgsVal += higgsField[ci] * w; }
+            if (axionOn) { axionVal += axionField[ci] * w; }
+        }
+    }
+
+    var e = vec2(0.0);
+    // Higgs PFI: -baseMass * (|phi| - 1)
+    if (higgsOn) {
+        e.x -= p.baseMass * (abs(higgsVal) - 1.0);
+    }
+    // Axion PFI: -g*q²*a (EM channel) - g*m*sign*a (PQ channel)
+    if (axionOn) {
+        let isAnti = (p.flags & FLAG_ANTIMATTER) != 0u;
+        if (coulOn) {
+            e.y -= AXION_COUPLING * p.charge * p.charge * axionVal;
+        }
+        if (yukOn) {
+            let sign = select(1.0, -1.0, isAnti);
+            e.y -= AXION_COUPLING * p.mass * sign * axionVal;
+        }
+    }
+    return e;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
-// Entry 1: statsKEMom — Parallel KE, momentum, COM, angular momentum
-// Dispatch (1,1,1) with workgroup_size(64). Each thread processes N/64 particles.
-// Two-phase: first accumulate KE+momentum+COM, barrier, then angular momentum about COM.
+// Entry 1: statsBodies — a body a thread: KE, momentum, mass moments, angular momentum about
+// the workgroup's centre of mass, spin, the particle-field interaction, the reference body
 // ═══════════════════════════════════════════════════════════════════════════
 
-const KE_WG: u32 = 64u;
+const BODY_WG: u32 = 64u;
 
-// Shared memory for tree reduction (9 channels for pass 1, 2 for pass 2)
-var<workgroup> sh_linearKE: array<f32, KE_WG>;
-var<workgroup> sh_spinKE: array<f32, KE_WG>;
-var<workgroup> sh_px: array<f32, KE_WG>;
-var<workgroup> sh_py: array<f32, KE_WG>;
-var<workgroup> sh_totalMass: array<f32, KE_WG>;
-var<workgroup> sh_comX: array<f32, KE_WG>;
-var<workgroup> sh_comY: array<f32, KE_WG>;
-var<workgroup> sh_orbAngMom: array<f32, KE_WG>;
-var<workgroup> sh_spinAngMom: array<f32, KE_WG>;
-
-// Broadcast COM from thread 0 to all threads
-var<workgroup> sh_comXFinal: f32;
-var<workgroup> sh_comYFinal: f32;
-
-@compute @workgroup_size(KE_WG)
-fn statsKEMom(@builtin(local_invocation_id) lid: vec3u) {
-    let tid = lid.x;
+@compute @workgroup_size(BODY_WG)
+fn statsBodies(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
     let n = params.aliveCount;
+    let i = wid.x * BODY_WG + lid;
     let relOn = toggle(RELATIVITY_BIT);
     // Without Relativity, EIH's kinetic energy carries its ⅜mv⁴ (statsPE)
     let eihKinetic = !relOn && toggle(ONE_PN_BIT) && toggle(GRAVITOMAG_BIT);
+    let higgsOn = toggle(HIGGS_BIT);
+    let axionOn = toggle(AXION_BIT);
+    let FGRID = params.fieldGridRes;
+    let pfiOn = (higgsOn || axionOn) && FGRID > 0u;
 
-    // ─── Pass 1: Each thread accumulates KE, momentum, COM for its partition ───
-    var localLinearKE: f32 = 0.0;
-    var localSpinKE: f32 = 0.0;
-    var localPx: f32 = 0.0;
-    var localPy: f32 = 0.0;
-    var localTotalMass: f32 = 0.0;
-    var localComX: f32 = 0.0;
-    var localComY: f32 = 0.0;
-
-    // Strided loop: thread tid processes particles tid, tid+64, tid+128, ...
-    var i = tid;
-    while (i < n) {
+    var kin = vec4(0.0);     // linearKE, spinKE, px, py
+    var mom = vec4(0.0);     // M, Σmx, Σmy, spin L
+    var pfi = vec2(0.0);     // Higgs, axion
+    var best = vec2(0.0, -1.0);
+    var alive = false;
+    var pos = vec2(0.0);
+    if (i < n) {
         let p = particles[i];
         if ((p.flags & FLAG_ALIVE) != 0u) {
+            alive = true;
             let d = derived[i];
             let m = p.mass;
             if (relOn) {
                 let wSq = p.velWX * p.velWX + p.velWY * p.velWY;
                 let gamma = sqrt(1.0 + wSq);
-                localLinearKE += wSq / (gamma + 1.0) * m;
+                kin.x = wSq / (gamma + 1.0) * m;
                 let srSq = p.angW * p.angW * d.bodyRSq;
                 let gammaRot = sqrt(1.0 + srSq);
-                localSpinKE += INERTIA_K * m * srSq / (gammaRot + 1.0);
+                kin.y = INERTIA_K * m * srSq / (gammaRot + 1.0);
             } else {
                 let vSq = d.velX * d.velX + d.velY * d.velY;
-                localLinearKE += 0.5 * m * vSq;
-                if (eihKinetic) { localLinearKE += 0.375 * m * vSq * vSq; }
-                localSpinKE += 0.5 * INERTIA_K * m * d.bodyRSq * d.angVel * d.angVel;
+                kin.x = 0.5 * m * vSq;
+                if (eihKinetic) { kin.x += 0.375 * m * vSq * vSq; }
+                kin.y = 0.5 * INERTIA_K * m * d.bodyRSq * d.angVel * d.angVel;
             }
-            localPx += m * p.velWX;
-            localPy += m * p.velWY;
-            localTotalMass += m;
-            localComX += m * p.posX;
-            localComY += m * p.posY;
+            kin.z = m * p.velWX;
+            kin.w = m * p.velWY;
+            mom = vec4(m, m * p.posX, m * p.posY, INERTIA_K * m * d.bodyRSq * p.angW);
+            pos = vec2(p.posX, p.posY);
+            if (pfiOn) {
+                pfi = particleFieldEnergy(p, FGRID, higgsOn, axionOn, toggle(COULOMB_BIT), toggle(YUKAWA_BIT));
+            }
+            if (i32(i) != params.selectedIdx && m > 0.0) { best = vec2(m, f32(i)); }
         }
-        i += KE_WG;
     }
 
-    // Store to shared memory
-    sh_linearKE[tid] = localLinearKE;
-    sh_spinKE[tid] = localSpinKE;
-    sh_px[tid] = localPx;
-    sh_py[tid] = localPy;
-    sh_totalMass[tid] = localTotalMass;
-    sh_comX[tid] = localComX;
-    sh_comY[tid] = localComY;
-    workgroupBarrier();
+    let kinT = reduce4(lid, kin, BODY_WG);
+    let momT = reduce4(lid, mom, BODY_WG);
+    // Orbital angular momentum about this workgroup's centre of mass; statsReduce moves it
+    var c = vec2(momT.y, momT.z);
+    if (momT.x > 0.0) { c /= momT.x; }
+    var orb = 0.0;
+    if (alive) { orb = (pos.x - c.x) * kin.w - (pos.y - c.y) * kin.z; }
+    let restT = reduce4(lid, vec4(pfi, orb, 0.0), BODY_WG);
+    let refT = reduceHeaviest(lid, best, BODY_WG);
 
-    // Tree reduction (log2(64) = 6 steps)
-    for (var stride = KE_WG >> 1u; stride > 0u; stride >>= 1u) {
-        if (tid < stride) {
-            sh_linearKE[tid] += sh_linearKE[tid + stride];
-            sh_spinKE[tid] += sh_spinKE[tid + stride];
-            sh_px[tid] += sh_px[tid + stride];
-            sh_py[tid] += sh_py[tid + stride];
-            sh_totalMass[tid] += sh_totalMass[tid + stride];
-            sh_comX[tid] += sh_comX[tid + stride];
-            sh_comY[tid] += sh_comY[tid + stride];
-        }
-        workgroupBarrier();
-    }
-
-    // Thread 0 computes final COM and broadcasts
-    if (tid == 0u) {
-        let tm = sh_totalMass[0];
-        var cx = sh_comX[0];
-        var cy = sh_comY[0];
-        if (tm > 0.0) { cx /= tm; cy /= tm; }
-        sh_comXFinal = cx;
-        sh_comYFinal = cy;
-
-        // Write pass 1 results
-        stats[0] = sh_linearKE[0];
-        stats[1] = sh_spinKE[0];
-        stats[2] = sh_px[0];
-        stats[3] = sh_py[0];
-        stats[8] = tm;
-        stats[9] = f32(n);
-        stats[6] = cx;
-        stats[7] = cy;
-    }
-    workgroupBarrier();
-
-    // ─── Pass 2: Angular momentum about COM ───
-    let comXF = sh_comXFinal;
-    let comYF = sh_comYFinal;
-
-    var localOrbAngMom: f32 = 0.0;
-    var localSpinAngMom: f32 = 0.0;
-    i = tid;
-    while (i < n) {
-        let p = particles[i];
-        if ((p.flags & FLAG_ALIVE) != 0u) {
-            let d = derived[i];
-            let m = p.mass;
-            localOrbAngMom += (p.posX - comXF) * (m * p.velWY) - (p.posY - comYF) * (m * p.velWX);
-            localSpinAngMom += INERTIA_K * m * d.bodyRSq * p.angW;
-        }
-        i += KE_WG;
-    }
-
-    sh_orbAngMom[tid] = localOrbAngMom;
-    sh_spinAngMom[tid] = localSpinAngMom;
-    workgroupBarrier();
-
-    for (var stride = KE_WG >> 1u; stride > 0u; stride >>= 1u) {
-        if (tid < stride) {
-            sh_orbAngMom[tid] += sh_orbAngMom[tid + stride];
-            sh_spinAngMom[tid] += sh_spinAngMom[tid + stride];
-        }
-        workgroupBarrier();
-    }
-
-    if (tid == 0u) {
-        stats[4] = sh_orbAngMom[0];
-        stats[5] = sh_spinAngMom[0];
+    if (lid == 0u) {
+        let b = STATS_BODY_PART + wid.x * 16u;
+        stats[b] = kinT.x;       stats[b + 1u] = kinT.y;
+        stats[b + 2u] = kinT.z;  stats[b + 3u] = kinT.w;
+        stats[b + 4u] = momT.x;  stats[b + 5u] = momT.y;
+        stats[b + 6u] = momT.z;  stats[b + 7u] = momT.w;
+        stats[b + 8u] = restT.x; stats[b + 9u] = restT.y;
+        stats[b + 10u] = restT.z;
+        stats[b + 11u] = refT.x; stats[b + 12u] = refT.y;
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Entry 2: statsPE — O(N²) pairwise PE, the velocity-dependent energies, Darwin momentum
-// Dispatch (1,1,1) with workgroup_size(256): each thread takes the rows i ≡ tid (mod 256),
-// pairs j > i, and a tree reduction sums the five accumulators.
+// Each workgroup takes PE_OBSERVERS rows i, PE_LANES threads to a row, over the pairs j > i;
+// the sources pass through shared memory PE_TILE at a time.
 // ═══════════════════════════════════════════════════════════════════════════
 
-const PE_WG: u32 = 256u;
+const PE_OBSERVERS: u32 = OBSERVERS_PER_GROUP;
+const PE_LANES: u32 = 256u / PE_OBSERVERS;
+const PE_WG: u32 = PE_OBSERVERS * PE_LANES;
+const PE_TILE: u32 = 128u;   // at most PE_WG
 
-var<workgroup> sh_pe: array<f32, PE_WG>;
-var<workgroup> sh_peScale: array<f32, PE_WG>;
-var<workgroup> sh_darwinE: array<f32, PE_WG>;
-var<workgroup> sh_darwinPx: array<f32, PE_WG>;
-var<workgroup> sh_darwinPy: array<f32, PE_WG>;
+struct PEBody {
+    posX: f32, posY: f32, mass: f32, charge: f32,
+    velX: f32, velY: f32, angVel: f32, angMomentum: f32,
+    magMoment: f32, axMod: f32, yukMod: f32, higgsMod: f32,
+    alive: u32,
+};
+
+var<workgroup> peTile: array<PEBody, PE_TILE>;
+
+fn loadPEBody(i: u32, n: u32) -> PEBody {
+    var b: PEBody;
+    if (i >= n) { return b; }
+    let p = particles[i];
+    if ((p.flags & FLAG_ALIVE) == 0u) { return b; }
+    let d = derived[i];
+    let mods = axYukMod[i];
+    b.posX = p.posX;          b.posY = p.posY;
+    b.mass = p.mass;          b.charge = p.charge;
+    b.velX = d.velX;          b.velY = d.velY;
+    b.angVel = d.angVel;      b.angMomentum = d.angMomentum;
+    b.magMoment = d.magMoment;
+    b.axMod = mods.axMod;     b.yukMod = mods.yukMod;    b.higgsMod = mods.higgsMod;
+    b.alive = 1u;
+    return b;
+}
 
 @compute @workgroup_size(PE_WG)
-fn statsPE(@builtin(local_invocation_id) lid: vec3u) {
-    let tid = lid.x;
+fn statsPE(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) lid: u32) {
     let n = params.aliveCount;
     let gravOn = toggle(GRAVITY_BIT);
     let coulOn = toggle(COULOMB_BIT);
@@ -272,8 +341,13 @@ fn statsPE(@builtin(local_invocation_id) lid: vec3u) {
     let relOn = toggle(RELATIVITY_BIT);
     let darwinOn = relOn && coulOn;
     let eihOn = onePNOn && gmOn;
-    // EIH's ⅜mv⁴ is in statsKEMom's kinetic energy without Relativity; it redshifts as v⁴
+    // EIH's ⅜mv⁴ is in statsBodies' kinetic energy without Relativity; it redshifts as v⁴
     let eihKinetic = eihOn && !relOn;
+
+    let lane = lid / PE_OBSERVERS;
+    let i = wid.x * PE_OBSERVERS + lid % PE_OBSERVERS;
+    let pi = loadPEBody(i, n);
+    let rowAlive = pi.alive != 0u;
 
     var pe: f32 = 0.0;
     // dE/d(ln a) of the interaction energies for a uniform stretch, peculiar velocities ∝ 1/a:
@@ -283,20 +357,20 @@ fn statsPE(@builtin(local_invocation_id) lid: vec3u) {
     var darwinPx: f32 = 0.0;
     var darwinPy: f32 = 0.0;
 
-    for (var i = tid; i < n; i += PE_WG) {
-        let pi = particles[i];
-        if ((pi.flags & FLAG_ALIVE) == 0u) { continue; }
-        let di = derived[i];
-        let modi = axYukMod[i];
-        if (eihKinetic) {
-            let viSq = di.velX * di.velX + di.velY * di.velY;
-            peScale -= 1.5 * pi.mass * viSq * viSq;
-        }
-        for (var j = i + 1u; j < n; j++) {
-            let pj = particles[j];
-            if ((pj.flags & FLAG_ALIVE) == 0u) { continue; }
-            let dj = derived[j];
-            let modj = axYukMod[j];
+    if (rowAlive && lane == 0u && eihKinetic) {
+        let viSq = pi.velX * pi.velX + pi.velY * pi.velY;
+        peScale -= 1.5 * pi.mass * viSq * viSq;
+    }
+
+    // The first source any row here pairs with is the workgroup's first row + 1
+    for (var t0 = (wid.x * PE_OBSERVERS + 1u) / PE_TILE * PE_TILE; t0 < n; t0 += PE_TILE) {
+        if (lid < PE_TILE) { peTile[lid] = loadPEBody(t0 + lid, n); }
+        workgroupBarrier();
+        for (var k = lane; rowAlive && k < PE_TILE; k += PE_LANES) {
+            let j = t0 + k;
+            if (j <= i) { continue; }
+            let pj = peTile[k];
+            if (pj.alive == 0u) { continue; }
 
             var dx = pj.posX - pi.posX;
             var dy = pj.posY - pi.posY;
@@ -315,14 +389,14 @@ fn statsPE(@builtin(local_invocation_id) lid: vec3u) {
             // d·∂/∂d of a (d² + ε²)^(−n/2) potential is −n·V·d²/(d² + ε²)
             let stretch = rawRSq * invR * invR;
 
-            let axModPair = sqrt(max(modi.axMod * modj.axMod, 0.0));
-            let yukModPair = sqrt(max(modi.yukMod * modj.yukMod, 0.0));
+            let axModPair = sqrt(max(pi.axMod * pj.axMod, 0.0));
+            let yukModPair = sqrt(max(pi.yukMod * pj.yukMod, 0.0));
 
             // Gravity PE
             if (gravOn) {
                 if (bhOn) {
-                    let invPi = bhInvPotential(rawRSq, pi.mass, pi.charge, di.angVel, di.angMomentum);
-                    let invPj = bhInvPotential(rawRSq, pj.mass, pj.charge, dj.angVel, dj.angMomentum);
+                    let invPi = bhInvPotential(rawRSq, pi.mass, pi.charge, pi.angVel, pi.angMomentum);
+                    let invPj = bhInvPotential(rawRSq, pj.mass, pj.charge, pj.angVel, pj.angMomentum);
                     pe -= 0.5 * pi.mass * pj.mass * (invPi + invPj);
                     peScale += 0.5 * pi.mass * pj.mass * (invPi + invPj) * stretch;
                 } else {
@@ -340,14 +414,14 @@ fn statsPE(@builtin(local_invocation_id) lid: vec3u) {
 
             // Magnetic dipole PE
             if (magOn) {
-                let v = di.magMoment * dj.magMoment * invR3 * axModPair;
+                let v = pi.magMoment * pj.magMoment * invR3 * axModPair;
                 pe += v;
                 peScale -= 3.0 * v * stretch;
             }
 
             // GM dipole PE
             if (gmOn) {
-                let v = -di.angMomentum * dj.angMomentum * invR3;
+                let v = -pi.angMomentum * pj.angMomentum * invR3;
                 pe += v;
                 peScale -= 3.0 * v * stretch;
             }
@@ -357,11 +431,11 @@ fn statsPE(@builtin(local_invocation_id) lid: vec3u) {
             // Lagrangian: a term of degree 2 in the velocities enters as +L, a static one as −L.
             // The magnetic and gravitomagnetic Lorentz forces do no work, so without Relativity
             // or 1PN the energy is T + V alone. n̂ = r/r with the forces' softened r.
-            let viSq = di.velX * di.velX + di.velY * di.velY;
-            let vjSq = dj.velX * dj.velX + dj.velY * dj.velY;
-            let viDotVj = di.velX * dj.velX + di.velY * dj.velY;
-            let viDotN = di.velX * rx + di.velY * ry;
-            let vjDotN = dj.velX * rx + dj.velY * ry;
+            let viSq = pi.velX * pi.velX + pi.velY * pi.velY;
+            let vjSq = pj.velX * pj.velX + pj.velY * pj.velY;
+            let viDotVj = pi.velX * pj.velX + pi.velY * pj.velY;
+            let viDotN = pi.velX * rx + pi.velY * ry;
+            let vjDotN = pj.velX * rx + pj.velY * ry;
 
             // Darwin (Relativity + Coulomb): Liénard–Wiechert's field about the present position
             // is Darwin's to O(v²), so E = T + V + L_D with L_D = (q₁q₂/2r)[v₁·v₂ + (n̂·v₁)(n̂·v₂)],
@@ -373,8 +447,8 @@ fn statsPE(@builtin(local_invocation_id) lid: vec3u) {
                 let e2 = 0.5 * qqInvR * (viDotVj + viDotN * vjDotN);
                 darwinE += e2;
                 peScale -= (stretch + 2.0) * e2;
-                let sumVx = di.velX + dj.velX;
-                let sumVy = di.velY + dj.velY;
+                let sumVx = pi.velX + pj.velX;
+                let sumVy = pi.velY + pj.velY;
                 let svDotN = sumVx * rx + sumVy * ry;
                 darwinPx += 0.5 * qqInvR * (sumVx + rx * svDotN);
                 darwinPy += 0.5 * qqInvR * (sumVy + ry * svDotN);
@@ -405,7 +479,7 @@ fn statsPE(@builtin(local_invocation_id) lid: vec3u) {
 
             // Yukawa PE (Higgs-modulated μ when both enabled)
             if (yukOn) {
-                let muEff = select(yukMu, yukMu * sqrt(modi.higgsMod * modj.higgsMod), higgsOn);
+                let muEff = select(yukMu, yukMu * sqrt(pi.higgsMod * pj.higgsMod), higgsOn);
                 let mur = muEff * r;
                 if (mur < 6.0) {
                     let yukPE = -YUKAWA_COUPLING * yukModPair * pi.mass * pj.mass * exp(-mur) * invR;
@@ -423,48 +497,29 @@ fn statsPE(@builtin(local_invocation_id) lid: vec3u) {
                 }
             }
         }
-    }
-
-    sh_pe[tid] = pe;
-    sh_peScale[tid] = peScale;
-    sh_darwinE[tid] = darwinE;
-    sh_darwinPx[tid] = darwinPx;
-    sh_darwinPy[tid] = darwinPy;
-    workgroupBarrier();
-    for (var stride = PE_WG >> 1u; stride > 0u; stride >>= 1u) {
-        if (tid < stride) {
-            sh_pe[tid] += sh_pe[tid + stride];
-            sh_peScale[tid] += sh_peScale[tid + stride];
-            sh_darwinE[tid] += sh_darwinE[tid + stride];
-            sh_darwinPx[tid] += sh_darwinPx[tid + stride];
-            sh_darwinPy[tid] += sh_darwinPy[tid + stride];
-        }
         workgroupBarrier();
     }
-    if (tid == 0u) {
-        stats[10] = sh_pe[0];
-        stats[26] = sh_peScale[0];
-        stats[11] = sh_darwinE[0];
-        stats[12] = sh_darwinPx[0];
-        stats[13] = sh_darwinPy[0];
+
+    let sumA = reduce4(lid, vec4(pe, peScale, darwinE, darwinPx), PE_WG);
+    let sumB = reduce4(lid, vec4(darwinPy, 0.0, 0.0, 0.0), PE_WG);
+    if (lid == 0u) {
+        let b = STATS_PE_PART + wid.x * 8u;
+        stats[b] = sumA.x;      stats[b + 1u] = sumA.y;
+        stats[b + 2u] = sumA.z; stats[b + 3u] = sumA.w;
+        stats[b + 4u] = sumB.x;
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Entry 3: statsField — Parallel scalar field energy + momentum
-// Dispatch (1,1,1) with workgroup_size(64). Each thread processes GRID_SQ/64 cells.
+// Entry 3: statsField — Scalar field energy + momentum, a cell a thread
+// Dispatched only with Higgs or axion on (statsReduce reads it under the same test).
 // ═══════════════════════════════════════════════════════════════════════════
 
-const FLD_WG: u32 = 64u;
-
-var<workgroup> sh_higgsE: array<f32, FLD_WG>;
-var<workgroup> sh_axionE: array<f32, FLD_WG>;
-var<workgroup> sh_fmx: array<f32, FLD_WG>;
-var<workgroup> sh_fmy: array<f32, FLD_WG>;
+const FLD_WG: u32 = 256u;
 
 @compute @workgroup_size(FLD_WG)
-fn statsField(@builtin(local_invocation_id) lid: vec3u) {
-    let tid = lid.x;
+fn statsField(@builtin(global_invocation_id) gid: vec3u, @builtin(workgroup_id) wid: vec3u,
+              @builtin(local_invocation_index) lid: u32) {
     let higgsOn = toggle(HIGGS_BIT);
     let axionOn = toggle(AXION_BIT);
     let FGRID = params.fieldGridRes;
@@ -489,9 +544,8 @@ fn statsField(@builtin(local_invocation_id) lid: vec3u) {
         let scaleX = cellH * 0.5;
         let scaleY = cellW * 0.5;
 
-        // Strided loop: thread tid processes cells tid, tid+64, tid+128, ...
-        var idx = tid;
-        while (idx < FGRID_SQ) {
+        // A cell a thread (strided, should the grid outgrow the dispatch)
+        for (var idx = gid.x; idx < FGRID_SQ; idx += STATS_FIELD_GROUPS * FLD_WG) {
             let ix = idx % FGRID;
             let iy = idx / FGRID;
             let ixp = min(ix + 1u, FGRID - 1u);
@@ -533,122 +587,110 @@ fn statsField(@builtin(local_invocation_id) lid: vec3u) {
                 let a = axionField[idx];
                 localHiggsE += 0.5 * HIGGS_AXION_COUPLING * phi * phi * a * a * cellArea;
             }
-
-            idx += FLD_WG;
         }
     }
 
-    // Store to shared memory and reduce
-    sh_higgsE[tid] = localHiggsE;
-    sh_axionE[tid] = localAxionE;
-    sh_fmx[tid] = localFmx;
-    sh_fmy[tid] = localFmy;
-    workgroupBarrier();
-
-    for (var stride = FLD_WG >> 1u; stride > 0u; stride >>= 1u) {
-        if (tid < stride) {
-            sh_higgsE[tid] += sh_higgsE[tid + stride];
-            sh_axionE[tid] += sh_axionE[tid + stride];
-            sh_fmx[tid] += sh_fmx[tid + stride];
-            sh_fmy[tid] += sh_fmy[tid + stride];
-        }
-        workgroupBarrier();
-    }
-
-    if (tid == 0u) {
-        stats[14] = sh_higgsE[0];
-        stats[15] = sh_axionE[0];
-        stats[18] = sh_fmx[0];
-        stats[19] = sh_fmy[0];
+    let total = reduce4(lid, vec4(localHiggsE, localAxionE, localFmx, localFmy), FLD_WG);
+    if (lid == 0u) {
+        let b = STATS_FIELD_PART + wid.x * 4u;
+        stats[b] = total.x;      stats[b + 1u] = total.y;
+        stats[b + 2u] = total.z; stats[b + 3u] = total.w;
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Entry 4: statsPFISel — PFI (O(N×16) PQS) + selected particle copy
-// Dispatch (1,1,1) with workgroup_size(1). Unchanged from original.
+// Entry 4: statsReduce — the partials in a fixed order, then the selected particle and the
+// reference body. One workgroup, after every other stats pass (statsBosons included).
 // ═══════════════════════════════════════════════════════════════════════════
 
-@compute @workgroup_size(1)
-fn statsPFISel() {
+const RED_WG: u32 = 256u;
+
+@compute @workgroup_size(RED_WG)
+fn statsReduce(@builtin(local_invocation_index) lid: u32) {
     let n = params.aliveCount;
-    let coulOn = toggle(COULOMB_BIT);
-    let yukOn = toggle(YUKAWA_BIT);
-    let higgsOn = toggle(HIGGS_BIT);
-    let axionOn = toggle(AXION_BIT);
-    let FGRID = params.fieldGridRes;
+    let bodyGroups = (n + BODY_WG - 1u) / BODY_WG;
+    let peGroups = (n + PE_OBSERVERS - 1u) / PE_OBSERVERS;
+    let fieldsOn = (toggle(HIGGS_BIT) || toggle(AXION_BIT)) && params.fieldGridRes > 0u;
+    let fieldGroups = select(0u, STATS_FIELD_GROUPS, fieldsOn);
 
-    // ─── Pass 5: Particle-field interaction energy (PQS interpolation) ───
-    var higgsPfiE: f32 = 0.0;
-    var axionPfiE: f32 = 0.0;
-
-    if ((higgsOn || axionOn) && FGRID > 0u) {
-        let cellW = params.domainW / f32(FGRID);
-        let cellH = params.domainH / f32(FGRID);
-        let invCellW = 1.0 / cellW;
-        let invCellH = 1.0 / cellH;
-
-        for (var i = 0u; i < n; i++) {
-            let p = particles[i];
-            if ((p.flags & FLAG_ALIVE) == 0u) { continue; }
-            // PQS grid coords
-            let gx = p.posX * invCellW - 0.5;
-            let gy = p.posY * invCellH - 0.5;
-            let ix0 = i32(floor(gx));
-            let iy0 = i32(floor(gy));
-            let fx = gx - f32(ix0);
-            let fy = gy - f32(iy0);
-
-            // PQS (cubic B-spline) weights
-            var wx: array<f32, 4>;
-            var wy: array<f32, 4>;
-            let fx2 = fx * fx; let fx3 = fx2 * fx;
-            wx[0] = (1.0 - 3.0*fx + 3.0*fx2 - fx3) / 6.0;
-            wx[1] = (4.0 - 6.0*fx2 + 3.0*fx3) / 6.0;
-            wx[2] = (1.0 + 3.0*fx + 3.0*fx2 - 3.0*fx3) / 6.0;
-            wx[3] = fx3 / 6.0;
-            let fy2 = fy * fy; let fy3 = fy2 * fy;
-            wy[0] = (1.0 - 3.0*fy + 3.0*fy2 - fy3) / 6.0;
-            wy[1] = (4.0 - 6.0*fy2 + 3.0*fy3) / 6.0;
-            wy[2] = (1.0 + 3.0*fy + 3.0*fy2 - 3.0*fy3) / 6.0;
-            wy[3] = fy3 / 6.0;
-
-            // Interpolate field values
-            var higgsVal: f32 = 0.0;
-            var axionVal: f32 = 0.0;
-            for (var dy = 0; dy < 4; dy++) {
-                let ny = clamp(iy0 + dy - 1, 0, i32(FGRID) - 1);
-                let wwy = wy[dy];
-                for (var dx = 0; dx < 4; dx++) {
-                    let nx = clamp(ix0 + dx - 1, 0, i32(FGRID) - 1);
-                    let w = wx[dx] * wwy;
-                    let ci = u32(ny) * FGRID + u32(nx);
-                    if (higgsOn) { higgsVal += higgsField[ci] * w; }
-                    if (axionOn) { axionVal += axionField[ci] * w; }
-                }
-            }
-
-            // Higgs PFI: -baseMass * (|phi| - 1)
-            if (higgsOn) {
-                higgsPfiE -= p.baseMass * (abs(higgsVal) - 1.0);
-            }
-            // Axion PFI: -g*q²*a (EM channel) - g*m*sign*a (PQ channel)
-            if (axionOn) {
-                let isAnti = (p.flags & FLAG_ANTIMATTER) != 0u;
-                if (coulOn) {
-                    axionPfiE -= AXION_COUPLING * p.charge * p.charge * axionVal;
-                }
-                if (yukOn) {
-                    let sign = select(1.0, -1.0, isAnti);
-                    axionPfiE -= AXION_COUPLING * p.mass * sign * axionVal;
-                }
-            }
-        }
+    // ─── Bodies ───
+    var kin = vec4(0.0);     // linearKE, spinKE, px, py
+    var mom = vec4(0.0);     // M, Σmx, Σmy, spin L
+    var pfi = vec2(0.0);
+    var best = vec2(0.0, -1.0);
+    for (var g = lid; g < bodyGroups; g += RED_WG) {
+        let b = STATS_BODY_PART + g * 16u;
+        kin += vec4(stats[b], stats[b + 1u], stats[b + 2u], stats[b + 3u]);
+        mom += vec4(stats[b + 4u], stats[b + 5u], stats[b + 6u], stats[b + 7u]);
+        pfi += vec2(stats[b + 8u], stats[b + 9u]);
+        best = heavier(best, vec2(stats[b + 11u], stats[b + 12u]));
+    }
+    // ─── Pairs ───
+    var peA = vec4(0.0);     // pe, peScale, darwinE, darwinPx
+    var darwinPy = 0.0;
+    for (var g = lid; g < peGroups; g += RED_WG) {
+        let b = STATS_PE_PART + g * 8u;
+        peA += vec4(stats[b], stats[b + 1u], stats[b + 2u], stats[b + 3u]);
+        darwinPy += stats[b + 4u];
+    }
+    // ─── Fields ───
+    var fld = vec4(0.0);     // higgsE, axionE, fieldMomX, fieldMomY
+    for (var g = lid; g < fieldGroups; g += RED_WG) {
+        let b = STATS_FIELD_PART + g * 4u;
+        fld += vec4(stats[b], stats[b + 1u], stats[b + 2u], stats[b + 3u]);
+    }
+    // ─── Bosons and pending radiation (boson-ledger.wgsl) ───
+    var ph = vec4(0.0);
+    var pn = vec4(0.0);
+    var pending = 0.0;
+    for (var g = lid; g < STATS_LEDGER_GROUPS; g += RED_WG) {
+        let b = STATS_LEDGER_PART + g * 8u;
+        ph += vec4(stats[b], stats[b + 1u], stats[b + 2u], 0.0);
+        pn += vec4(stats[b + 3u], stats[b + 4u], stats[b + 5u], 0.0);
+        pending += stats[b + 6u];
     }
 
-    stats[16] = higgsPfiE;
-    stats[17] = axionPfiE;
+    let kinT = reduce4(lid, kin, RED_WG);
+    let momT = reduce4(lid, mom, RED_WG);
+    let peT = reduce4(lid, peA, RED_WG);
+    let miscT = reduce4(lid, vec4(darwinPy, pfi, pending), RED_WG);
+    let fldT = reduce4(lid, fld, RED_WG);
+    let phT = reduce4(lid, ph, RED_WG);
+    let pnT = reduce4(lid, pn, RED_WG);
+    let refT = reduceHeaviest(lid, best, RED_WG);
 
-    // ─── Pass 6: Selected particle data (offset 32) ───
+    // Orbital angular momentum about the centre of mass: each workgroup's about its own, plus
+    // its momentum at its centre of mass about the total's
+    let tm = momT.x;
+    var com = vec2(momT.y, momT.z);
+    if (tm > 0.0) { com /= tm; }
+    var orb = 0.0;
+    for (var g = lid; g < bodyGroups; g += RED_WG) {
+        let b = STATS_BODY_PART + g * 16u;
+        let mg = stats[b + 4u];
+        if (mg > 0.0) {
+            let cg = vec2(stats[b + 5u], stats[b + 6u]) / mg;
+            orb += stats[b + 10u] + (cg.x - com.x) * stats[b + 3u] - (cg.y - com.y) * stats[b + 2u];
+        }
+    }
+    let orbT = reduce4(lid, vec4(orb, 0.0, 0.0, 0.0), RED_WG);
+
+    if (lid != 0u) { return; }
+    stats[0] = kinT.x;  stats[1] = kinT.y;
+    stats[2] = kinT.z;  stats[3] = kinT.w;
+    stats[4] = orbT.x;  stats[5] = momT.w;
+    stats[6] = com.x;   stats[7] = com.y;
+    stats[8] = tm;      stats[9] = f32(n);
+    stats[10] = peT.x;  stats[26] = peT.y;
+    stats[11] = peT.z;  stats[12] = peT.w;  stats[13] = miscT.x;
+    stats[14] = fldT.x; stats[15] = fldT.y;
+    stats[16] = miscT.y; stats[17] = miscT.z;
+    stats[18] = fldT.z; stats[19] = fldT.w;
+    stats[20] = phT.x;  stats[21] = phT.y;  stats[22] = phT.z;
+    stats[23] = pnT.x;  stats[24] = pnT.y;  stats[25] = pnT.z;
+    stats[27] = miscT.w;
+
+    // ─── Selected particle data (offset 32) ───
     let selIdx = params.selectedIdx;
     if (selIdx >= 0 && u32(selIdx) < n) {
         let si = u32(selIdx);
@@ -685,18 +727,10 @@ fn statsPFISel() {
         stats[36] = -1.0; // mass = -1 signals no selected particle
     }
 
-    // ─── Pass 7: Reference body (offset 80): the heaviest alive particle other ───
-    // than the selected one, which the phase plot and effective potential measure against.
-    var refIdx: i32 = -1;
-    var refMass: f32 = 0.0;
-    for (var i = 0u; i < n; i++) {
-        if (i32(i) == selIdx) { continue; }
-        let p = particles[i];
-        if ((p.flags & FLAG_ALIVE) == 0u) { continue; }
-        if (p.mass > refMass) { refMass = p.mass; refIdx = i32(i); }
-    }
-    if (refIdx >= 0) {
-        let ri = u32(refIdx);
+    // ─── Reference body (offset 80): the heaviest alive particle other than the selected ───
+    // one, which the phase plot and effective potential measure against; ties to the lower slot
+    if (refT.y >= 0.0) {
+        let ri = u32(refT.y);
         let p = particles[ri];
         let d = derived[ri];
         stats[80] = p.posX;  stats[81] = p.posY;
