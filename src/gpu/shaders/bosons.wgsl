@@ -1,5 +1,5 @@
 // ─── Boson Update Shaders ───
-// Photon/pion drift, gravitational lensing, absorption, pion decay.
+// Photon/pion drift, gravitational lensing, pion decay (absorption: boson-absorb.wgsl).
 //
 // Standalone shader — defines own structs (NOT prepended with common.wgsl).
 
@@ -13,7 +13,7 @@
 @group(0) @binding(0) var<uniform> u: SimUniforms;
 @group(0) @binding(1) var<storage, read_write> aliveCountAtomic: atomic<u32>;
 
-// Packed particle state (rw: absorption writes velW, decay spawns electrons)
+// Packed particle state
 @group(1) @binding(0) var<storage, read_write> particles: array<ParticleState>;
 @group(1) @binding(1) var<storage, read_write> particleAux: array<ParticleAux>;
 
@@ -24,53 +24,6 @@
 // Pion pool (packed)
 @group(3) @binding(0) var<storage, read_write> pions: array<Pion>;
 @group(3) @binding(1) var<storage, read_write> piCount: atomic<u32>;
-
-fn absorptionRadius(m: f32, q: f32, angW: f32) -> f32 {
-    let bodyR = pow(m, 1.0 / 3.0);
-    let bodyRSq = bodyR * bodyR;
-    var angVel = angW;
-    if ((u.toggles0 & RELATIVITY_BIT) != 0u) {
-        let sr = angW * bodyR;
-        angVel = angW / sqrt(1.0 + sr * sr);
-    }
-
-    if ((u.toggles0 & BLACK_HOLE_BIT) == 0u) {
-        return bodyR;
-    }
-    let a = INERTIA_K * bodyRSq * abs(angVel);
-    let disc = m * m - a * a - q * q;
-    return select(m, m + sqrt(max(0.0, disc)), disc >= 0.0);
-}
-
-fn absorbFourMomentum(j: u32, energy: f32, px: f32, py: f32, charge: f32) -> bool {
-    var p = particles[j];
-    if (p.mass <= EPSILON || energy <= EPSILON) { return false; }
-
-    let wSq0 = p.velWX * p.velWX + p.velWY * p.velWY;
-    let e0 = p.mass * sqrt(1.0 + wSq0);
-    let px0 = p.mass * p.velWX;
-    let py0 = p.mass * p.velWY;
-    let e1 = e0 + energy;
-    let px1 = px0 + px;
-    let py1 = py0 + py;
-    let mSq = e1 * e1 - px1 * px1 - py1 * py1;
-    if (!(mSq > EPSILON)) { return false; }
-
-    let newMass = sqrt(mSq);
-    if (newMass != newMass || newMass <= MIN_MASS) { return false; }
-
-    p.baseMass = p.baseMass * (newMass / p.mass);
-    p.mass = newMass;
-    p.charge += charge;
-    p.velWX = px1 / newMass;
-    p.velWY = py1 / newMass;
-    particles[j] = p;
-
-    var aux = particleAux[j];
-    aux.radius = absorptionRadius(newMass, p.charge, p.angW);
-    particleAux[j] = aux;
-    return true;
-}
 
 // Photon drift: move at c=1, apply gravitational lensing via pairwise fallback
 @compute @workgroup_size(64)
@@ -186,91 +139,6 @@ fn updatePions(@builtin(global_invocation_id) gid: vec3u) {
     if (pi.kind == 1u) { pi.energy += dt; }
 
     pions[i] = pi;
-}
-
-// Photon absorption: transfer four-momentum to nearby particles.
-// Single-threaded to avoid data races: multiple bosons targeting the same
-// particle would race on non-atomic f32 velocity/charge writes.
-@compute @workgroup_size(1)
-fn absorbPhotons(@builtin(global_invocation_id) gid: vec3u) {
-    let count = atomicLoad(&phCount);
-    let aliveN = u.aliveCount;
-
-    for (var i = 0u; i < count; i++) {
-        let ph = photons[i];
-        if ((ph.flags & 1u) == 0u) { continue; }
-        if (ph.lifetime < BOSON_MIN_AGE_TIME) { continue; }
-
-        let phX = ph.posX;
-        let phY = ph.posY;
-        let phEmitterId = ph.emitterId;
-        let phEnergy = ph.energy;
-        let phVelX = ph.velX;
-        let phVelY = ph.velY;
-
-        // Check all alive particles for overlap
-        for (var j = 0u; j < aliveN; j++) {
-            let pj = particles[j];
-            if ((pj.flags & FLAG_ALIVE) == 0u) { continue; }
-            let auxJ = particleAux[j];
-            if (auxJ.particleId == phEmitterId) { continue; } // self-absorption blocked
-
-            let dx = phX - pj.posX;
-            let dy = phY - pj.posY;
-            let distSq = dx * dx + dy * dy;
-            let rSq = auxJ.radius * auxJ.radius;
-            if (distSq < rSq) {
-                if (absorbFourMomentum(j, phEnergy, phEnergy * phVelX, phEnergy * phVelY, 0.0)) {
-                    photons[i].flags &= ~1u; // mark dead
-                    break;
-                }
-            }
-        }
-    }
-}
-
-// Pion absorption: transfer four-momentum + charge to nearby particles.
-// Single-threaded to avoid data races: multiple bosons targeting the same
-// particle would race on non-atomic f32 velocity/charge writes.
-@compute @workgroup_size(1)
-fn absorbPions(@builtin(global_invocation_id) gid: vec3u) {
-    let count = atomicLoad(&piCount);
-    let aliveN = u.aliveCount;
-
-    for (var i = 0u; i < count; i++) {
-        let pi = pions[i];
-        if ((pi.flags & 1u) == 0u) { continue; }
-        if (pi.age < BOSON_MIN_AGE) { continue; }
-        if (pi.kind != 0u) { continue; } // leptons are not absorbed
-
-        let piX = pi.posX;
-        let piY = pi.posY;
-        let piEmitterId = pi.emitterId;
-        let piWX = pi.wX;
-        let piWY = pi.wY;
-        let piCharge = pi.charge;
-
-        let gamma = sqrt(1.0 + piWX * piWX + piWY * piWY);
-        let piEnergy = pi.mass * gamma;
-        let piPx = pi.mass * piWX;
-        let piPy = pi.mass * piWY;
-
-        for (var j = 0u; j < aliveN; j++) {
-            let pj = particles[j];
-            if ((pj.flags & FLAG_ALIVE) == 0u) { continue; }
-            let auxJ = particleAux[j];
-            if (auxJ.particleId == piEmitterId) { continue; }
-
-            let dx = piX - pj.posX;
-            let dy = piY - pj.posY;
-            if (dx * dx + dy * dy < auxJ.radius * auxJ.radius) {
-                if (absorbFourMomentum(j, piEnergy, piPx, piPy, piCharge)) {
-                    pions[i].flags &= ~1u;
-                    break;
-                }
-            }
-        }
-    }
 }
 
 // Pion decay: pi0 -> 2 photons, pi+/- -> electron/positron + photon

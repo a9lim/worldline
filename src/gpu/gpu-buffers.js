@@ -14,7 +14,7 @@
 
 import {
     WORLDLINE_LEN, GPU_MAX_PHOTONS, GPU_MAX_PIONS,
-    GPU_SCALAR_GRID, GPU_MAX_LEPTONS,
+    GPU_SCALAR_GRID, GPU_MAX_LEPTONS, GPU_MAX_PARTICLES,
 } from '../config.js';
 import { WL_STRIDE, WL_META_STRIDE } from './gpu-constants.js';
 
@@ -257,6 +257,15 @@ export function createParticleBuffers(device, maxParticles) {
         label: 'pionClaims',
     });
 
+    // Absorption claims (boson-absorb.wgsl): per-body claim counts, then each photon's and
+    // each pion-pool entry's absorber (slot + 1, or 0). Zeroed at creation; the counts are
+    // cleared as they are applied and the entries rewritten by every claim pass.
+    const absorbClaims = device.createBuffer({
+        size: 4 * (GPU_MAX_PARTICLES + GPU_MAX_PHOTONS + PION_POOL_CAP),
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+        label: 'absorbClaims',
+    });
+
     // ── Boson tree buffers (Phase 4: boson gravity BH tree) ──
     const MAX_BOSON_NODES = (GPU_MAX_PHOTONS + PION_POOL_CAP) * 6;
     const bosonTreeNodes = device.createBuffer({
@@ -315,7 +324,7 @@ export function createParticleBuffers(device, maxParticles) {
         photonPool, phCount,
         GPU_MAX_PHOTONS,
         // Pion pool (Phase 4, packed struct)
-        pionPool, piCount, pionClaims,
+        pionPool, piCount, pionClaims, absorbClaims,
         GPU_MAX_PIONS, PION_POOL_CAP,
         // Boson tree (Phase 4)
         bosonTreeNodes, bosonTreeCounter, bosonVisitorFlags, MAX_BOSON_NODES,

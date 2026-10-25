@@ -1223,7 +1223,7 @@ export default class GPUPhysics {
         this._phase4BindGroups.quadG3 = bg('quadrupole_g3', p4.quadrupoleCoM.bindGroupLayouts[3],
             [b.quadReductionBuf]);
 
-        // ── Bosons (updatePhotons, updatePions, absorbPhotons, absorbPions, decayPions) ──
+        // ── Bosons (updatePhotons, updatePions, decayPions) ──
         this._phase4BindGroups.bosG0 = bg('bosons_g0', p4.updatePhotons.bindGroupLayouts[0],
             [this.uniformBuffer, b.poolMgmt]);
         this._phase4BindGroups.bosG1 = bg('bosons_g1', p4.updatePhotons.bindGroupLayouts[1],
@@ -1233,10 +1233,17 @@ export default class GPUPhysics {
         this._phase4BindGroups.bosG3 = bg('bosons_g3', p4.updatePhotons.bindGroupLayouts[3],
             [b.pionPool, b.piCount]);
 
-        // ── Boson Tree Walk (updatePhotonsTree, updatePionsTree, absorbPhotonsTree, absorbPionsTree) ──
+        // ── Boson Tree Walk (updatePhotonsTree, updatePionsTree) ──
         // Group 1 adds tree nodes buffer at binding 2; groups 0,2,3 shared with non-tree variants.
         this._phase4BindGroups.bosTreeG1 = bg('bosonsTree_g1', p4.updatePhotonsTree.bindGroupLayouts[1],
             [b.particleState, b.particleAux, b.qtNodeBuffer]);
+
+        // ── Boson absorption (claimPhotons, claimPions and their tree walks, applyAbsorption) ──
+        // Groups 2 and 3 are the pools' (bosG2, bosG3).
+        this._phase4BindGroups.absorbG0 = bg('bosonAbsorb_g0', p4.applyAbsorption.bindGroupLayouts[0],
+            [this.uniformBuffer, b.absorbClaims]);
+        this._phase4BindGroups.absorbG1 = bg('bosonAbsorb_g1', p4.applyAbsorption.bindGroupLayouts[1],
+            [b.particleState, b.particleAux, b.qtNodeBuffer, b.ghostOriginalIdx]);
 
         // ── Boson Tree (insertBosonsIntoTree, computeBosonAggregates, computeBosonGravity, applyBosonBosonGravity) ──
         // Group 0: uniforms + tree nodes (atomic) + counter + visitor flags
@@ -1414,9 +1421,7 @@ export default class GPUPhysics {
     }
 
     /**
-     * Dispatch boson update passes (Phase 4, Pass 21).
-     * Photon/pion drift, absorption, pion decay.
-     * Skipped entirely when radiation and Yukawa are both off (no bosons can exist).
+     * Dispatch boson update passes (Phase 4, Pass 21): photon and pion drift, then absorption.
      */
     _dispatchBosonUpdate(encoder) {
         // Every substep, whatever emitted them: bosons outlive their sources' switches, and the
@@ -1430,8 +1435,6 @@ export default class GPUPhysics {
         // Select tree or pairwise pipelines for lensing + absorption
         const phUpdatePipeline = useBHTree ? p4.updatePhotonsTree.pipeline : p4.updatePhotons.pipeline;
         const piUpdatePipeline = useBHTree ? p4.updatePionsTree.pipeline : p4.updatePions.pipeline;
-        const phAbsorbPipeline = useBHTree ? p4.absorbPhotonsTree.pipeline : p4.absorbPhotons.pipeline;
-        const piAbsorbPipeline = useBHTree ? p4.absorbPionsTree.pipeline : p4.absorbPions.pipeline;
         const g1 = useBHTree ? bgs.bosTreeG1 : bgs.bosG1;
 
         const useIndirect = this._writeBosonDispatchArgs(encoder);
@@ -1462,29 +1465,37 @@ export default class GPUPhysics {
             passPions.end();
         }
 
-        if (bodies) {
-            // absorbPhotons (single-threaded: serialized to avoid f32 data races)
-            const passAbsorbPh = encoder.beginComputePass({ label: 'absorbPhotons' });
-            passAbsorbPh.setPipeline(phAbsorbPipeline);
-            passAbsorbPh.setBindGroup(0, bgs.bosG0);
-            passAbsorbPh.setBindGroup(1, g1);
-            passAbsorbPh.setBindGroup(2, bgs.bosG2);
-            passAbsorbPh.setBindGroup(3, bgs.bosG3);
-            passAbsorbPh.dispatchWorkgroups(1);
-            passAbsorbPh.end();
-        }
+        if (bodies) this._dispatchAbsorption(encoder, useBHTree, useIndirect);
+    }
 
-        if (bodies) {
-            // absorbPions (single-threaded: serialized to avoid f32 data races)
-            const passAbsorbPi = encoder.beginComputePass({ label: 'absorbPions' });
-            passAbsorbPi.setPipeline(piAbsorbPipeline);
-            passAbsorbPi.setBindGroup(0, bgs.bosG0);
-            passAbsorbPi.setBindGroup(1, g1);
-            passAbsorbPi.setBindGroup(2, bgs.bosG2);
-            passAbsorbPi.setBindGroup(3, bgs.bosG3);
-            passAbsorbPi.dispatchWorkgroups(1);
-            passAbsorbPi.end();
-        }
+    /**
+     * Absorption (boson-absorb.wgsl): each boson claims its absorber in parallel, read-only on
+     * the bodies, then one workgroup per body sums its claims and takes them. The tree walk
+     * resolves ghost copies to their originals; both searches fold bosons into the domain and
+     * take minimum images on a periodic boundary, so they find the same absorbers.
+     */
+    _dispatchAbsorption(encoder, useTree, useIndirect) {
+        const p4 = this._phase4;
+        const bgs = this._phase4BindGroups;
+        const stage = (label, pipeline, dispatch) => {
+            const pass = encoder.beginComputePass({ label });
+            pass.setPipeline(pipeline);
+            pass.setBindGroup(0, bgs.absorbG0);
+            pass.setBindGroup(1, bgs.absorbG1);
+            pass.setBindGroup(2, bgs.bosG2);
+            pass.setBindGroup(3, bgs.bosG3);
+            dispatch(pass);
+            pass.end();
+        };
+        stage('claimPhotons', (useTree ? p4.claimPhotonsTree : p4.claimPhotons).pipeline, (pass) => {
+            if (useIndirect) pass.dispatchWorkgroupsIndirect(this._bosonDispatchArgs, BOSON_ARGS_PHOTON);
+            else pass.dispatchWorkgroups(Math.ceil(GPU_MAX_PHOTONS / 64));
+        });
+        stage('claimPions', (useTree ? p4.claimPionsTree : p4.claimPions).pipeline, (pass) => {
+            if (useIndirect) pass.dispatchWorkgroupsIndirect(this._bosonDispatchArgs, BOSON_ARGS_PION);
+            else pass.dispatchWorkgroups(Math.ceil(PION_POOL_CAP / 64));
+        });
+        stage('applyAbsorption', p4.applyAbsorption.pipeline, (pass) => pass.dispatchWorkgroups(this.aliveCount));
     }
 
     /**

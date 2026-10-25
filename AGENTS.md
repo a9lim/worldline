@@ -80,7 +80,7 @@ src/gpu/gpu-buffers.js   allocation and packed struct sizes
 src/gpu/gpu-constants.js generated WGSL constants and toggle bits
 src/gpu/gpu-renderer.js  instanced rendering, light/dark pipeline pairs
 src/gpu/pass-graph.js    per-frame dispatch plan
-src/gpu/shaders/         62 WGSL files; shared-*.wgsl are prepended includes
+src/gpu/shaders/         63 WGSL files; shared-*.wgsl are prepended includes
 tests/physics-validation.html   analytic oracles against a headless GPUPhysics
 docs/second-pass/tools/  the headless harness (tour.mjs), benchmarks, serve.mjs
 ```
@@ -549,9 +549,17 @@ backdrop seen through the bodies as a thin lens, viewed along z, in the lab fram
   `fragmentPhoton`): a sinusoid 2.6 px high under a Gaussian envelope 22 px long, its
   wavelength `clamp(6·√(0.05/E′), 3.5, 12)` px reading the energy E′ it has in the frame
   drawn (Doppler-shifted in a non-lab frame, with the Doppler hue).
-- Absorption adds the boson's full four-momentum (`absorbFourMomentum()`), so the
-  target's invariant mass changes with its proper velocity; charged pions move charge.
-  `emitterId` blocks self-absorption, and nothing is absorbed before `BOSON_MIN_AGE`.
+- Absorption (`boson-absorb.wgsl`) adds the boson's full four-momentum, so the target's
+  invariant mass changes with its proper velocity; charged pions move charge. `emitterId`
+  blocks self-absorption, and nothing is absorbed before `BOSON_MIN_AGE`. Each boson claims
+  its absorber in parallel, read-only on the bodies: the nearest body whose radius it is
+  inside and that can take it (ties to the lower slot). Then one workgroup per claimed body
+  sums its claims in a fixed order and takes them at once, which is exact because
+  four-momenta add, and a claim valid alone stays valid in a sum (adding future-directed
+  vectors only raises the mass). Bosons never wrap, so on a periodic boundary the search
+  folds each into the domain and measures by minimum image; the tree walk resolves ghost
+  copies to their originals. The tree's search radius is `radiusMax` + 2, and once that
+  passes a quarter of the domain (a grown hole) the claim takes the plain loop instead.
 - Pion decay runs on the pion's clock: once per frame, `P = 1 − exp(−ln2·Δτ/T½)` with
   `Δτ = dt/γ` (`PION_HALF_LIFE` 32, `CHARGED_PION_HALF_LIFE` 64; pions always dilate,
   since they always carry true proper velocity). `restFrameDt()` and `boostToLab()`
@@ -645,9 +653,10 @@ per stage would land before the whole encoder ran (that bug left Φ ≡ 0 until
 - **Pass plan.** `pass-graph.js` derives dispatch booleans from toggles only, not alive
   counts. Boson passes are not in it: bosons outlive the switches that emit them, so they
   step every substep, sized by their pools' counts through indirect dispatch from
-  `dispatch-args.wgsl` (with a max-capacity fallback). Absorption (`absorbPhotons`,
-  `absorbPions`) is one thread looping over the pool, serialized against races on the
-  targets' state.
+  `dispatch-args.wgsl` (with a max-capacity fallback). Absorption is a claim pass per
+  pool and a gather over the bodies, through `absorbClaims` (per-body counts, then each
+  boson's absorber as slot + 1). Per-body CAS float accumulators measured the same at low
+  contention but 40× slower with 4096 bosons on one body, and their sums depend on order.
 - **Tree.** `computeBounds`, `initRoot`, `insertParticles` (lock-free CAS, one body per
   leaf), `computeAggregates` (bottom-up via visitor flags).
 - **Events.** The frame's readback (`_encodeFrameReadback`) copies the largest

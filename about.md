@@ -76,7 +76,7 @@ The energy leaves in quanta of 0.02. Photons are a surrogate. The rates are the 
 
 Reaction is strong at these charges. An electron of mass 0.1 and charge −1 has τ = 2q²/3m = 6.7, comparable to a pass, and can radiate more than its kinetic energy. The bremsstrahlung preset's electrons have mass 0.3 for that reason.
 
-Neutral pions decay into two photons (rest-frame half-life 32), and charged ones into a lepton and a photon (64). Bodies absorb photons and pions with their full four-momentum. Photons bend by twice the Newtonian deflection, pions by (1 + v²), and photons never convert into pairs. The pools hold 4096 photons and 2048 pions and leptons. Photons are culled at lab age 256 and leptons at 512. The cull bounds memory, is not a lifetime, and can destroy a bound structure. Culled energy is booked as escaped radiation.
+Neutral pions decay into two photons (rest-frame half-life 32), and charged ones into a lepton and a photon (64). Bodies absorb photons and pions with their full four-momentum, across a periodic seam too. Photons bend by twice the Newtonian deflection, pions by (1 + v²), and photons never convert into pairs. The pools hold 4096 photons and 2048 pions and leptons. Photons are culled at lab age 256 and leptons at 512. The cull bounds memory, is not a lifetime, and can destroy a bound structure. Culled energy is booked as escaped radiation.
 
 ## Black holes
 

@@ -9,7 +9,7 @@
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 164;
+const SHADER_VERSION = 165;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -810,7 +810,7 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
     const bosLayouts = [bosG0, bosG1, bosG2, bosG3];
     const bosPipelineLayout = device.createPipelineLayout({ bindGroupLayouts: bosLayouts });
 
-    const bosonEntries = ['updatePhotons', 'updatePions', 'absorbPhotons', 'absorbPions', 'decayPions'];
+    const bosonEntries = ['updatePhotons', 'updatePions', 'decayPions'];
     const bosonPipelines = {};
     for (const entry of bosonEntries) {
         bosonPipelines[entry] = {
@@ -823,7 +823,7 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
     }
 
     // ── Boson Tree Walk (bosons-tree-walk.wgsl) ──
-    // Tree-accelerated lensing + absorption using main particle BH tree.
+    // Tree-accelerated lensing using main particle BH tree.
     // Group 1 gains binding 2 (tree nodes buffer), everything else matches bosons.wgsl.
     const treePrefix = await getTreePrefix(wgslConstants);
     const bosonsTreeCode = await fetchShader('bosons-tree-walk.wgsl', treePrefix);
@@ -840,7 +840,7 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
     const bosTreeLayouts = [bosG0, bosTreeG1, bosG2, bosG3];
     const bosTreePipelineLayout = device.createPipelineLayout({ bindGroupLayouts: bosTreeLayouts });
 
-    const bosonTreeWalkEntries = ['updatePhotonsTree', 'updatePionsTree', 'absorbPhotonsTree', 'absorbPionsTree'];
+    const bosonTreeWalkEntries = ['updatePhotonsTree', 'updatePionsTree'];
     for (const entry of bosonTreeWalkEntries) {
         bosonPipelines[entry] = {
             pipeline: device.createComputePipeline({
@@ -848,6 +848,37 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
                 compute: { module: bosonsTreeModule, entryPoint: entry },
             }),
             bindGroupLayouts: bosTreeLayouts,
+        };
+    }
+
+    // ── Boson absorption (boson-absorb.wgsl) ──
+    // Claim passes (one thread per boson, pairwise or tree) and the per-body gather.
+    // Group 0: uniforms + absorbClaims = 1
+    // Group 1: particleState + particleAux + tree nodes + ghostOriginalIdx = 4
+    // Group 2: photonPool + phCount = 2
+    // Group 3: pionPool + piCount = 2
+    // Total: 9 storage buffers per stage
+    const absorbCode = await fetchShader('boson-absorb.wgsl', treePrefix);
+    const absorbModule = device.createShaderModule({ label: 'bosonAbsorb', code: absorbCode });
+    const storageEntries = (n) => Array.from({ length: n }, (_, i) =>
+        ({ binding: i, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }));
+    const absorbG0 = device.createBindGroupLayout({
+        label: 'bosonAbsorb_g0',
+        entries: [
+            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // absorbClaims
+        ],
+    });
+    const absorbG1 = device.createBindGroupLayout({ label: 'bosonAbsorb_g1', entries: storageEntries(4) });
+    const absorbLayouts = [absorbG0, absorbG1, bosG2, bosG3];
+    const absorbPipelineLayout = device.createPipelineLayout({ bindGroupLayouts: absorbLayouts });
+    for (const entry of ['claimPhotons', 'claimPhotonsTree', 'claimPions', 'claimPionsTree', 'applyAbsorption']) {
+        bosonPipelines[entry] = {
+            pipeline: device.createComputePipeline({
+                label: entry, layout: absorbPipelineLayout,
+                compute: { module: absorbModule, entryPoint: entry },
+            }),
+            bindGroupLayouts: absorbLayouts,
         };
     }
 
