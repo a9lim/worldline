@@ -18,5 +18,6 @@ for (const s of scenarios) {
   console.log(s.name.padEnd(24), `${f(a.gpuSpan)} → ${f(b.gpuSpan)}`.padStart(30),
     `${a.stepSpan.p50.toFixed(2)} → ${b.stepSpan.p50.toFixed(2)}`.padStart(26),
     `${a.renderSpan.p50.toFixed(2)} → ${b.renderSpan.p50.toFixed(2)}`.padStart(26),
-    `${a.cpuTotal.p50.toFixed(2)} → ${b.cpuTotal.p50.toFixed(2)}`.padStart(16));
+    `${a.cpuTotal.p50.toFixed(2)} → ${b.cpuTotal.p50.toFixed(2)}`.padStart(16),
+    s.bench.budget ? (b.gpuSpan.p50 > s.bench.budget.span || b.stepSpan.p50 > s.bench.budget.step ? '  B over budget' : '  ok') : '');
 }

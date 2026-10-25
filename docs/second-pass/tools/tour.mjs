@@ -57,6 +57,7 @@ for (const sc of scenarios) {
       const p = window.sim.perf;
       return p ? { ...p.summary(), alive: window.sim.gpu.physics.aliveCount } : null;
     });
+    if (bench[sc.name] && sc.bench.budget) bench[sc.name].budget = sc.bench.budget;
     if (sc.bench.shot) await page.screenshot({ path: `${out}/${sc.name}.png` });
   }
   let ev = null;
@@ -77,7 +78,9 @@ if (Object.keys(bench).length) {
   writeFileSync(`${out}/bench.json`, JSON.stringify({ date: new Date().toISOString(), rev, adapter, viewport: [+width, +height, +dpr], scenarios: bench }, null, 1));
   for (const [k, v] of Object.entries(bench)) {
     if (!v) { console.log(k.padEnd(28), 'no profiler'); continue; }
-    console.log(k.padEnd(28), `frame ${v.interval.p50.toFixed(2)}/${v.interval.p95.toFixed(2)}  cpu ${v.cpuTotal.p50.toFixed(2)}/${v.cpuTotal.p95.toFixed(2)}  span ${v.gpuSpan.p50.toFixed(2)}/${v.gpuSpan.p95.toFixed(2)}  step ${v.stepSpan.p50.toFixed(2)}  render ${v.renderSpan.p50.toFixed(2)}  sub ${v.substeps.p50}  submits ${v.submits.p50}  n=${v.alive}`);
+    // budget: { span, step } in ms on this machine, p50 against it (bench-scenarios.json)
+    const b = v.budget, over = b && (v.gpuSpan.p50 > b.span || v.stepSpan.p50 > b.step);
+    console.log(k.padEnd(28), `frame ${v.interval.p50.toFixed(2)}/${v.interval.p95.toFixed(2)}  cpu ${v.cpuTotal.p50.toFixed(2)}/${v.cpuTotal.p95.toFixed(2)}  span ${v.gpuSpan.p50.toFixed(2)}/${v.gpuSpan.p95.toFixed(2)}  step ${v.stepSpan.p50.toFixed(2)}  render ${v.renderSpan.p50.toFixed(2)}  sub ${v.substeps.p50}  submits ${v.submits.p50}  n=${v.alive}${b ? (over ? '  OVER BUDGET' : '  ok') : ''}`);
   }
 }
 await browser.close();

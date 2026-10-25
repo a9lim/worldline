@@ -4,7 +4,11 @@
   "preset": "cyclotron",
   "bench": {
    "warm": 2000,
-   "measure": 4000
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
   }
  },
  {
@@ -19,7 +23,11 @@
   ],
   "bench": {
    "warm": 2000,
-   "measure": 4000
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
   }
  },
  {
@@ -27,7 +35,11 @@
   "preset": "twinBounce",
   "bench": {
    "warm": 2000,
-   "measure": 4000
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
   }
  },
  {
@@ -42,7 +54,11 @@
   ],
   "bench": {
    "warm": 2000,
-   "measure": 4000
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
   }
  },
  {
@@ -50,7 +66,11 @@
   "preset": "wheel",
   "bench": {
    "warm": 2000,
-   "measure": 4000
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
   }
  },
  {
@@ -65,7 +85,11 @@
   ],
   "bench": {
    "warm": 2000,
-   "measure": 4000
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
   }
  },
  {
@@ -73,7 +97,11 @@
   "preset": "bremsstrahlung",
   "bench": {
    "warm": 2000,
-   "measure": 4000
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
   }
  },
  {
@@ -88,7 +116,11 @@
   ],
   "bench": {
    "warm": 2000,
-   "measure": 4000
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
   }
  },
  {
@@ -96,7 +128,11 @@
   "preset": "kibbleZurek",
   "bench": {
    "warm": 2000,
-   "measure": 4000
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
   }
  },
  {
@@ -111,7 +147,11 @@
   ],
   "bench": {
    "warm": 2000,
-   "measure": 4000
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
   }
  },
  {
@@ -119,7 +159,11 @@
   "preset": "microlensing",
   "bench": {
    "warm": 2000,
-   "measure": 4000
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
   }
  },
  {
@@ -134,7 +178,11 @@
   ],
   "bench": {
    "warm": 2000,
-   "measure": 4000
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
   }
  },
  {
@@ -149,7 +197,11 @@
   ],
   "bench": {
    "warm": 2000,
-   "measure": 4000
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
   }
  },
  {
@@ -164,7 +216,11 @@
   ],
   "bench": {
    "warm": 2000,
-   "measure": 4000
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
   }
  },
  {
