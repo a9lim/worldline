@@ -31,7 +31,9 @@ open decisions, and the model's known boundaries. This file describes the code a
   buffer writes and map requests, and shows a digest at the stage's top left. Passes overlap
   on Metal, so their sum (`gpuBusy`) overcounts; `gpuSpan` (first begin to last end) and the
   per-phase `stepSpan` and `renderSpan` are the wall times. Startup marks: device, physics,
-  renderer, first frame.
+  renderer, first frame. Under `?perf` the tree builds take a pass per stage (`tree:…`,
+  `bosonTree:…`). A light scene lets the GPU clock down, so its per-pass times read high:
+  compare loaded scenes, or the same scene A/B.
 - Benchmarks: `docs/second-pass/tools/tour.mjs` (Playwright and the WebGPU Chrome; see its
   header) runs any scenario with `bench: { warm, measure }` under `?perf` and writes p50/p95
   per scenario to `OUTDIR/bench.json`; `bench-scenarios.json` beside it is the standing set
@@ -90,7 +92,7 @@ src/gpu/gpu-buffers.js   allocation and packed struct sizes
 src/gpu/gpu-constants.js generated WGSL constants and toggle bits
 src/gpu/gpu-renderer.js  instanced rendering, light/dark pipeline pairs
 src/gpu/pass-graph.js    per-frame dispatch plan
-src/gpu/shaders/         63 WGSL files; shared-*.wgsl are prepended includes
+src/gpu/shaders/         WGSL; shared-*.wgsl are prepended includes, tree-items-*.wgsl the trees' items
 tests/physics-validation.html   analytic oracles against a headless GPUPhysics
 docs/second-pass/tools/  the headless harness (tour.mjs), benchmarks, serve.mjs
 ```
@@ -277,28 +279,41 @@ pass and the velocity-Verlet recompute): EIH with Gravitomagnetic (not Gravity),
 Bažański's mixed static term with Gravitomagnetic and Coulomb, scalar Breit with Yukawa.
 There is no Darwin term: Liénard–Wiechert carries EM to all orders in v.
 
-Barnes–Hut picks tree walk over pairwise forces; collisions and hit tests use the tree
-either way. With Relativity on as well, EM runs pairwise first (`EM_PAIRWISE_BIT`):
-Liénard–Wiechert needs each source's world line, which tree aggregates lack, so the walk
-carries everything else. Periodic modes put ghost copies in the tree for seam collisions
-and photon absorption, but ghosts weigh nothing in the aggregates (`tree-build.wgsl`),
-because every walk takes minimum-image displacements and a weighted ghost would count its
-pair twice. So a ghost needs to reach only as far as a contact: each substep `ghost-gen.wgsl`
-first reduces the largest body radius (`maxRadius`, the horizon in black-hole mode, into the
-`radiusMax` buffer and, by an in-encoder copy, `SimUniforms.radiusMax`), then ghosts each body
-within its radius + that largest radius + `GHOST_SLOP` (2) of an edge, about 140 ghosts for
-500 bodies. The host learns a substep's ghost count only a frame later, so it copies the whole
-ghost buffer (`_ghostSlots()`) and `trimGhosts` clears the slots past the substep's own count;
-`cacheDerived` runs first, so the reduced radius is this substep's. The
-same largest radius sizes the tree collision search (a body's radius plus it, which also
-finds a small body deep inside a large horizon) and widens the hit test, which ignores
-ghosts. With Higgs on, the Yukawa range is `yukawaMu·√(higgsMod_i·higgsMod_j)`,
+Barnes–Hut picks the tree walk over pairwise forces, without Relativity. The walk
+(`forces-tree.wgsl`) is a group walk: 32 bodies consecutive in the tree's Morton order walk
+it once against their bounding box, breadth first, into a list in workgroup memory, which
+eight threads a body then sum a tile at a time; lists and frontiers fill by prefix sums, so
+the sums are the same every run. A node is taken whole when its size is under θ = 0.5 times
+its distance from the box, and on a periodic domain only when its cell and the box lie
+within half a domain of each other, so every body sees all of it in one image (without that
+rule the torus error against pairwise was 31%). With Relativity every force runs pairwise
+from the world lines whatever the toggle: a node's aggregate has no world line. Collisions,
+hit tests, boson absorption and the heatmap use the tree either way. Periodic modes put
+ghost copies in the tree for seam collisions and photon absorption, but ghosts weigh nothing
+in the aggregates (`tree-items-bodies.wgsl`), because every walk takes minimum-image
+displacements and a weighted ghost would count its pair twice. So a ghost needs to reach only
+as far as a contact: each substep `ghost-gen.wgsl` first reduces the largest body radius
+(`maxRadius`, the horizon in black-hole mode, into the `radiusMax` buffer and, by an
+in-encoder copy, `SimUniforms.radiusMax`), then ghosts each body within its radius + that
+largest radius + `GHOST_SLOP` (2) of an edge, about 140 ghosts for 500 bodies. The host
+learns a substep's ghost count only a frame later, so it copies the store's capacity of ghost
+slots (`_ghostSlots()`) and `trimGhosts` clears the slots past the substep's own count;
+`cacheDerived` runs first, so the reduced radius is this substep's. Collision detection and
+absorption prune by each tree node's largest radius (node word 19) instead: a collision pair
+is written by its smaller body (the lower slot of two alike), which looks only under nodes
+whose largest radius reaches its own, so a small body deep inside a large horizon is found
+and a grown body's own walk stays short. The largest radius widens the hit test, which
+ignores ghosts. With Higgs on, the Yukawa range is `yukawaMu·√(higgsMod_i·higgsMod_j)`,
 `higgsMod = max(|φ|, HIGGS_MASS_FLOOR)` cached per particle in `axYukMod.z`.
 
 Signal delay finds each source's retarded state, `retardedState()` in
 `shared-worldline.wgsl`: the image nearest the observer now fixes which copy of the world
-line it sees; a binary search brackets the past light cone among the samples plus the
-source's current state, and Newton's method finds it on the cubic Hermite segment. The
+line it sees; a gallop from a hint brackets the past light cone among the samples plus the
+source's current state, and Newton's method finds it on the cubic Hermite segment. The pair
+force keeps each pair's bracket as the next call's hint (`wlHints`, source-major, capacity²),
+seeded for a new pair from its distance over the line's sample spacing: in a crowded scene
+the paths curve too much over a light-crossing time for any guess from now to match it, and
+a full bisection cost about half again as much at 4000 bodies. The
 result carries position, velocity, acceleration, angw, mass and charge at the retarded
 time. Charges act through their Liénard–Wiechert fields, E = q[(n̂ − β)(1 − β²)/(κ³R²) +
 n̂ × ((n̂ − β) × β̇)/(κ³R)] and B = n̂ × E, both scaled by σ³ with σ = R/√(R² + ε²) so that
@@ -346,7 +361,8 @@ created at `−∞` and act at once.
   body and an arc in the body's ink that fills once per `CLOCK_PERIOD` (16) of its proper
   time, contracted with the body. The particle panel shows τ and dτ/dt.
 - **World lines** (`worldline.wgsl` writes, `shared-worldline.wgsl` reads): a ring of
-  `WORLDLINE_LEN` (1024) samples per slot, one every `WORLDLINE_DT` (1/8) of the
+  `WORLDLINE_LEN` (1024) samples per slot (a substep longer than `WORLDLINE_DT` records one,
+  so at the default speed they are about 0.27 apart), one every `WORLDLINE_DT` (1/8) of the
   world-line clock (lab time, or conformal time under expansion: positions are then
   comoving, see Expansion), always recorded. A sample is 12 floats, `t, x, y, wx, wy, ax, ay, τ, θ, angw, m, q`
   (`WL_STRIDE`), with a = dw/dt including the Boris magnetic and gravitomagnetic
@@ -553,8 +569,9 @@ backdrop seen through the bodies as a thin lens, viewed along z, in the lab fram
 
 ### Bosons
 
-- Pool caps live in `config.js`: 512 particles, 4096 photons, 1024 pions + 1024
+- Pool caps live in `config.js`: 4096 bodies, 16384 photons, 4096 pions + 4096
   leptons. Leptons share the pion buffer, told apart by `Pion.kind` (0 pion, 1 lepton).
+  Every boson pass, the boson tree and its sort are sized by the live counts.
 - A body's Larmor and quadrupole radiation accumulates until it reaches `PHOTON_QUANTUM`
   (0.02) and leaves as one photon (`MIN_MASS`, 0.05, stays the Hawking threshold and the
   evaporation floor); quadrupole gravitational radiation leaves as gravitational quanta
@@ -571,8 +588,8 @@ backdrop seen through the bodies as a thin lens, viewed along z, in the lab fram
   four-momenta add, and a claim valid alone stays valid in a sum (adding future-directed
   vectors only raises the mass). Bosons never wrap, so on a periodic boundary the search
   folds each into the domain and measures by minimum image; the tree walk resolves ghost
-  copies to their originals. The tree's search radius is `radiusMax` + 2, and once that
-  passes a quarter of the domain (a grown hole) the claim takes the plain loop instead.
+  copies to their originals. The search prunes by each tree node's largest radius + 2, so a
+  grown hole widens it near itself only.
 - Pion decay runs on the pion's clock: once per frame, `P = 1 − exp(−ln2·Δτ/T½)` with
   `Δτ = dt/γ` (`PION_HALF_LIFE` 32, `CHARGED_PION_HALF_LIFE` 64; pions always dilate,
   since they always carry true proper velocity). `restFrameDt()` and `boostToLab()`
@@ -581,15 +598,24 @@ backdrop seen through the bodies as a thin lens, viewed along z, in the lab fram
 - Boson lensing (photons 2× Newtonian, pions `1 + v²`) follows the Gravity toggle.
 - Leptons come from Schwinger discharge, extremal shedding, evaporation remnants, and
   charged-pion decay. Photon → pair conversion is deliberately absent.
+- **Pion annihilation** (Boson interaction): an opposite-charge pair of the same kind within
+  2 annihilates into two photons. It pairs in two passes (`boson-tree.wgsl`): each pion
+  proposes to its partner, the lowest-index one above it in reach (found through the
+  bosons' tree), each keeps its lowest proposer, and a pion nobody proposed to annihilates
+  with its partner if its proposal was kept, so no pion is in two pairs.
 - **Annihilation** (Merge mode, matter meets antimatter) emits two photons conserving
   lab-frame energy and momentum: the 32-byte `MergeResult`
   (`p0 = x, y, energy, type`, `p1 = px, py, _, _`) → `merge-photons.wgsl` on-device.
   An inelastic merge's lost kinetic energy excites the scalar fields instead (Scalar fields).
-- **Kugelblitz**: a boson-tree node whose energy exceeds half its full extent (hoop
-  conjecture) collapses into a particle of mass `√(E² − |P|²)` and proper velocity
-  `P/m`; near-null clusters are rejected, and only consumed bosons that were counted as
-  radiated leave the radiated totals. `kugelblitz.wgsl` has no minimum-count guard
-  because its `N_PARTICLE_COUNT` node word is a visitor-flag counter, not a subtree count.
+- **Kugelblitz**: a boson-tree node of at least `MIN_KUGELBLITZ_COUNT` (4) bosons whose
+  energy exceeds half its extent (hoop conjecture) collapses into a particle of mass
+  `√(E² − |P|²)` and proper velocity `P/m`, at most one a frame; near-null clusters are
+  rejected, and only consumed bosons that were counted as radiated leave the radiated totals.
+  The bosons' tree (`tree-build.wgsl` over `tree-items-bosons.wgsl`) is the bodies' layout;
+  a leaf names a pion by its pool index with `BOSON_PION_TAG`. Until 2026-10-25 that tree was
+  CAS-built and never summed above its deepest level, so boson gravity, pion Coulomb and
+  kugelblitz saw an empty tree; with Hawking radiation and Boson interaction on, dense photon
+  gas now collapses at that one-a-frame limit.
 
 ### Scalar fields
 
@@ -662,7 +688,13 @@ per stage would land before the whole encoder ran (that bug left Φ ≡ 0 until
   `shared-relativity.wgsl`. Tree walkers add `shared-tree-nodes.wgsl`; many shaders
   also prepend `common.wgsl`.
 - **Buffers.** Packed structs (`shared-structs.wgsl`, sizes in `gpu-buffers.js`) keep
-  each stage within the 10 storage buffers `requestDevice()` asks for.
+  each stage within the 10 storage buffers `requestDevice()` asks for. Every per-slot buffer
+  is allocated for the cap (`GPU_MAX_PARTICLES`, 4096) except the world-line store: the rings
+  (48 KB a slot) and the light-cone hints (capacity²) grow through `STORE_TIERS` (512, 1024,
+  2048, 4096 slots) as `addParticle()` or a load needs them (`_growStore`), each ring copied
+  to the same offset and every bind group that reads either rebuilt (the renderer's through
+  `onStoreGrown`), and `reset()` gives the memory back. `SimUniforms.maxParticles` is the
+  store's capacity: the hints' stride and the ghost slots follow it.
 - **Pass plan.** `pass-graph.js` derives dispatch booleans from toggles only, not alive
   counts. Boson passes are not in it: bosons outlive the switches that emit them, so they
   step every substep, sized by their pools' counts through indirect dispatch from
@@ -670,8 +702,23 @@ per stage would land before the whole encoder ran (that bug left Φ ≡ 0 until
   pool and a gather over the bodies, through `absorbClaims` (per-body counts, then each
   boson's absorber as slot + 1). Per-body CAS float accumulators measured the same at low
   contention but 40× slower with 4096 bosons on one body, and their sums depend on order.
-- **Tree.** `computeBounds`, `initRoot`, `insertParticles` (lock-free CAS, one body per
-  leaf), `computeAggregates` (bottom-up via visitor flags).
+- **Trees** (`tree-build.wgsl`, one build for the bodies every substep, twice with 1PN's
+  velocity-Verlet correction under Barnes–Hut, and one for the bosons with Boson interaction;
+  the items come from `tree-items-bodies.wgsl` or `tree-items-bosons.wgsl`): the bounds, the
+  padded root box, a key per active item (a 30-bit Morton code and the slot) packed to the
+  front, `treePlan` (one thread: the sort's size from the live count and every sort step's
+  workgroups, for indirect dispatch from its own buffer, since a dispatch can't read its size
+  from a buffer it writes), a bitonic sort (blocks of 1024 in workgroup memory, then the wider
+  steps by dynamic offset into a step table), the binary radix tree (Karras 2012), and a
+  compressed quadtree in the 20-word node layout: a cell exists where its items split among
+  two or more quadrants, its two to four children fill the first slots, and a leaf is a node
+  whose first slot is NONE. Every cell a CAS-built tree would add holds the same items as a
+  cell this one has, so Barnes–Hut sees the same aggregates. The last child to arrive sums a
+  node from its children in slot order. Internal nodes carry their cell's bounds, leaves their
+  item's position; word 17 counts the items under a node, word 19 holds their largest radius.
+  The same positions give the same tree every run. The CAS-built tree this replaced lost
+  bodies when a subdivision raced a claim, so at a few hundred bodies its root was often never
+  summed and Barnes–Hut applied no force.
 - **Events.** The frame's readback (`_encodeFrameReadback`) copies the largest
   acceleration, the ghost count, merge and kugelblitz events and the free-slot stack at the
   end of the frame's last encoder into a slot of a three-deep ring, clears the GPU free stack
@@ -699,7 +746,8 @@ a survey sheet or a physics text prints a field, keeping to the domain:
   draws gravity's potential as umber contours at nice levels (1, 1.5, 2, 3, 5, 7 × 10^k over
   `LEVEL_SPAN`), the 1s and 3s heavier and labelled, ticked downhill like depression contours;
   the electric field as prussian field lines traced (RK2, 0.6 cell) from the sign carrying
-  more charge, about 10·√(|q|/0.4) per charge, each ending on the other sign, at the view's
+  more charge, about 10·√(|q|/0.4) per charge (thinned evenly past 600 lines in all), each
+  ending on the other sign (found through a grid of the charges), at the view's
   edge, or where it meets another line (a 1.2-cell separation grid), with a chevron at 45%
   of its length; in the Electric view, equipotentials one a decade, solid sienna where
   positive and dashed prussian where negative; and Yukawa's potential as dotted viridian

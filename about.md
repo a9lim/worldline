@@ -2,12 +2,12 @@
 name: Worldline
 title: Worldline — Interactive Particle Physics Simulator
 description: Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in six curated presets, and tilt the plane into spacetime to see the world lines they trace.
-updated: 2026-10-24
+updated: 2026-10-25
 ---
 
 # Worldline
 
-Worldline is a relativistic many-body sandbox. Up to 512 charged, spinning bodies move in a plane under gravity, electromagnetism, gravitomagnetism, a Yukawa force and two scalar fields, with black holes, radiation and pools of photons, pions and leptons. Units are c = G = ħ = 1, and the physics runs as WebGPU compute shaders.
+Worldline is a relativistic many-body sandbox. Up to 4096 charged, spinning bodies move in a plane under gravity, electromagnetism, gravitomagnetism, a Yukawa force and two scalar fields, with black holes, radiation and pools of photons, pions and leptons. Units are c = G = ħ = 1, and the physics runs as WebGPU compute shaders.
 
 The scene is a slice of a 3+1-dimensional world. Bodies are 3D point masses confined to a symmetry plane, spinning about its normal and interacting through their 3D force laws. The scalar fields live in a slab of thickness 8, and the expanding universe is a slab of a flat 3D Friedmann–Robertson–Walker universe. Each effect below is either a stated law or a named approximation.
 
@@ -22,7 +22,7 @@ Fifteen toggles set the model. Seven of them are interactions:
 - **Yukawa** is a screened attraction e^(−μr)/r, whose quanta are massive pions.
 - **Higgs** and **Axion** are scalar fields (see below).
 
-**Relativity** gives bodies proper velocity w = γv and turns on signal delay. **1PN** adds the O(v²) two-body terms the other sectors leave out: Einstein–Infeld–Hoffmann (with Gravitomagnetic), Bažański's gravity–charge term and the scalar Breit term. Electromagnetism needs no Darwin term, because under Relativity it already acts through each charge's full field. **Spin-orbit** kicks spinning bodies along field gradients (Stern–Gerlach F = μ∇B_z, Mathisson–Papapetrou F = 2L∇B_g). **Radiation** and **Black hole** are described below. **Boson interaction** lets photons, pions and leptons gravitate, and lets charged pions interact electrically. A boson cluster whose energy exceeds half its extent collapses into a body (a kugelblitz, by the hoop conjecture). **Barnes–Hut** and **Expansion** are not forces: one swaps pairwise sums for a tree (opening angle 0.5), the other makes the domain an expanding universe. Uniform external gravity, electric field and B_z can be added on top.
+**Relativity** gives bodies proper velocity w = γv and turns on signal delay. **1PN** adds the O(v²) two-body terms the other sectors leave out: Einstein–Infeld–Hoffmann (with Gravitomagnetic), Bažański's gravity–charge term and the scalar Breit term. Electromagnetism needs no Darwin term, because under Relativity it already acts through each charge's full field. **Spin-orbit** kicks spinning bodies along field gradients (Stern–Gerlach F = μ∇B_z, Mathisson–Papapetrou F = 2L∇B_g). **Radiation** and **Black hole** are described below. **Boson interaction** lets photons, pions and leptons gravitate, and lets charged pions interact electrically. A boson cluster whose energy exceeds half its extent collapses into a body (a kugelblitz, by the hoop conjecture). **Barnes–Hut** and **Expansion** are not forces: one swaps pairwise sums for a tree (opening angle 0.5) when Relativity is off, the other makes the domain an expanding universe. Uniform external gravity, electric field and B_z can be added on top.
 
 Collisions pass through, merge or bounce. A merge adds rest masses and conserves momentum and angular momentum. The kinetic energy it loses goes into the scalar fields if one is on, and otherwise leaves the books. Matter meeting antimatter in Merge mode annihilates into two photons.
 
@@ -44,7 +44,7 @@ Charges act through their Liénard–Wiechert fields. A fast charge's field flat
 - Magnetic dipoles keep static fields.
 - The field carries no energy or momentum in transit, so particle momentum is not conserved, and two charges' mutual radiation leaves without photons.
 
-Gravity, Yukawa and the dipole forces have no field solution. They use a toy instead: the static law at the delayed position, times the aberration factor (1 − n̂·v)⁻³, capped at 100. It is not conservative. At first order in v the pull points to where the source was, so a binary gains energy each orbit (Laplace's argument). In general relativity, velocity-dependent terms cancel this aberration (Carlip, 2000). Measured: an equal-mass binary at v = 0.16 loses 80% of its binding energy in one orbit. Barnes–Hut aggregates use present positions, so the tree and pairwise paths disagree here.
+Gravity, Yukawa and the dipole forces have no field solution. They use a toy instead: the static law at the delayed position, times the aberration factor (1 − n̂·v)⁻³, capped at 100. It is not conservative. At first order in v the pull points to where the source was, so a binary gains energy each orbit (Laplace's argument). In general relativity, velocity-dependent terms cancel this aberration (Carlip, 2000). Measured: an equal-mass binary at v = 0.16 loses 80% of its binding energy in one orbit. Under Relativity every force is summed pairwise from the sources' delayed states, Barnes–Hut or not, since a tree node's aggregate has no world line.
 
 A body spawned by hand acts on nothing until its light arrives. A removed body keeps acting until its last light has passed. Bodies from a preset or a save count as having always existed.
 
@@ -76,7 +76,7 @@ The energy leaves in quanta of 0.02. Photons are a surrogate. The rates are the 
 
 Reaction is strong at these charges. An electron of mass 0.1 and charge −1 has τ = 2q²/3m = 6.7, comparable to a pass, and can radiate more than its kinetic energy. The bremsstrahlung preset's electrons have mass 0.3 for that reason.
 
-Neutral pions decay into two photons (rest-frame half-life 32), and charged ones into a lepton and a photon (64). Bodies absorb photons and pions with their full four-momentum, across a periodic seam too. Photons bend by twice the Newtonian deflection, pions by (1 + v²), and photons never convert into pairs. The pools hold 4096 photons and 2048 pions and leptons. Photons are culled at lab age 256 and leptons at 512. The cull bounds memory, is not a lifetime, and can destroy a bound structure. Culled energy is booked as escaped radiation.
+Neutral pions decay into two photons (rest-frame half-life 32), and charged ones into a lepton and a photon (64). Bodies absorb photons and pions with their full four-momentum, across a periodic seam too. Photons bend by twice the Newtonian deflection, pions by (1 + v²), and photons never convert into pairs. The pools hold 16384 photons and 4096 each of pions and leptons. Photons are culled at lab age 256 and leptons at 512. The cull bounds memory, is not a lifetime, and can destroy a bound structure. Culled energy is booked as escaped radiation.
 
 ## Black holes
 
@@ -181,7 +181,7 @@ The domain has a fixed size, 64 × 64 unless a preset sets its own, and the wind
 
 Worldline is for seeing effects one or a few at a time. Its analytic checks run against the same GPU code, in their own regimes, in the repository's `tests/physics-validation.html`. Several gravities coexist without defining one spacetime: the clocks' lapse, the fields' metric, the holes' pseudo-potential, the thin lens and FRW. Their combinations are not certified, and nothing inside the softening length is.
 
-WebGPU runs and draws everything. There is no CPU fallback, and browsers without WebGPU see a notice. Forces are summed pairwise or through a lock-free Barnes–Hut tree built on the GPU. Saves record the domain, each body's proper time and spoke angle, the toggles and the parameters, but not fields, bosons or world lines. A lost GPU device is recreated and restored from the latest auto-save, and all state stays in the browser.
+WebGPU runs and draws everything. There is no CPU fallback, and browsers without WebGPU see a notice. Forces are summed pairwise or through a Barnes–Hut quadtree that the GPU builds every substep from sorted Morton codes, so the same positions always give the same tree. The world-line store grows with the number of bodies. Saves record the domain, each body's proper time and spoke angle, the toggles and the parameters, but not fields, bosons or world lines. A lost GPU device is recreated and restored from the latest auto-save, and all state stays in the browser.
 
 ## Accessibility
 

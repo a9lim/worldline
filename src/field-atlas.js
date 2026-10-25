@@ -21,6 +21,7 @@ const MANTISSAS = [1, 1.5, 2, 3, 5, 7];
 const LEVEL_SPAN = { gravity: 40, elecPos: 10, elecNeg: 10, yukawa: 20 };  // top/span … top
 const TICK_PX = 14;             // spacing of the downhill ticks
 const LINE_SEED_K = 10;         // field lines for a charge of 0.4, scaled as √|q|
+const LINE_BUDGET = 600;        // lines in all: past it each charge's share thins evenly
 const STEP_CELLS = 0.6;         // field-line step, in grid cells
 const MAX_STEPS = 900;
 const SEPARATION_CELLS = 1.2;   // a line stops within this of another line
@@ -177,10 +178,16 @@ export default class FieldAtlas {
             }
             return false;
         };
+        // Each charge's lines, thinned past the budget so a crowded scene draws a sample of its
+        // field (a golden-ratio sequence rounds the shares, the same every trace)
+        const seeds = charges.map((c) => Math.sign(c.q) !== from ? 0
+            : Math.max(4, Math.min(28, Math.round(LINE_SEED_K * Math.sqrt(Math.abs(c.q) / 0.4)))));
+        const share = Math.min(1, LINE_BUDGET / Math.max(1, seeds.reduce((a, n) => a + n, 0)));
         const lines = [];
-        for (const c of charges) {
-            if (Math.sign(c.q) !== from) continue;
-            const N = Math.max(4, Math.min(28, Math.round(LINE_SEED_K * Math.sqrt(Math.abs(c.q) / 0.4))));
+        for (let ci = 0; ci < charges.length; ci++) {
+            const c = charges[ci];
+            const N = share === 1 ? seeds[ci] : Math.floor(seeds[ci] * share + (ci * 0.6180339887) % 1);
+            if (N === 0) continue;
             const r0 = c.r + 0.5 * h;
             for (let k = 0; k < N; k++) {
                 const th = (k + 0.5) / N * 2 * Math.PI;

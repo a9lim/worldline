@@ -160,14 +160,15 @@ fn wlExtrapolate(p: WLPoint, s: f32) -> WLPoint {
 // root is bracketed among the points, then found on its segment by Newton's method on the
 // Hermite (g' = n̂·v + 1 ≥ 1 − |v| > 0).
 //
-// The bracket comes from a bisection over every point or, given a hint, a gallop out from
-// it (1, 2, 4 … points, then a bisection inside). Light from a source at distance R left
-// about R of the world-line clock ago, so the pair force starts R/WL_DT points back from the
-// newest (pair-force.wgsl coneHint), from the pair's current distance. The hint only places
-// the first probe: where g is monotone the bracket is unique, so every hint finds the same
-// one, and a poor one (a fast source, a merge break) costs probes.
+// The bracket comes from a gallop out from a hint (1, 2, 4 … points, then a bisection
+// inside): the pair force keeps each pair's bracket from the last call, and without one the
+// search guesses: light from distance R now left about R of the world-line clock ago, R over
+// the line's mean sample spacing back from its last point (a retired line's last is its
+// death, T − t_last earlier). The hint only places the first probe: where g is monotone the
+// bracket is unique, so every hint finds the same one, and a poor one (a source whose path
+// curved, a merge break) costs probes.
 
-/** retardedStateHinted() with no hint: a full bisection. */
+/** retardedStateHinted() with no hint: it guesses from the distance. */
 const WL_NO_HINT: u32 = 0xFFFFFFFFu;
 
 struct Retarded {
@@ -257,7 +258,14 @@ fn retardedStateHinted(
     var side = 0u;
     var lo = 0u;
     var hi = lastIdx;
-    if (*hint == WL_NO_HINT || lastIdx == 0u) {
+    if (*hint == WL_NO_HINT && lastIdx > 0u) {
+        let tLast = wlTimeAt(v, lastIdx);
+        let tFirst = wlTimeAt(v, 0u);
+        let spacing = max((tLast - tFirst) / f32(lastIdx), 1e-3);
+        let back = length(cNow - xo) - (T - tLast);
+        *hint = u32(clamp(back / spacing, 0.0, f32(WL_LEN))) + 1u;
+    }
+    if (lastIdx == 0u) {
         if (wlConeAt(v, 0u, xo, T) > 0.0) { side = 1u; }
         else if (wlConeAt(v, lastIdx, xo, T) <= 0.0) { side = 2u; }
     } else {

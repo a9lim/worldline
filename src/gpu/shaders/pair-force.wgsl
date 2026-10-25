@@ -39,9 +39,7 @@ struct TileParticle {
     higgsMod: f32,
     bodyRadSq: f32,  // pow(mass, 2/3) — true body radius squared (not BH horizon)
     srcIdx: u32,     // global index for signal delay lookup
-    kind: u32,       // SRC_NONE, SRC_ALIVE, or SRC_RETIRED (its world line ended at deathTime)
-    deathTime: f32,
-    spacing: f32,    // the world line's mean time between samples (a substep longer than WL_DT records one)
+    kind: u32,       // SRC_NONE, SRC_ALIVE, or SRC_RETIRED (its world line ended at its death)
 };
 const SRC_NONE: u32 = 0u;
 const SRC_ALIVE: u32 = 1u;
@@ -64,38 +62,14 @@ var<workgroup> laneSums: array<array<f32, 8>, WG_SIZE>;
 @group(2) @binding(0) var<storage, read_write> allForces: array<AllForces>;
 @group(2) @binding(1) var<storage, read_write> maxAccel: array<atomic<u32>>;
 
-// Bind group 3: world lines (shared-worldline.wgsl) and the per-pair light-cone hints,
-// source-major (wlHints[src * capacity + observer]) so a workgroup's reads coalesce; the
-// table grows with the world lines (gpu-physics.js _growStore), so its stride is a uniform
+// Bind group 3: world lines (shared-worldline.wgsl) and the per-pair light-cone hints, each
+// pair's bracket kept for its next call (in a crowded scene the paths curve too much over a
+// light-crossing time for any guess from now to match it), source-major
+// (wlHints[src * capacity + observer]) so a workgroup's reads coalesce; the table grows with
+// the world lines (gpu-physics.js _growStore), so its stride is a uniform
 @group(3) @binding(0) var<storage, read_write> wlData: array<f32>;
 @group(3) @binding(1) var<storage, read_write> wlMeta: array<u32>;
 @group(3) @binding(2) var<storage, read_write> wlHints: array<u32>;
-
-/** The mean time between source src's samples, from its oldest and newest. */
-fn sampleSpacing(src: u32) -> f32 {
-    let mb = src * WL_META_STRIDE;
-    let count = wlMeta[mb + 1u];
-    if (count < 2u) { return WL_DT; }
-    let newest = wlData[wlSampleBase(src, wlMeta[mb] + WL_LEN - 1u)];
-    let oldest = wlData[wlSampleBase(src, wlMeta[mb] + WL_LEN - count)];
-    return max((newest - oldest) / f32(count - 1u), 1e-3);
-}
-
-/**
- * A first guess at where on source s's world line the light-cone search starts, for a pair
- * with no hint yet (a new slot, a grown table): as points back from its last, light from the
- * source's distance R now left about R/a of the world-line clock ago (comoving and conformal,
- * light runs at 1), that over its sample spacing back (a retired source's line ends at its
- * death, T − deathTime ago). Each pair then keeps the bracket it found: in a crowded scene the
- * paths curve too much over a light-crossing time for any guess from now to match it.
- */
-fn coneHint(s: TileParticle, pPos: vec2<f32>, T: f32, periodic: bool, domW: f32, domH: f32, topo: u32) -> u32 {
-    var d = vec2(s.posX, s.posY) - pPos;
-    if (periodic) { d = fullMinImageP(pPos.x, pPos.y, s.posX, s.posY, domW, domH, topo); }
-    var back = length(d) / uniforms.scaleA;
-    if (s.kind == SRC_RETIRED) { back -= T - s.deathTime; }
-    return u32(clamp(back / s.spacing, 0.0, f32(WL_LEN))) + 1u;
-}
 
 // ── Source data struct for force computation (used by both tile loop and dead loop) ──
 struct SourceData {
@@ -545,8 +519,6 @@ fn main(
                 tile[tileIdx].higgsMod = select(saym.z, 1.0, abs(saym.z) < EPSILON);
                 tile[tileIdx].srcIdx = tileSrcIdx;
                 tile[tileIdx].kind = SRC_RETIRED;
-                tile[tileIdx].deathTime = particleAux[tileSrcIdx].deathTime;
-                tile[tileIdx].spacing = sampleSpacing(tileSrcIdx);
             } else if ((flags & FLAG_ALIVE) != 0u) {
                 let sp = particles[tileSrcIdx];
                 tile[tileIdx].posX = sp.posX;
@@ -569,7 +541,6 @@ fn main(
                 tile[tileIdx].bodyRadSq = sd.bodyRSq;
                 tile[tileIdx].srcIdx = tileSrcIdx;
                 tile[tileIdx].kind = select(SRC_NONE, SRC_ALIVE, sp.mass >= EPSILON);
-                if (relOn) { tile[tileIdx].spacing = sampleSpacing(tileSrcIdx); }
             } else {
                 tile[tileIdx].kind = SRC_NONE;
             }
@@ -587,9 +558,9 @@ fn main(
                     var src: SourceData;
                     if (relOn) {
                         let hIdx = s.srcIdx * uniforms.maxParticles + idx;
+                        // 0: none yet (a new slot, a grown table), and the search guesses
                         let hintIn = wlHints[hIdx];
-                        var hint = hintIn;
-                        if (hintIn == 0u) { hint = coneHint(s, vec2(pPosX, pPosY), sdTime, isPeriodic, domW, domH, topo); }
+                        var hint = select(hintIn, WL_NO_HINT, hintIn == 0u);
                         let alive = s.kind == SRC_ALIVE;
                         let ret = retardedStateHinted(
                             s.srcIdx, pPosX, pPosY, sdTime,
