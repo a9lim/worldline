@@ -923,13 +923,16 @@ export default class GPUPhysics {
     }
 
     /**
-     * Ghost slots copied in after the alive slots each substep: the whole ghost buffer, since
-     * the host learns a substep's count only a frame later, and trimGhosts clears the slots past
-     * the substep's own count (sizing by the last count missed ghosts the moment it grew).
-     * 0 off a periodic boundary.
+     * Ghost slots copied in after the alive slots each substep: as many as the bodies can make
+     * (eight a body, its four edges and four corners, in a domain no wider than two margins),
+     * up to the ghost buffer, since the host learns a substep's count only a frame later, and
+     * trimGhosts clears the slots past the substep's own count (sizing by the last count missed
+     * ghosts the moment it grew). Every pass over the ghost slots, the trees' among them, is
+     * sized by this, so a small scene on a torus doesn't scan the whole buffer. 0 off a
+     * periodic boundary.
      */
     _ghostSlots() {
-        return this.boundaryMode === BOUND_LOOP && this.aliveCount > 0 ? MAX_PARTICLES : 0;
+        return this.boundaryMode === BOUND_LOOP ? Math.min(MAX_PARTICLES, 8 * this.aliveCount) : 0;
     }
 
     /**

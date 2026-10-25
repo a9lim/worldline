@@ -301,8 +301,9 @@ as far as a contact: each substep `ghost-gen.wgsl` first reduces the largest bod
 (`maxRadius`, the horizon in black-hole mode, into the `radiusMax` buffer and, by an
 in-encoder copy, `SimUniforms.radiusMax`), then ghosts each body within its radius + that
 largest radius + `GHOST_SLOP` (2) of an edge, about 140 ghosts for 500 bodies. The host
-learns a substep's ghost count only a frame later, so it copies the whole ghost buffer
-(`_ghostSlots()`) and `trimGhosts` clears the slots past the substep's own count;
+learns a substep's ghost count only a frame later, so it copies as many ghost slots as the
+bodies could fill (`_ghostSlots()`: eight a body, its edges and corners, up to the buffer)
+and `trimGhosts` clears the slots past the substep's own count;
 `cacheDerived` runs first, so the reduced radius is this substep's. Collision detection and
 absorption prune by each tree node's largest radius (node word 19) instead: a collision pair
 is written by its smaller body (the lower slot of two alike), which looks only under nodes
