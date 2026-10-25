@@ -9,7 +9,7 @@
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 180;
+const SHADER_VERSION = 181;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -1992,7 +1992,7 @@ export async function createComputeStatsPipeline(device, wgslConstants = '') {
 
     const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [group0Layout, group1Layout] });
 
-    const entries = ['statsKEMom', 'statsPE', 'statsField', 'statsPFISel'];
+    const entries = ['statsBodies', 'statsPE', 'statsField', 'statsReduce'];
     const pipelines = {};
     for (const entry of entries) {
         pipelines[entry] = device.createComputePipeline({

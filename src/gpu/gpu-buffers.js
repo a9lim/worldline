@@ -16,7 +16,7 @@ import {
     WORLDLINE_LEN, GPU_MAX_PHOTONS, GPU_MAX_PIONS,
     GPU_SCALAR_GRID, GPU_MAX_LEPTONS, GPU_MAX_PARTICLES,
 } from '../config.js';
-import { WL_STRIDE, WL_META_STRIDE } from './gpu-constants.js';
+import { WL_STRIDE, WL_META_STRIDE, STATS_LAYOUT } from './gpu-constants.js';
 
 // Quadtree node size in bytes (20 u32 words = 80 bytes, must match tree-build.wgsl)
 const QTNODE_SIZE_BYTES = 80;
@@ -189,11 +189,12 @@ export function createParticleBuffers(device, maxParticles, storeCapacity = maxP
     // Packed into one buffer: [aliveCount: u32, freeTop: u32, freeStack: u32[maxParticles]]
     const poolMgmt = storageBuffer('poolMgmt', UINT_SIZE, maxParticles + 2);
 
-    // Stats readback buffer (double-buffered: aggregates + PE + field energy + selected particle)
+    // Stats: 128 f32 of results (read back, double-buffered), then the stats passes'
+    // per-workgroup partials (STATS_LAYOUT, compute-stats.wgsl)
     const STATS_BUFFER_SIZE = 512; // 128 f32
     const statsBuffer = device.createBuffer({
         label: 'statsBuffer',
-        size: STATS_BUFFER_SIZE,
+        size: STATS_LAYOUT.words * 4,
         // COPY_DST: the stats pass copies the ledger accumulators in (gpu-physics.js requestStats)
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });

@@ -169,8 +169,70 @@ fn currentView(i: u32, alive: bool) -> WLView {
     return v;
 }
 
-@compute @workgroup_size(1)
-fn frameAnchor() {
+// frameAnchor's workgroup: the zero-momentum sums over the bodies, in a fixed order
+const ANCHOR_WG: u32 = 256u;
+var<workgroup> anchorHeavy: array<vec2<f32>, ANCHOR_WG>;   // mass, slot
+var<workgroup> anchorSum: array<vec4<f32>, ANCHOR_WG>;
+var<workgroup> anchorSumE: array<f32, ANCHOR_WG>;
+
+/** The heavier of two (mass, slot) candidates, ties to the lower slot; none is (−1, 0) */
+fn anchorHeavier(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
+    return select(a, b, b.x > a.x || (b.x == a.x && b.y < a.y));
+}
+
+@compute @workgroup_size(ANCHOR_WG)
+fn frameAnchor(@builtin(local_invocation_index) lid: u32) {
+    // Zero momentum: u = P/E (P/M without relativity), anchored on the centre of energy,
+    // which moves uniformly at u. On a torus the centre is taken about the heaviest body. The
+    // whole workgroup sums the bodies; one thread does the rest.
+    var refIdx = 0u;
+    var zP = vec2(0.0);
+    var zE = 0.0;
+    var zMoment = vec2(0.0);
+    if (fp.kind == 1u) {
+        var heavy = vec2(-1.0, 0.0);
+        for (var i = lid; i < fp.aliveCount; i += ANCHOR_WG) {
+            let p = particles[i];
+            if ((p.flags & FLAG_ALIVE) != 0u && p.mass > heavy.x) { heavy = vec2(p.mass, f32(i)); }
+        }
+        anchorHeavy[lid] = heavy;
+        workgroupBarrier();
+        for (var s = ANCHOR_WG / 2u; s > 0u; s >>= 1u) {
+            if (lid < s) { anchorHeavy[lid] = anchorHeavier(anchorHeavy[lid], anchorHeavy[lid + s]); }
+            workgroupBarrier();
+        }
+        refIdx = u32(anchorHeavy[0].y);
+        let r0 = vec2(particles[refIdx].posX, particles[refIdx].posY);
+        var P = vec2(0.0);
+        var E = 0.0;
+        var moment = vec2(0.0);
+        for (var i = lid; i < fp.aliveCount; i += ANCHOR_WG) {
+            let p = particles[i];
+            if ((p.flags & FLAG_ALIVE) == 0u) { continue; }
+            let w = vec2(p.velWX, p.velWY);
+            let e = select(p.mass, p.mass * sqrt(1.0 + dot(w, w)), fp.lorentz != 0u);
+            P += p.mass * w;
+            E += e;
+            var d = vec2(p.posX, p.posY) - r0;
+            if (fp.periodic != 0u) { d = fullMinImageP(r0.x, r0.y, p.posX, p.posY, fp.domainW, fp.domainH, fp.topology); }
+            moment += e * d;
+        }
+        anchorSum[lid] = vec4(P, moment);
+        anchorSumE[lid] = E;
+        workgroupBarrier();
+        for (var s = ANCHOR_WG / 2u; s > 0u; s >>= 1u) {
+            if (lid < s) {
+                anchorSum[lid] += anchorSum[lid + s];
+                anchorSumE[lid] += anchorSumE[lid + s];
+            }
+            workgroupBarrier();
+        }
+        zP = anchorSum[0].xy;
+        zMoment = anchorSum[0].zw;
+        zE = anchorSumE[0];
+    }
+    if (lid != 0u) { return; }
+
     var st: FrameState;
     st.lorentz = select(0.0, 1.0, fp.lorentz != 0u);
     st.omega = fp.omega;
@@ -187,32 +249,11 @@ fn frameAnchor() {
     // ── The observer's velocity and reference point now ──
     var uNow = vec2(0.0);
     if (fp.kind == 1u) {
-        // Zero momentum: u = P/E (P/M without relativity), anchored on the centre of energy,
-        // which moves uniformly at u. On a torus the centre is taken about the heaviest body.
-        var refIdx = 0u;
-        var heaviest = -1.0;
-        for (var i = 0u; i < fp.aliveCount; i++) {
-            let p = particles[i];
-            if ((p.flags & FLAG_ALIVE) != 0u && p.mass > heaviest) { heaviest = p.mass; refIdx = i; }
-        }
+        // Zero momentum (summed above)
+        if (zE <= EPSILON) { st.valid = 0.0; frame = st; return; }
+        uNow = zP / zE;
         let r0 = vec2(particles[refIdx].posX, particles[refIdx].posY);
-        var P = vec2(0.0);
-        var E = 0.0;
-        var moment = vec2(0.0);
-        for (var i = 0u; i < fp.aliveCount; i++) {
-            let p = particles[i];
-            if ((p.flags & FLAG_ALIVE) == 0u) { continue; }
-            let w = vec2(p.velWX, p.velWY);
-            let e = select(p.mass, p.mass * sqrt(1.0 + dot(w, w)), fp.lorentz != 0u);
-            P += p.mass * w;
-            E += e;
-            var d = vec2(p.posX, p.posY) - r0;
-            if (fp.periodic != 0u) { d = fullMinImageP(r0.x, r0.y, p.posX, p.posY, fp.domainW, fp.domainH, fp.topology); }
-            moment += e * d;
-        }
-        if (E <= EPSILON) { st.valid = 0.0; frame = st; return; }
-        uNow = P / E;
-        st.aNow = wrapToDomain(r0 + moment / E);
+        st.aNow = wrapToDomain(r0 + zMoment / zE);
     } else if (fp.kind == 2u) {
         let p = particles[fp.slot];
         if ((p.flags & FLAG_ALIVE) == 0u) { st.valid = 0.0; frame = st; return; }

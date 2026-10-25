@@ -804,7 +804,10 @@ canvas text needs no font-load redraw.
   `SimUniforms`. Event records are mirrored between shaders and the readback parsers in
   `gpu-physics.js`: a 32-byte `MergeResult` change also touches `MERGE_RESULT_SIZE`,
   `collision.wgsl`, `merge-photons.wgsl`, and the field-excitation upload. The stats
-  readback layout is listed at the top of `compute-stats.wgsl`.
+  readback layout is listed at the top of `compute-stats.wgsl`: 128 words of results, then
+  each stats pass's per-workgroup partials (`STATS_LAYOUT` in `gpu-constants.js`, generated
+  into WGSL), which one `statsReduce` workgroup adds in a fixed order, so the same state
+  reads back the same sums.
 - **Shader cache.** Bump `SHADER_VERSION` after any WGSL edit; the query string is the
   only cache key.
 - **New toggle or parameter.** Update `physics-contract.js` (`TOGGLE_KEYS`, or

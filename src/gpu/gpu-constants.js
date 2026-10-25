@@ -45,6 +45,24 @@ export const paletteRGB = window._parseHex;
  */
 export const OBSERVERS_PER_GROUP = 8;
 
+/**
+ * The stats buffer (compute-stats.wgsl), in f32 words: 128 words of results, then each stats
+ * pass's per-workgroup partials, which statsReduce adds in a fixed order. Bodies are 64 to a
+ * workgroup, the pairs OBSERVERS_PER_GROUP rows, the field 256 cells, the ledger 64 slots of
+ * the largest pool; `*Groups` are the most workgroups each pass dispatches.
+ */
+export const STATS_LAYOUT = (() => {
+    const ledgerGroups = Math.ceil(Math.max(GPU_MAX_PHOTONS, GPU_MAX_PIONS + GPU_MAX_LEPTONS, GPU_MAX_PARTICLES) / 64);
+    const bodyGroups = Math.ceil(GPU_MAX_PARTICLES / 64);
+    const peGroups = Math.ceil(GPU_MAX_PARTICLES / OBSERVERS_PER_GROUP);
+    const fieldGroups = Math.ceil(GPU_SCALAR_GRID * GPU_SCALAR_GRID / 256);
+    const ledger = 128;                          // 8 words a workgroup
+    const body = ledger + ledgerGroups * 8;      // 16
+    const pe = body + bodyGroups * 16;           // 8
+    const field = pe + peGroups * 8;             // 4
+    return { ledgerGroups, bodyGroups, peGroups, fieldGroups, ledger, body, pe, field, words: field + fieldGroups * 4 };
+})();
+
 /** Format a float for WGSL (always includes decimal point). */
 function wf(v) {
     const s = String(v);
@@ -114,6 +132,12 @@ const BOSON_SOFTENING_SQ: f32 = ${wf(BOSON_SOFTENING_SQ)};
 const BOSON_MIN_AGE: u32 = ${BOSON_MIN_AGE}u;
 const BOSON_MIN_AGE_TIME: f32 = ${wf(BOSON_MIN_AGE * PHYSICS_DT)};
 const MAX_QUAD_WG: u32 = ${Math.ceil(GPU_MAX_PARTICLES / 64)}u;
+const STATS_LEDGER_PART: u32 = ${STATS_LAYOUT.ledger}u;
+const STATS_LEDGER_GROUPS: u32 = ${STATS_LAYOUT.ledgerGroups}u;
+const STATS_BODY_PART: u32 = ${STATS_LAYOUT.body}u;
+const STATS_PE_PART: u32 = ${STATS_LAYOUT.pe}u;
+const STATS_FIELD_PART: u32 = ${STATS_LAYOUT.field}u;
+const STATS_FIELD_GROUPS: u32 = ${STATS_LAYOUT.fieldGroups}u;
 const PHYSICS_DT: f32 = ${wf(PHYSICS_DT)};
 const MIN_MASS: f32 = ${wf(MIN_MASS)};
 const PHOTON_QUANTUM: f32 = ${wf(PHOTON_QUANTUM)};

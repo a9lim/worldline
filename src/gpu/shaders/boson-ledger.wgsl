@@ -11,8 +11,10 @@
 //                  energy, taken as relativistic) at the cull, [2–4] its comoving a·(E, px,
 //                  py) with all culled momentum, so the escaped background redshifts exactly
 //                  whenever it is read; [5] leptons' rest mass, which stays matter
-//   statsBosons  — with the stats: pool totals into stats[20..25]: photon E, px, py; pion
-//                  and lepton E = m√(1 + w²), px, py; and stats[27], the radiation the
+//   statsBosons  — with the stats, STATS_LEDGER_GROUPS workgroups, a slot of each pool a
+//                  thread: per-workgroup pool totals at STATS_LEDGER_PART + 8g, which
+//                  compute-stats.wgsl statsReduce adds into stats[20..25] (photon E, px, py;
+//                  pion and lepton E = m√(1 + w²), px, py) and stats[27], the radiation the
 //                  bodies have lost but not yet emitted (RadiationState accumulators)
 
 @group(0) @binding(0) var<storage, read_write> photons: array<Photon>;
@@ -24,7 +26,8 @@
 @group(0) @binding(5) var<storage, read_write> piCount: atomic<u32>;
 @group(0) @binding(6) var<storage, read_write> particles: array<ParticleState>;
 @group(0) @binding(7) var<storage, read_write> radState: array<RadiationState>;
-struct LedgerA { scaleA: f32, _p0: f32, _p1: f32, _p2: f32 };
+// scaleA for the culls; aliveCount for statsBosons (slots past it are stale: a reset keeps them)
+struct LedgerA { scaleA: f32, aliveCount: u32, _p1: f32, _p2: f32 };
 @group(0) @binding(8) var<uniform> la: LedgerA;
 
 const LEDGER_WG: u32 = 64u;
@@ -88,16 +91,19 @@ fn cullBosons(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocati
 }
 
 @compute @workgroup_size(LEDGER_WG)
-fn statsBosons(@builtin(local_invocation_index) lid: u32) {
+fn statsBosons(@builtin(global_invocation_id) gid: vec3u, @builtin(workgroup_id) wid: vec3u,
+               @builtin(local_invocation_index) lid: u32) {
     var ph = vec3(0.0);
     var pi = vec3(0.0);
     let nPh = min(atomicLoad(&phCount), arrayLength(&photons));
     let nPi = min(atomicLoad(&piCount), arrayLength(&pions));
-    for (var i = lid; i < nPh; i += LEDGER_WG) {
+    let nBodies = min(la.aliveCount, min(arrayLength(&particles), arrayLength(&radState)));
+    let stride = STATS_LEDGER_GROUPS * LEDGER_WG;
+    for (var i = gid.x; i < nPh; i += stride) {
         let p = photons[i];
         if ((p.flags & 1u) != 0u) { ph += p.energy * vec3(1.0, p.velX, p.velY); }
     }
-    for (var i = lid; i < nPi; i += LEDGER_WG) {
+    for (var i = gid.x; i < nPi; i += stride) {
         let p = pions[i];
         if ((p.flags & 1u) != 0u) {
             let w = vec2(p.wX, p.wY);
@@ -107,7 +113,7 @@ fn statsBosons(@builtin(local_invocation_index) lid: u32) {
     // Energy taken from bodies and waiting for a whole boson: Larmor, Hawking (rest frame),
     // pion emission, and both quadrupole channels
     var pending = 0.0;
-    for (var i = lid; i < min(arrayLength(&particles), arrayLength(&radState)); i += LEDGER_WG) {
+    for (var i = gid.x; i < nBodies; i += stride) {
         if ((particles[i].flags & FLAG_ALIVE) == 0u) { continue; }
         let r = radState[i];
         pending += r.radAccum + r.hawkAccum + r.yukawaRadAccum + r.quadAccum + r.emQuadAccum;
@@ -116,12 +122,13 @@ fn statsBosons(@builtin(local_invocation_index) lid: u32) {
     let piTotal = reduce3(lid, pi);
     let pendTotal = reduce3(lid, vec3(pending, 0.0, 0.0));
     if (lid == 0u) {
-        stats[27] = pendTotal.x;
-        stats[20] = phTotal.x;
-        stats[21] = phTotal.y;
-        stats[22] = phTotal.z;
-        stats[23] = piTotal.x;
-        stats[24] = piTotal.y;
-        stats[25] = piTotal.z;
+        let b = STATS_LEDGER_PART + wid.x * 8u;
+        stats[b] = phTotal.x;
+        stats[b + 1u] = phTotal.y;
+        stats[b + 2u] = phTotal.z;
+        stats[b + 3u] = piTotal.x;
+        stats[b + 4u] = piTotal.y;
+        stats[b + 5u] = piTotal.z;
+        stats[b + 6u] = pendTotal.x;
     }
 }
