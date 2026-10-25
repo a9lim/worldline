@@ -53,8 +53,8 @@ fn appendGhost(
     origIdx: u32
 ) {
     let slot = atomicAdd(&ghostCounter, 1u);
-    if (slot >= MAX_GHOSTS) {
-        return; // overflow guard
+    if (slot >= uniforms.maxParticles) {
+        return; // overflow guard: the host copies the store's capacity of ghost slots
     }
     ghostState[slot] = gs;
     ghostAux[slot] = ga;

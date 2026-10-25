@@ -36,6 +36,8 @@ export default class GPUBackend {
         // (after init, which creates the light/dark pipeline pairs setTheme swaps).
         renderer.setTheme(sim.overlay.isLight);
 
+        physics.onStoreGrown = () => renderer.rebindWorldLines();
+
         const backend = new GPUBackend(device, gpuCanvas, physics, renderer);
         backend.applySettings(sim);
         return backend;

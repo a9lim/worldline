@@ -308,11 +308,26 @@ export default class GPURenderer {
     /** The spacetime view's passes (spacetime-render.wgsl). */
     async _initSpacetimeRendering() {
         try {
-            const p = await createSpacetimeRenderPipelines(this.device, this.format, this._wgslConstants || '');
-            const b = this.buffers;
+            this._spacetimePipelines = await createSpacetimeRenderPipelines(this.device, this.format, this._wgslConstants || '');
             this._spacetimeUniformBuffer = this.device.createBuffer({
                 label: 'spacetimeParams', size: 112, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
             });
+            this._createSpacetimeGroups();
+        } catch (e) {
+            console.warn('[worldline] Spacetime render pipeline creation failed, skipping:', e.message);
+            this._spacetime = null;
+        }
+    }
+
+    /** The world-line store grew (GPUPhysics._growStore): rebuild what reads it. */
+    rebindWorldLines() {
+        if (this._spacetimePipelines) this._createSpacetimeGroups();
+    }
+
+    _createSpacetimeGroups() {
+        {
+            const p = this._spacetimePipelines;
+            const b = this.buffers;
             const group = (pipeline, label, extra) => this.device.createBindGroup({
                 label, layout: pipeline.getBindGroupLayout(0),
                 entries: [
@@ -331,9 +346,6 @@ export default class GPURenderer {
                 pierceGroup: group(p.pierce, 'spacetimePierce', [...line, [5, b.color], [11, b.particleAux]]),
                 eventGroup: group(p.event, 'spacetimeEvents', [...line, [5, b.color]]),
             };
-        } catch (e) {
-            console.warn('[worldline] Spacetime render pipeline creation failed, skipping:', e.message);
-            this._spacetime = null;
         }
     }
 

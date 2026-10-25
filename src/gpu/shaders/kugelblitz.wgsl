@@ -21,13 +21,12 @@ const N_COM_X: u32 = 4u;
 const N_COM_Y: u32 = 5u;
 const N_TOTAL_MASS: u32 = 6u;
 const N_TOTAL_CHARGE: u32 = 7u;
-const N_PARTICLE_COUNT: u32 = 12u;
-const N_DIVIDED: u32 = 13u;
-const N_NW: u32 = 14u;
-const N_NE: u32 = 15u;
-const N_SW: u32 = 16u;
-const N_SE: u32 = 17u;
-const N_PARTICLE_IDX: u32 = 18u;
+const N_NW: u32 = 12u;
+const N_NE: u32 = 13u;
+const N_SW: u32 = 14u;
+const N_SE: u32 = 15u;
+const N_PARTICLE_IDX: u32 = 16u;
+const N_PARTICLE_COUNT: u32 = 17u;   // bosons under the node
 
 // Group 0: uniforms + boson tree (read_write for shared layout compat)
 @group(0) @binding(0) var<uniform> u: SimUniforms;
@@ -56,10 +55,10 @@ fn nodeU32(nodeIdx: u32, field: u32) -> u32 {
     return atomicLoad(&bosonTree[nodeIdx * NODE_WORDS + field]);
 }
 
-// Check if a node meets the collapse condition.
-// N_PARTICLE_COUNT on GPU is a visitor-flag protocol value, not a subtree boson count,
-// so we skip the count check here and rely on energy + size (the physics condition).
+// Check if a node meets the collapse condition: at least MIN_KUGELBLITZ_COUNT bosons (a leaf
+// is one, with a point's bounds) whose energy exceeds half the cell's extent.
 fn qualifies(nodeIdx: u32) -> bool {
+    if (nodeU32(nodeIdx, N_PARTICLE_COUNT) < MIN_KUGELBLITZ_COUNT) { return false; }
     let energy = nodeF32(nodeIdx, N_TOTAL_MASS);
     if (energy < MIN_KUGELBLITZ_ENERGY) { return false; }
     let sizeX = nodeF32(nodeIdx, N_MAX_X) - nodeF32(nodeIdx, N_MIN_X);
@@ -70,20 +69,19 @@ fn qualifies(nodeIdx: u32) -> bool {
 
 // Check if any child of a divided node also qualifies (if so, this node defers)
 fn childQualifies(nodeIdx: u32) -> bool {
-    let nw = nodeU32(nodeIdx, N_NW);
-    if (bitcast<i32>(nw) == NONE) { return false; }
-    if (qualifies(nw)) { return true; }
-    if (qualifies(nodeU32(nodeIdx, N_NE))) { return true; }
-    if (qualifies(nodeU32(nodeIdx, N_SW))) { return true; }
-    if (qualifies(nodeU32(nodeIdx, N_SE))) { return true; }
+    for (var c = 0u; c < 4u; c++) {
+        let ch = nodeU32(nodeIdx, N_NW + c);
+        if (bitcast<i32>(ch) != NONE && qualifies(ch)) { return true; }
+    }
     return false;
 }
 
 @compute @workgroup_size(64)
 fn checkKugelblitz(@builtin(global_invocation_id) gid: vec3u) {
     let nodeIdx = gid.x;
-    let totalNodes = atomicLoad(&bosonNodeCounter);
-    if (nodeIdx >= totalNodes) { return; }
+    // The tree's nodes: 2n − 1 over n bosons (tree-build.wgsl), the counter holding n
+    let n = atomicLoad(&bosonNodeCounter);
+    if (n == 0u || nodeIdx >= 2u * n - 1u) { return; }
 
     // Only the deepest qualifying node collapses
     if (!qualifies(nodeIdx)) { return; }
@@ -120,10 +118,11 @@ fn checkKugelblitz(@builtin(global_invocation_id) gid: vec3u) {
 
         if (isDivided) {
             if (top + 4 <= 64) {
-                stack[top] = nodeU32(nIdx, N_NW); top++;
-                stack[top] = nodeU32(nIdx, N_NE); top++;
-                stack[top] = nodeU32(nIdx, N_SW); top++;
-                stack[top] = nodeU32(nIdx, N_SE); top++;
+                // Two to four children fill the first slots (tree-build.wgsl)
+                for (var c = 0u; c < 4u; c++) {
+                    let ch = nodeU32(nIdx, N_NW + c);
+                    if (bitcast<i32>(ch) != NONE) { stack[top] = ch; top++; }
+                }
             }
         } else {
             // Leaf node — check each boson stored here
@@ -191,10 +190,11 @@ fn checkKugelblitz(@builtin(global_invocation_id) gid: vec3u) {
 
         if (isDivided) {
             if (top + 4 <= 64) {
-                stack[top] = nodeU32(nIdx, N_NW); top++;
-                stack[top] = nodeU32(nIdx, N_NE); top++;
-                stack[top] = nodeU32(nIdx, N_SW); top++;
-                stack[top] = nodeU32(nIdx, N_SE); top++;
+                // Two to four children fill the first slots (tree-build.wgsl)
+                for (var c = 0u; c < 4u; c++) {
+                    let ch = nodeU32(nIdx, N_NW + c);
+                    if (bitcast<i32>(ch) != NONE) { stack[top] = ch; top++; }
+                }
             }
         } else {
             let pidx = bitcast<i32>(nodeU32(nIdx, N_PARTICLE_IDX));

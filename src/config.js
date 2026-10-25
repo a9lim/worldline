@@ -119,7 +119,7 @@ export const EPOCH_STEP = 256;
 // ── GPU-Specific ──
 export const GPU_SCALAR_GRID = 128;            // GPU scalar field grid resolution
 export const GPU_HEATMAP_GRID = 128;           // GPU heatmap overlay resolution (tunable to 128)
-export const GPU_MAX_PARTICLES = 512;         // GPU buffer pre-allocation limit
+export const GPU_MAX_PARTICLES = 4096;         // GPU buffer pre-allocation limit
 
 // ── Cosmological Expansion ──
 export const DEFAULT_HUBBLE = 0.01;   // H₀ of the imposed schedules, H_Λ of the Friedmann closure

@@ -27,7 +27,7 @@ fn buildBosonDispatchArgs() {
     dispatchArgs[7] = 1u;
     dispatchArgs[8] = 1u;
 
-    dispatchArgs[9] = wg64(total * 6u);
+    dispatchArgs[9] = wg64(total * 2u);
     dispatchArgs[10] = 1u;
     dispatchArgs[11] = 1u;
 }

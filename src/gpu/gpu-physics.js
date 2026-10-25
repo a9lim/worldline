@@ -37,9 +37,10 @@
  *  Under expansion the domain is a × the comoving domain and the world-line clock is
  *  conformal time (cosmology.js, expansion.wgsl).
  */
-import { createParticleBuffers, createUniformBuffer, writeFrameUniforms, writeSubstepUniforms, UNIFORM_DT_OFFSET, UNIFORM_RADIUS_MAX_OFFSET, createFieldBuffers, createGravityGridBuffers, createAtomicGridBuffer, createHeatmapBuffers, createKugelblitzBuffers, createFrameBuffers, FRAME_PARAMS_SIZE, FRAME_STATE_SIZE, FIELD_GRID_RES, PARTICLE_STATE_SIZE, PARTICLE_AUX_SIZE, RADIATION_STATE_SIZE, DERIVED_SIZE, MERGE_RESULT_SIZE } from './gpu-buffers.js';
+import { PERF } from './gpu-profiler.js';
+import { createParticleBuffers, createWorldLineStore, STORE_TIERS, createUniformBuffer, writeFrameUniforms, writeSubstepUniforms, UNIFORM_DT_OFFSET, UNIFORM_RADIUS_MAX_OFFSET, createFieldBuffers, createGravityGridBuffers, createAtomicGridBuffer, createHeatmapBuffers, createKugelblitzBuffers, createFrameBuffers, FRAME_PARAMS_SIZE, FRAME_STATE_SIZE, FIELD_GRID_RES, PARTICLE_STATE_SIZE, PARTICLE_AUX_SIZE, RADIATION_STATE_SIZE, DERIVED_SIZE, MERGE_RESULT_SIZE } from './gpu-buffers.js';
 import { fetchShader, createLensPipeline, createPhase2Pipelines, createGhostGenPipeline, createTreeBuildPipelines, createTreeForcePipeline, createCollisionPipelines, createMergePhotonPipeline, createDeadGCPipeline, createPhase4Pipelines, createFieldDepositPipelines, createFieldEvolvePipelines, createFieldForcesPipelines, createFieldParticleGravPipeline, createFieldGravityPipelines, createFFTPipelines, createFieldExcitationPipeline, createHeatmapPipelines, createExpansionPipeline, createExtremalPipeline, createBosonDispatchArgsPipeline, createUpdateColorsPipeline, createHitTestPipeline, createComputeStatsPipeline, createFrameSlicePipelines } from './gpu-pipelines.js';
-import { buildWGSLConstants, GRAVITY_BIT, COULOMB_BIT, MAGNETIC_BIT, GRAVITOMAG_BIT, ONE_PN_BIT, RELATIVITY_BIT, SPIN_ORBIT_BIT, RADIATION_BIT, BLACK_HOLE_BIT, EXPANSION_BIT, YUKAWA_BIT, HIGGS_BIT, AXION_BIT, BARNES_HUT_BIT, BOSON_INTER_BIT, FIELD_GRAV_BIT_T1, HERTZ_BOUNCE_BIT_T1, EM_PAIRWISE_BIT_T1, WL_STRIDE, WL_META_STRIDE, OBSERVERS_PER_GROUP } from './gpu-constants.js';
+import { buildWGSLConstants, GRAVITY_BIT, COULOMB_BIT, MAGNETIC_BIT, GRAVITOMAG_BIT, ONE_PN_BIT, RELATIVITY_BIT, SPIN_ORBIT_BIT, RADIATION_BIT, BLACK_HOLE_BIT, EXPANSION_BIT, YUKAWA_BIT, HIGGS_BIT, AXION_BIT, BARNES_HUT_BIT, BOSON_INTER_BIT, FIELD_GRAV_BIT_T1, HERTZ_BOUNCE_BIT_T1, WL_STRIDE, WL_META_STRIDE, OBSERVERS_PER_GROUP } from './gpu-constants.js';
 import { createGPUDispatchPlan, updateGPUDispatchPlan } from './pass-graph.js';
 import { WORLDLINE_DT, WORLDLINE_LEN, GPU_MAX_PHOTONS, GPU_MAX_PIONS, GPU_MAX_LEPTONS, GPU_MAX_PARTICLES, GPU_HEATMAP_GRID, HEATMAP_INTERVAL_MASK, COL_MERGE, COL_BOUNCE, BOUND_LOOP, TORUS, COL_NAMES, BOUND_NAMES, TOPO_NAMES, SOFTENING, BH_SOFTENING, SOFTENING_SQ, BH_SOFTENING_SQ, CLOCK_PERIOD, HIGGS_COUPLING, AXION_COUPLING, BOSON_CHARGE, EPOCH_SPAN, EPOCH_STEP, kerrNewmanRadius } from '../config.js';
 import { installFieldMethods } from './gpu-fields.js';
@@ -48,6 +49,10 @@ import { GPU_PARAMETER_SLOTS } from '../physics-contract.js';
 
 
 const MAX_PARTICLES = GPU_MAX_PARTICLES;
+// Keys per workgroup of the tree's bitonic sort (tree-build.wgsl SORT_BLOCK), and bodies per
+// workgroup of the Barnes–Hut group walk (forces-tree.wgsl GROUP)
+const TREE_SORT_BLOCK = 1024;
+const TREE_GROUP = 32;
 const PION_POOL_CAP = GPU_MAX_PIONS + GPU_MAX_LEPTONS;
 const BOSON_ARGS_PHOTON = 0;
 const BOSON_ARGS_PION = 12;
@@ -68,7 +73,6 @@ function _inkABGR(charge, dark, hole) {
 }
 
 // Pre-allocated typed arrays for per-frame writeBuffer calls (avoid GC pressure)
-const _qtNodeCounterData = new Uint32Array([1]);
 const _qtBoundsResetData = new Int32Array([2147483647, 2147483647, -2147483647, -2147483647]);
 const _postSubDt = new Float32Array(1); // scratch for writing total dt to uniforms post-substep
 
@@ -79,8 +83,6 @@ const RB_MERGE_RESULTS = 32;
 const RB_KB_EVENT = RB_MERGE_RESULTS + MAX_PARTICLES * MERGE_RESULT_SIZE;
 const RB_FREE_STACK = RB_KB_EVENT + 64;
 const RB_SIZE = RB_FREE_STACK + MAX_PARTICLES * 4;
-const _bosonRootData = new Uint32Array(20);
-const _bosonRootF32 = new Float32Array(_bosonRootData.buffer);
 
 // Pre-allocated field uniform data (avoids per-substep GC from _writeFieldUniforms)
 
@@ -155,9 +157,9 @@ const _statsUniformI32 = new Int32Array(_statsUniformData);
 
 // Pre-allocated Green's hat upload buffer
 
-// G16: Pre-allocated batch deserialize buffers (GPU_MAX_PARTICLES = 512)
+// G16: Pre-allocated batch deserialize buffers, for the full particle capacity
 // Sized for the full GPU particle capacity so no reallocation is needed.
-const _DS_MAX = GPU_MAX_PARTICLES; // 512
+const _DS_MAX = GPU_MAX_PARTICLES;
 const _dsStateData  = new ArrayBuffer(_DS_MAX * 36);  // PARTICLE_STATE_SIZE = 36
 const _dsStateF32   = new Float32Array(_dsStateData);
 const _dsStateU32   = new Uint32Array(_dsStateData);
@@ -219,7 +221,7 @@ export default class GPUPhysics {
         this.boundaryMode = 0;  // despawn
         this.topologyMode = 0;  // torus
 
-        this.buffers = createParticleBuffers(device, MAX_PARTICLES);
+        this.buffers = createParticleBuffers(device, MAX_PARTICLES, STORE_TIERS[0]);
         // Expansion's ledger accumulators (expansion.wgsl), read and cleared with the stats
         this._cosmoAccum = device.createBuffer({
             label: 'cosmoAccum', size: 32,
@@ -231,20 +233,9 @@ export default class GPUPhysics {
         this._boundaryPipeline = null;
         this._boundaryBindGroup = null;
 
-        // Encoder-side staging buffers for tree build resets.
-        // queue.writeBuffer() happens at queue time (before encoder start), so it
-        // can't reset state between two tree builds in the same command buffer.
-        // These COPY_SRC buffers let us use encoder.copyBufferToBuffer() instead,
-        // which executes in-order within the command buffer.
-        this._qtCounterSrc = device.createBuffer({
-            label: 'qt-counter-src',
-            size: 4,
-            usage: GPUBufferUsage.COPY_SRC,
-            mappedAtCreation: true,
-        });
-        new Uint32Array(this._qtCounterSrc.getMappedRange()).set([1]);
-        this._qtCounterSrc.unmap();
-
+        // The tree builds' bounds reset, copied in by the encoder: queue.writeBuffer() happens
+        // at queue time (before encoder start), so it can't reset state between two tree
+        // builds in the same command buffer
         this._qtBoundsSrc = device.createBuffer({
             label: 'qt-bounds-src',
             size: 16,
@@ -253,15 +244,6 @@ export default class GPUPhysics {
         });
         new Int32Array(this._qtBoundsSrc.getMappedRange()).set([2147483647, 2147483647, -2147483647, -2147483647]);
         this._qtBoundsSrc.unmap();
-
-        // Encoder-side staging buffer for boson tree root node reset.
-        // 20 u32s = 80 bytes — written each frame with current domain dims,
-        // then copied to bosonTreeNodes via encoder.copyBufferToBuffer.
-        this._bosonRootSrc = device.createBuffer({
-            label: 'boson-root-src',
-            size: 80,
-            usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
-        });
 
         // Phase 2 pipelines + bind groups
         this._phase2 = null;
@@ -492,11 +474,12 @@ export default class GPUPhysics {
         });
 
         // --- All pipelines: fetch shaders in parallel ---
-        const [phase2, ghostGen, treeBuild, treeForce, collisionPipelines, mergePhotons, deadGC, phase4, updateColors, hitTest, computeStats] =
+        const [phase2, ghostGen, treeBuild, bosonTreeBuild, treeForce, collisionPipelines, mergePhotons, deadGC, phase4, updateColors, hitTest, computeStats] =
             await Promise.all([
                 createPhase2Pipelines(this.device, wgslConstants),
                 createGhostGenPipeline(this.device, wgslConstants),
-                createTreeBuildPipelines(this.device, wgslConstants),
+                createTreeBuildPipelines(this.device, wgslConstants, 'bodies'),
+                createTreeBuildPipelines(this.device, wgslConstants, 'bosons'),
                 createTreeForcePipeline(this.device, wgslConstants),
                 createCollisionPipelines(this.device, wgslConstants),
                 createMergePhotonPipeline(this.device, wgslConstants),
@@ -517,12 +500,14 @@ export default class GPUPhysics {
         this._trimGhostsPipeline = ghostGen.trim;
         this._createGhostGenBindGroups(ghostGen.bindGroupLayouts);
 
-        // --- Tree build ---
+        // --- Tree builds: the bodies' (every substep) and the bosons' (boson interaction) ---
         this._treeBuild = treeBuild;
-        this._createTreeBuildBindGroups(this._treeBuild.bindGroupLayouts);
+        this._bosonTreeBuild = bosonTreeBuild;
+        this._createTreeBuildBindGroups();
 
         // --- Tree force ---
         this._treeForcePipeline = treeForce.pipeline;
+        this._treeForceLayouts = treeForce.bindGroupLayouts;
         this._createTreeForceBindGroups(treeForce.bindGroupLayouts);
 
         // --- Collision ---
@@ -727,10 +712,16 @@ export default class GPUPhysics {
 
     async _initFrames(wgslConstants) {
         this.frameBuffers = createFrameBuffers(this.device, this.buffers.maxParticles);
-        const pl = await createFrameSlicePipelines(this.device, wgslConstants);
+        this._framePipelines = await createFrameSlicePipelines(this.device, wgslConstants);
+        this._createFrameBindGroups();
+        this._frameStatePending = false;
+        this._frameStateLatest = null;
+    }
+
+    _createFrameBindGroups() {
+        const pl = this._framePipelines;
         const fb = this.frameBuffers;
         const b = this.buffers;
-        this._framePipelines = pl;
         this._frameBG0 = this.device.createBindGroup({
             label: 'frameSlice_g0', layout: pl.bindGroupLayouts[0],
             entries: [fb.frameParams, fb.frameState, b.particleState, b.particleAux, b.wlData, b.wlMeta]
@@ -741,8 +732,6 @@ export default class GPUPhysics {
             entries: [fb.viewState, fb.viewAux, fb.viewDerived, fb.viewClocks]
                 .map((buffer, i) => ({ binding: i, resource: { buffer } })),
         });
-        this._frameStatePending = false;
-        this._frameStateLatest = null;
     }
 
     /**
@@ -939,7 +928,45 @@ export default class GPUPhysics {
      * 0 off a periodic boundary.
      */
     _ghostSlots() {
-        return this.boundaryMode === BOUND_LOOP && this.aliveCount > 0 ? MAX_PARTICLES : 0;
+        return this.boundaryMode === BOUND_LOOP && this.aliveCount > 0 ? this.buffers.storeCapacity : 0;
+    }
+
+    /**
+     * Grow the world lines and the light-cone hints to hold `slots` slots: the next tier up
+     * (STORE_TIERS), the rings copied to the same offsets (a slot's ring doesn't move), the hints
+     * new and empty, and every bind group that reads either rebuilt. The store is 48 KB a slot,
+     * so allocating it for the cap up front would cost every page 200 MB. False past the cap.
+     */
+    _growStore(slots) {
+        const b = this.buffers;
+        if (slots <= b.storeCapacity) return true;
+        const cap = STORE_TIERS.find((t) => t >= slots);
+        if (!cap) return false;
+        this._resizeStore(cap, true);
+        return true;
+    }
+
+    /** Replace the store with one of `cap` slots, keeping the rings when `keep` (reset() doesn't). */
+    _resizeStore(cap, keep) {
+        const b = this.buffers;
+        const store = createWorldLineStore(this.device, cap);
+        if (keep) {
+            const enc = this.device.createCommandEncoder({ label: 'growStore' });
+            enc.copyBufferToBuffer(b.wlData, 0, store.wlData, 0, Math.min(b.wlData.size, store.wlData.size));
+            this.device.queue.submit([enc.finish()]);
+        }
+        b.wlData.destroy();
+        b.wlHints.destroy();
+        b.wlData = store.wlData;
+        b.wlHints = store.wlHints;
+        b.storeCapacity = cap;
+        this._createPhase2BindGroups();
+        this._createPhase4BindGroups();
+        this._createTreeForceBindGroups(this._treeForceLayouts);
+        if (this._framePipelines) this._createFrameBindGroups();
+        this._heatmapBGs = null;
+        this.syncUniforms();
+        if (this.onStoreGrown) this.onStoreGrown(b);
     }
 
     /**
@@ -993,40 +1020,43 @@ export default class GPUPhysics {
      * Create bind groups for tree build pipelines.
      * All 4 entry points share the same bind group layouts.
      */
-    _createTreeBuildBindGroups(layouts) {
+    _createTreeBuildBindGroups() {
         const b = this.buffers;
-
-        // Group 0: tree state buffers
-        this._treeBuildBG0 = this.device.createBindGroup({
-            label: 'treeBuild_g0',
-            layout: layouts[0],
-            entries: [
-                { binding: 0, resource: { buffer: b.qtNodeBuffer } },
-                { binding: 1, resource: { buffer: b.qtNodeCounter } },
-                { binding: 2, resource: { buffer: b.qtBoundsBuffer } },
-                { binding: 3, resource: { buffer: b.qtVisitorFlags } },
-            ],
+        const bg = (label, layout, entries) => this.device.createBindGroup({
+            label, layout, entries: entries.map((resource, binding) => ({ binding, resource })),
         });
 
-        // Group 1: particle state (packed struct) + derived + aux
-        this._treeBuildBG1 = this.device.createBindGroup({
-            label: 'treeBuild_g1',
-            layout: layouts[1],
-            entries: [
-                { binding: 0, resource: { buffer: b.particleState } },
-                { binding: 1, resource: { buffer: b.derived } },
-                { binding: 2, resource: { buffer: b.particleAux } },
-            ],
+        // The sort network's steps, one 256-byte entry each, picked by dynamic offset (a
+        // writeBuffer per step would land before the whole encoder): entry 0 is unused; then
+        // for each width k past a block, its steps j ≥ SORT_BLOCK and its in-block merge (j = 0)
+        const steps = [[0, 0]];
+        for (let k = 2 * TREE_SORT_BLOCK; k <= Math.max(b.TREE_KEYS, b.BOSON_TREE_KEYS); k *= 2) {
+            for (let j = k / 2; j >= TREE_SORT_BLOCK; j /= 2) steps.push([k, j]);
+            steps.push([k, 0]);
+        }
+        const table = new Uint32Array(steps.length * 64);
+        steps.forEach(([k, j], i) => { table[i * 64] = k; table[i * 64 + 1] = j; });
+        this._treeSortParams = this.device.createBuffer({
+            label: 'treeSortParams', size: table.byteLength,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
+        this.device.queue.writeBuffer(this._treeSortParams, 0, table);
+        this._treeSortSteps = steps;
 
-        // Group 2: uniforms
-        this._treeBuildBG2 = this.device.createBindGroup({
-            label: 'treeBuild_g2',
-            layout: layouts[2],
-            entries: [
-                { binding: 0, resource: { buffer: this.uniformBuffer } },
-            ],
-        });
+        const groups = (label, t, nodes, count, bounds, visits, items, keys, radix) => {
+            const L = t.bindGroupLayouts;
+            return [
+                bg(label + '_g0', L[0], [{ buffer: nodes }, { buffer: count }, { buffer: bounds }, { buffer: visits }]),
+                bg(label + '_g1', L[1], items.map((buffer) => ({ buffer }))),
+                bg(label + '_g2', L[2], [{ buffer: this.uniformBuffer }]),
+                bg(label + '_g3', L[3], [{ buffer: keys }, { buffer: radix }, { buffer: this._treeSortParams, size: 16 }]),
+            ];
+        };
+        this._treeBuildBGs = groups('treeBuild', this._treeBuild, b.qtNodeBuffer, b.qtNodeCounter, b.qtBoundsBuffer,
+            b.qtVisitorFlags, [b.particleState, b.derived, b.particleAux], b.treeKeys, b.treeRadix);
+        this._bosonTreeBuildBGs = groups('bosonTreeBuild', this._bosonTreeBuild, b.bosonTreeNodes, b.bosonTreeCounter,
+            b.bosonTreeBounds, b.bosonVisitorFlags, [b.photonPool, b.phCount, b.pionPool, b.piCount],
+            b.bosonTreeKeys, b.bosonTreeRadix);
     }
 
     /**
@@ -1054,10 +1084,10 @@ export default class GPUPhysics {
             layout: layouts[1],
             entries: [
                 { binding: 0, resource: { buffer: b.particleState } },
-                { binding: 1, resource: { buffer: b.particleAux } },
+                { binding: 1, resource: { buffer: b.treeKeys } },
                 { binding: 2, resource: { buffer: b.derived } },
                 { binding: 3, resource: { buffer: b.axYukMod } },
-                { binding: 4, resource: { buffer: b.ghostOriginalIdx } },
+                { binding: 4, resource: { buffer: b.qtNodeCounter } },
             ],
         });
 
@@ -1173,7 +1203,7 @@ export default class GPUPhysics {
         // ── World lines and clocks ──
         this._phase4BindGroups.worldLineG0 = bg('worldline_g0', p4.recordWorldLines.bindGroupLayouts[0],
             [this.uniformBuffer, b.particleState, b.allForces, b.clocks, b.particleAux]);
-        this._rebaseUniformBuffer = this.device.createBuffer({
+        this._rebaseUniformBuffer ??= this.device.createBuffer({
             label: 'worldlineRebaseUniforms', size: 16,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
@@ -1245,15 +1275,15 @@ export default class GPUPhysics {
         this._phase4BindGroups.absorbG1 = bg('bosonAbsorb_g1', p4.applyAbsorption.bindGroupLayouts[1],
             [b.particleState, b.particleAux, b.qtNodeBuffer, b.ghostOriginalIdx]);
 
-        // ── Boson Tree (insertBosonsIntoTree, computeBosonAggregates, computeBosonGravity, applyBosonBosonGravity) ──
+        // ── Boson tree walks (computeBosonGravity, applyBosonBosonGravity, applyPionPionCoulomb, annihilatePions) ──
         // Group 0: uniforms + tree nodes (atomic) + counter + visitor flags
-        this._phase4BindGroups.btG0 = bg('bosonTree_g0', p4.insertBosonsIntoTree.bindGroupLayouts[0],
+        this._phase4BindGroups.btG0 = bg('bosonTree_g0', p4.computeBosonGravity.bindGroupLayouts[0],
             [this.uniformBuffer, b.bosonTreeNodes, b.bosonTreeCounter, b.bosonVisitorFlags]);
-        this._phase4BindGroups.btG1 = bg('bosonTree_g1', p4.insertBosonsIntoTree.bindGroupLayouts[1],
+        this._phase4BindGroups.btG1 = bg('bosonTree_g1', p4.computeBosonGravity.bindGroupLayouts[1],
             [b.photonPool, b.phCount]);
-        this._phase4BindGroups.btG2 = bg('bosonTree_g2', p4.insertBosonsIntoTree.bindGroupLayouts[2],
+        this._phase4BindGroups.btG2 = bg('bosonTree_g2', p4.computeBosonGravity.bindGroupLayouts[2],
             [b.pionPool, b.piCount, b.pionClaims]);
-        this._phase4BindGroups.btG3 = bg('bosonTree_g3', p4.insertBosonsIntoTree.bindGroupLayouts[3],
+        this._phase4BindGroups.btG3 = bg('bosonTree_g3', p4.computeBosonGravity.bindGroupLayouts[3],
             [b.particleState, b.allForces]);
 
         // ── Kugelblitz Collapse ──
@@ -1384,8 +1414,8 @@ export default class GPUPhysics {
         const bgs = this._phase4BindGroups;
         const p4 = this._phase4;
 
-        // Step 1: Recompute 1PN forces at post-drift positions
-        if (this._barnesHutEnabled) {
+        // Step 1: Recompute 1PN forces at post-drift positions, the way the force pass took them
+        if (this._treeWalk) {
             // Rebuild tree at post-drift positions for VV correction
             this._dispatchGhostGen(encoder);
             this._dispatchTreeBuild(encoder);
@@ -1528,58 +1558,12 @@ export default class GPUPhysics {
         const bgs = this._phase4BindGroups;
         const b = this.buffers;
 
-        // Reset boson tree node counter to 1 (root = node 0).
-        // Uses encoder.copyBufferToBuffer (not queue.writeBuffer) so the reset
-        // executes in-order within the command buffer. Reuses _qtCounterSrc
-        // (same static [1] data as the particle tree counter reset).
-        encoder.copyBufferToBuffer(this._qtCounterSrc, 0, b.bosonTreeCounter, 0, 4);
-
-        // Clear visitor flags before insertion
-        encoder.clearBuffer(b.bosonVisitorFlags);
-
-        // Initialize root node (reuse pre-allocated arrays to avoid GC)
-        // Child pointers (words 14-17) = 0xFFFFFFFF (NONE), particleIdx (18) = 0xFFFFFFFF, parent (19) = 0xFFFFFFFF
-        _bosonRootData.fill(0);
-        _bosonRootF32[0] = 0;              // minX
-        _bosonRootF32[1] = 0;              // minY
-        _bosonRootF32[2] = this.domainW;   // maxX
-        _bosonRootF32[3] = this.domainH;   // maxY
-        _bosonRootData[14] = 0xFFFFFFFF;   // NW = NONE
-        _bosonRootData[15] = 0xFFFFFFFF;   // NE = NONE
-        _bosonRootData[16] = 0xFFFFFFFF;   // SW = NONE
-        _bosonRootData[17] = 0xFFFFFFFF;   // SE = NONE
-        _bosonRootData[18] = 0xFFFFFFFF;   // particleIdx = NONE
-        _bosonRootData[19] = 0xFFFFFFFF;   // parent = NONE (-1)
-        // Write root data to staging buffer (queue time), then copy to tree nodes
-        // (encoder time) so the reset is ordered correctly within the command buffer.
-        this.device.queue.writeBuffer(this._bosonRootSrc, 0, _bosonRootData);
-        encoder.copyBufferToBuffer(this._bosonRootSrc, 0, b.bosonTreeNodes, 0, 80);
-
         const totalBosons = GPU_MAX_PHOTONS + PION_POOL_CAP;
         const useIndirect = this._writeBosonDispatchArgs(encoder);
         const bosonWG = Math.ceil(totalBosons / 64);
 
-        // insertBosonsIntoTree
-        const passInsert = encoder.beginComputePass({ label: 'insertBosonsIntoTree' });
-        passInsert.setPipeline(p4.insertBosonsIntoTree.pipeline);
-        passInsert.setBindGroup(0, bgs.btG0);
-        passInsert.setBindGroup(1, bgs.btG1);
-        passInsert.setBindGroup(2, bgs.btG2);
-        passInsert.setBindGroup(3, bgs.btG3);
-        if (useIndirect) passInsert.dispatchWorkgroupsIndirect(this._bosonDispatchArgs, BOSON_ARGS_TOTAL);
-        else passInsert.dispatchWorkgroups(bosonWG);
-        passInsert.end();
-
-        // computeBosonAggregates (one thread per boson, bottom-up leaf->root walk)
-        const passAgg = encoder.beginComputePass({ label: 'computeBosonAggregates' });
-        passAgg.setPipeline(p4.computeBosonAggregates.pipeline);
-        passAgg.setBindGroup(0, bgs.btG0);
-        passAgg.setBindGroup(1, bgs.btG1);
-        passAgg.setBindGroup(2, bgs.btG2);
-        passAgg.setBindGroup(3, bgs.btG3);
-        if (useIndirect) passAgg.dispatchWorkgroupsIndirect(this._bosonDispatchArgs, BOSON_ARGS_TOTAL);
-        else passAgg.dispatchWorkgroups(bosonWG);
-        passAgg.end();
+        // The bosons' quadtree, from sorted keys like the bodies'
+        this._buildTree(encoder, 'bosonTree', this._bosonTreeBuild, this._bosonTreeBuildBGs, b.bosonTreeBounds, totalBosons);
 
         // computeBosonGravity: particle <- boson gravity (only when gravity enabled)
         if (this._gravityEnabled) {
@@ -1648,7 +1632,7 @@ export default class GPUPhysics {
             passKB.setBindGroup(2, bgs.btG2);
             passKB.setBindGroup(3, bgs.kbG3);
             if (useIndirect) passKB.dispatchWorkgroupsIndirect(this._bosonDispatchArgs, BOSON_ARGS_NODES);
-            else passKB.dispatchWorkgroups(Math.ceil(totalBosons * 6 / 64));
+            else passKB.dispatchWorkgroups(Math.ceil(totalBosons * 2 / 64));
             passKB.end();
         }
     }
@@ -1812,63 +1796,45 @@ export default class GPUPhysics {
      *   7. computeAggregates: ceil(totalCount / 64) workgroups
      */
     _dispatchTreeBuild(encoder) {
-
         const totalCount = this.aliveCount + this._ghostSlots();
         if (totalCount === 0) return;
+        this._buildTree(encoder, 'tree', this._treeBuild, this._treeBuildBGs, this.buffers.qtBoundsBuffer, totalCount);
+    }
 
-        const b = this.buffers;
+    /**
+     * Build a quadtree over `slots` item slots (tree-build.wgsl): the bodies, or the bosons.
+     * The bounds reset is an encoder op, not queue.writeBuffer, because the bodies' tree is
+     * built twice in a substep with 1PN's velocity-Verlet correction under Barnes–Hut.
+     */
+    _buildTree(encoder, label, t, groups, bounds, slots) {
+        encoder.copyBufferToBuffer(this._qtBoundsSrc, 0, bounds, 0, 16);
 
-        // 1-2. Reset nodeCounter and bounds via encoder.copyBufferToBuffer.
-        // MUST be encoder ops (not queue.writeBuffer) because _dispatchTreeBuild
-        // may be called twice per substep (before forces + after drift for 1PN VV).
-        // queue.writeBuffer executes at queue time (before encoder starts), so a
-        // second call can't reset state between two tree builds in the same encoder.
-        encoder.copyBufferToBuffer(this._qtCounterSrc, 0, b.qtNodeCounter, 0, 4);
-        encoder.copyBufferToBuffer(this._qtBoundsSrc, 0, b.qtBoundsBuffer, 0, 16);
-
-        // 3. Clear ALL visitor flags (not just totalCount*6 — a second tree build
-        // in the same substep allocates nodes beyond that range).
-        const clearSize = Math.min(b.QT_MAX_NODES * 4, b.qtVisitorFlags.size);
-        encoder.clearBuffer(b.qtVisitorFlags, 0, clearSize);
-
-        // 4. computeBounds dispatch
-        const boundsWG = Math.ceil(totalCount / 256);
-        const pass1 = encoder.beginComputePass({ label: 'computeBounds' });
-        pass1.setPipeline(this._treeBuild.computeBounds);
-        pass1.setBindGroup(0, this._treeBuildBG0);
-        pass1.setBindGroup(1, this._treeBuildBG1);
-        pass1.setBindGroup(2, this._treeBuildBG2);
-        pass1.dispatchWorkgroups(boundsWG);
-        pass1.end();
-
-        // 5. initRoot dispatch (single thread reads bounds, writes root node)
-        const pass2 = encoder.beginComputePass({ label: 'initRoot' });
-        pass2.setPipeline(this._treeBuild.initRoot);
-        pass2.setBindGroup(0, this._treeBuildBG0);
-        pass2.setBindGroup(1, this._treeBuildBG1);
-        pass2.setBindGroup(2, this._treeBuildBG2);
-        pass2.dispatchWorkgroups(1);
-        pass2.end();
-
-        // 6. insertParticles dispatch
-        const insertWG = Math.ceil(totalCount / 64);
-        const pass3 = encoder.beginComputePass({ label: 'insertParticles' });
-        pass3.setPipeline(this._treeBuild.insertParticles);
-        pass3.setBindGroup(0, this._treeBuildBG0);
-        pass3.setBindGroup(1, this._treeBuildBG1);
-        pass3.setBindGroup(2, this._treeBuildBG2);
-        pass3.dispatchWorkgroups(insertWG);
-        pass3.end();
-
-        // 7. computeAggregates dispatch
-        const aggWG = Math.ceil(totalCount / 64);
-        const pass4 = encoder.beginComputePass({ label: 'computeAggregates' });
-        pass4.setPipeline(this._treeBuild.computeAggregates);
-        pass4.setBindGroup(0, this._treeBuildBG0);
-        pass4.setBindGroup(1, this._treeBuildBG1);
-        pass4.setBindGroup(2, this._treeBuildBG2);
-        pass4.dispatchWorkgroups(aggWG);
-        pass4.end();
+        // Keys for every slot up to a power of two, at least a sort block
+        const M = Math.max(TREE_SORT_BLOCK, 2 ** Math.ceil(Math.log2(slots)));
+        let pass = encoder.beginComputePass({ label });
+        const run = (pipeline, workgroups, step = 0) => {
+            if (PERF) { pass.end(); pass = encoder.beginComputePass({ label: label + ':' + pipeline.label }); }
+            pass.setPipeline(pipeline);
+            pass.setBindGroup(0, groups[0]);
+            pass.setBindGroup(1, groups[1]);
+            pass.setBindGroup(2, groups[2]);
+            pass.setBindGroup(3, groups[3], [step * 256]);
+            pass.dispatchWorkgroups(workgroups);
+        };
+        run(t.computeBounds, Math.ceil(slots / 256));
+        run(t.initRoot, 1);
+        run(t.mortonKeys, M / 256);
+        run(t.sortLocal, M / TREE_SORT_BLOCK);
+        const steps = this._treeSortSteps;
+        for (let i = 1; i < steps.length && steps[i][0] <= M; i++) {
+            if (steps[i][1]) run(t.sortGlobal, M / 512, i);
+            else run(t.sortMerge, M / TREE_SORT_BLOCK, i);
+        }
+        const wg = Math.ceil(slots / 256);
+        run(t.radixBuild, wg);
+        run(t.quadLink, wg);
+        run(t.aggregate, wg);
+        pass.end();
     }
 
     /**
@@ -1893,7 +1859,7 @@ export default class GPUPhysics {
             idx = this._cpuFreeSlots.pop();
         } else {
             idx = this.aliveCount;
-            if (idx >= MAX_PARTICLES) return -1;
+            if (!this._growStore(idx + 1)) return -1;
             this.aliveCount++;
         }
 
@@ -2014,10 +1980,10 @@ export default class GPUPhysics {
         let t1 = 0;
         if (physics.gravityEnabled) t1 |= FIELD_GRAV_BIT_T1; // field gravity follows gravity
         if (physics.collisionMode === COL_BOUNCE) t1 |= HERTZ_BOUNCE_BIT_T1;
-        this._emPairwise = physics.barnesHutEnabled && physics.relativityEnabled
-            && (physics.coulombEnabled || physics.magneticEnabled);
-        if (this._emPairwise) t1 |= EM_PAIRWISE_BIT_T1;
         this._toggles1 = t1;
+        // Barnes–Hut walks the tree without Relativity; with it every force acts pairwise
+        // from the sources' world lines, which a node's aggregate doesn't have
+        this._treeWalk = physics.barnesHutEnabled && !physics.relativityEnabled;
 
         this._isDarkTheme = document.documentElement.dataset.theme === 'dark';
         this._gravityEnabled = physics.gravityEnabled;
@@ -2634,7 +2600,7 @@ export default class GPUPhysics {
             boundaryMode: this.boundaryMode,
             topologyMode: this.topologyMode,
             collisionMode: this._collisionMode,
-            maxParticles: this.buffers.maxParticles,
+            maxParticles: this.buffers.storeCapacity,
             aliveCount: this.aliveCount,
             extGravity: this._extGravity,
             extGravityAngle: this._extGravityAngle,
@@ -2763,9 +2729,9 @@ export default class GPUPhysics {
         // NaN/Inf guard: a corrupted value would break adaptive substepping
         const a = f[RB_MAX_ACCEL / 4];
         this._maxAccel = (a === a && a < 1e20) ? a : 0;
-        // The counter keeps counting past MAX_GHOSTS (ghost-gen drops the overflow), and a
+        // The counter keeps counting past the ghost slots (ghost-gen drops the overflow), and a
         // copy sized by it would invalidate every substep's command buffer
-        this._ghostCount = this.boundaryMode === BOUND_LOOP ? Math.min(u[RB_GHOSTS / 4], MAX_PARTICLES) : 0;
+        this._ghostCount = this.boundaryMode === BOUND_LOOP ? Math.min(u[RB_GHOSTS / 4], this.buffers.storeCapacity) : 0;
         if (slot.merges) {
             const n = Math.min(u[RB_MERGES / 4], this.buffers.maxParticles);
             for (let i = 0; i < n; i++) {
@@ -2910,11 +2876,9 @@ export default class GPUPhysics {
         encoder.clearBuffer(this.buffers.allForces, 0, this.aliveCount * 160);
 
 
-        // Pass 5: force computation — BH tree walk or O(N^2) pairwise. With Barnes–Hut and
-        // Relativity, EM runs pairwise first (Liénard–Wiechert needs each source's world line)
-        // and the tree walk adds everything else on top.
-        const pairwise = !this._barnesHutEnabled || this._emPairwise;
-        if (pairwise) {
+        // Pass 5: force computation — the Barnes–Hut group walk, or O(N^2) pairwise (always
+        // with Relativity: every force acts from the sources' world lines)
+        if (!this._treeWalk) {
             const pass5 = encoder.beginComputePass({ label: 'pairForce' });
             pass5.setPipeline(p2.pairForce.pipeline);
             pass5.setBindGroup(0, this._bg_pairForce0);
@@ -2924,7 +2888,7 @@ export default class GPUPhysics {
             pass5.dispatchWorkgroups(Math.ceil(this.aliveCount / OBSERVERS_PER_GROUP));
             pass5.end();
         }
-        if (this._barnesHutEnabled) {
+        if (this._treeWalk) {
             // Tree walk force computation (O(N log N))
             const passTree = encoder.beginComputePass({ label: 'treeForce' });
             passTree.setPipeline(this._treeForcePipeline);
@@ -2932,7 +2896,8 @@ export default class GPUPhysics {
             passTree.setBindGroup(1, this._treeForceGroup1);
             passTree.setBindGroup(2, this._treeForceGroup2);
             passTree.setBindGroup(3, this._treeForceGroup3);
-            passTree.dispatchWorkgroups(workgroups);
+            // A group of TREE_GROUP bodies per workgroup, in the tree's sorted order
+            passTree.dispatchWorkgroups(Math.ceil((this.aliveCount + this._ghostSlots()) / TREE_GROUP));
             passTree.end();
         }
 
@@ -3186,6 +3151,7 @@ export default class GPUPhysics {
         // This replaces N×6 individual writeBuffer calls with 6 batched uploads.
         const particles = state.particles;
         const count = Math.min(particles.length, MAX_PARTICLES);
+        this._growStore(count);
 
         for (let idx = 0; idx < count; idx++) {
             const pd = particles[idx];
@@ -3291,6 +3257,8 @@ export default class GPUPhysics {
             this.device.queue.submit([enc.finish()]);
         }
         this.aliveCount = 0;
+        // An emptied store gives its memory back
+        if (this._ready && this.buffers.storeCapacity > STORE_TIERS[0]) this._resizeStore(STORE_TIERS[0], false);
         this.simTime = 0;
         this.conformalTime = 0;
         this.timeEpoch = 0;
@@ -3372,7 +3340,7 @@ export default class GPUPhysics {
             extGy: this._cachedExtGy,
             extEx: this._cachedExtEx,
             extEy: this._cachedExtEy,
-            maxParticles: this.buffers.maxParticles,
+            maxParticles: this.buffers.storeCapacity,
             particleCount: this.aliveCount + this._ghostSlots(),
             bhTheta: 0.5,
             frameCount: this._frameCount,
@@ -3673,9 +3641,7 @@ export default class GPUPhysics {
         // Core buffers
         this.buffers.destroy();
         this.uniformBuffer.destroy();
-        _d(this._qtCounterSrc);
         _d(this._qtBoundsSrc);
-        _d(this._bosonRootSrc);
 
         // Scalar field buffers
         _dObj(this._higgsBuffers);
@@ -3742,9 +3708,7 @@ export default class GPUPhysics {
         this._hitResultStaging = null;
         this._statsUniformBuffer = null;
         this._statsDummyBuffer = null;
-        this._qtCounterSrc = null;
         this._qtBoundsSrc = null;
-        this._bosonRootSrc = null;
     }
 }
 

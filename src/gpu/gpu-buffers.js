@@ -33,8 +33,27 @@ const VEC2_SIZE = 8;             // 2 × f32
 const VEC4_SIZE = 16;            // 4 × f32
 const ALLFORCES_SIZE = 160;      // 10 × vec4
 
+/** The capacities the world-line store grows through (GPUPhysics._growStore), the last the cap. */
+export const STORE_TIERS = [512, 1024, 2048, 4096];
+
+/**
+ * The world lines and the per-pair light-cone hints for `capacity` slots: 48 KB a slot and
+ * capacity² hints, so they grow with the slots in use while everything else is allocated at
+ * the cap. A slot's ring sits at the same offset at every capacity.
+ * @param {GPUDevice} device
+ */
+export function createWorldLineStore(device, capacity) {
+    const usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
+    return {
+        wlData: device.createBuffer({ label: 'wlData', size: WL_STRIDE * 4 * capacity * WORLDLINE_LEN, usage }),
+        // Per-pair light-cone search hints (pair-force.wgsl): the bracket's distance back from
+        // the last world-line point, source-major. Any value is safe; 0 means none yet.
+        wlHints: device.createBuffer({ label: 'wlHints', size: 4 * capacity * capacity, usage }),
+    };
+}
+
 /** @param {GPUDevice} device */
-export function createParticleBuffers(device, maxParticles) {
+export function createParticleBuffers(device, maxParticles, storeCapacity = maxParticles) {
     const FLOAT_SIZE = 4;
     const UINT_SIZE = 4;
 
@@ -83,12 +102,10 @@ export function createParticleBuffers(device, maxParticles) {
     const clocks = storageBuffer('clocks', VEC4_SIZE, maxParticles);
 
     // World lines (worldline.wgsl): WL_STRIDE f32 per sample, WORLDLINE_LEN samples per
-    // particle (~25 MB at 512 particles), plus WL_META_STRIDE u32 of ring metadata
-    const wlData = storageBuffer('wlData', WL_STRIDE * 4, maxParticles * WORLDLINE_LEN);
+    // particle (~25 MB at 512 particles), at the store's capacity, plus WL_META_STRIDE u32 of
+    // ring metadata for every slot
+    const { wlData, wlHints } = createWorldLineStore(device, storeCapacity);
     const wlMeta = storageBuffer('wlMeta', WL_META_STRIDE * 4, maxParticles);
-    // Per-pair light-cone search hints (pair-force.wgsl): the bracket's distance back from
-    // the last world-line point, source-major, 1 MB at 512 particles. Any value is safe.
-    const wlHints = storageBuffer('wlHints', 4, maxParticles * maxParticles);
 
     // ── Radiation state (packed struct) ──
     // RadiationState (40 bytes): accumulators, display, quadrupole contrib
@@ -127,38 +144,46 @@ export function createParticleBuffers(device, maxParticles) {
     const ghostOriginalIdx = storageBuffer('ghostOriginalIdx', UINT_SIZE, maxParticles);
 
 
-    // ── Quadtree buffers (Phase 3: GPU Barnes-Hut) ──
-    // Each QTNode is 20 u32 words = 80 bytes
+    // ── Quadtree buffers (tree-build.wgsl) ──
+    // Each node is 20 u32 words = 80 bytes. The tree holds alive and retired bodies and the
+    // ghosts (up to maxParticles of each), sorted into keys of a power-of-two length: binary
+    // internal node i is node i and sorted body k is node nActive − 1 + k, under 2·TREE_KEYS.
     const QT_NODE_SIZE = 80; // bytes (20 x u32)
-    const QT_MAX_NODES = maxParticles * 6;
+    const TREE_KEYS = Math.max(1024, 2 ** Math.ceil(Math.log2(2 * maxParticles)));
+    const QT_MAX_NODES = 2 * TREE_KEYS;
 
-    // Node buffer: flat array of u32, accessed atomically for CAS insertion
+    // Node buffer: flat array of u32, written atomically while the tree is built
     const qtNodeBuffer = device.createBuffer({
         label: 'qtNodes',
         size: QT_NODE_SIZE * QT_MAX_NODES,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     });
 
-    // Node counter (atomic u32) — next free slot index
+    // The number of bodies in the tree (atomic u32), counted as their keys are made
     const qtNodeCounter = device.createBuffer({
         label: 'qtNodeCounter',
         size: 4,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     });
 
-    // Bounds reduction output (minX, minY, maxX, maxY as 4 atomic i32s for fixed-point)
+    // Bounds: the reduction (minX, minY, maxX, maxY as fixed-point i32 atomics), then the
+    // padded root box (minX, minY, width, height as f32 bits)
     const qtBoundsBuffer = device.createBuffer({
         label: 'qtBounds',
-        size: 16, // 4 x i32 (fixed-point for atomicMin/atomicMax)
+        size: 32,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     });
 
-    // Visitor flags for bottom-up aggregate (one u32 per node)
+    // Children per node, the arrivals the bottom-up sum waits for (one u32 per node)
     const qtVisitorFlags = device.createBuffer({
         label: 'qtVisitorFlags',
         size: 4 * QT_MAX_NODES,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     });
+
+    // The sort's (Morton code, slot) pairs and the binary radix tree, 6 u32 per internal node
+    const treeKeys = storageBuffer('treeKeys', 8, TREE_KEYS);
+    const treeRadix = storageBuffer('treeRadix', 24, TREE_KEYS);
 
     // Pool management: aliveCount + freeStack + freeTop
     // Packed into one buffer: [aliveCount: u32, freeTop: u32, freeStack: u32[maxParticles]]
@@ -266,11 +291,15 @@ export function createParticleBuffers(device, maxParticles) {
         label: 'absorbClaims',
     });
 
-    // ── Boson tree buffers (Phase 4: boson gravity BH tree) ──
-    const MAX_BOSON_NODES = (GPU_MAX_PHOTONS + PION_POOL_CAP) * 6;
+    // ── Boson tree buffers (tree-build.wgsl over tree-items-bosons.wgsl) ──
+    const BOSON_TREE_KEYS = Math.max(1024, 2 ** Math.ceil(Math.log2(GPU_MAX_PHOTONS + PION_POOL_CAP)));
+    const MAX_BOSON_NODES = 2 * BOSON_TREE_KEYS;
+    const bosonTreeKeys = storageBuffer('bosonTreeKeys', 8, BOSON_TREE_KEYS);
+    const bosonTreeRadix = storageBuffer('bosonTreeRadix', 24, BOSON_TREE_KEYS);
+    const bosonTreeBounds = storageBuffer('bosonTreeBounds', 4, 8);
     const bosonTreeNodes = device.createBuffer({
         size: MAX_BOSON_NODES * QTNODE_SIZE_BYTES,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
         label: 'bosonTreeNodes'
     });
     const bosonTreeCounter = device.createBuffer({
@@ -293,7 +322,7 @@ export function createParticleBuffers(device, maxParticles) {
         // Color (separate — renderer only)
         color,
         // Clocks and world lines
-        clocks, wlData, wlMeta, wlHints,
+        clocks, wlData, wlMeta, wlHints, storeCapacity,
         // Forces (packed AllForces struct)
         allForces,
         // Radiation (packed RadiationState struct)
@@ -311,7 +340,7 @@ export function createParticleBuffers(device, maxParticles) {
         ghostState, ghostAux, ghostDerived,
         // Quadtree (Phase 3)
         qtNodeBuffer, qtNodeCounter, qtBoundsBuffer, qtVisitorFlags,
-        QT_MAX_NODES,
+        QT_MAX_NODES, TREE_KEYS, treeKeys, treeRadix,
         // Collision (Phase 3)
         collisionPairBuffer, collisionPairCounter,
         mergeResultBuffer, mergeResultCounter,
@@ -328,6 +357,7 @@ export function createParticleBuffers(device, maxParticles) {
         GPU_MAX_PIONS, PION_POOL_CAP,
         // Boson tree (Phase 4)
         bosonTreeNodes, bosonTreeCounter, bosonVisitorFlags, MAX_BOSON_NODES,
+        BOSON_TREE_KEYS, bosonTreeKeys, bosonTreeRadix, bosonTreeBounds,
 
         /** Destroy all buffers */
         destroy() {

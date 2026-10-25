@@ -9,7 +9,7 @@
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 168;
+const SHADER_VERSION = 180;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -205,81 +205,48 @@ export async function createPhase2Pipelines(device, wgslConstants = '') {
  *   Group 1: particleState (ro) + derived (ro) = 2 bindings
  *   Group 2: uniforms
  */
-export async function createTreeBuildPipelines(device, wgslConstants = '') {
+export async function createTreeBuildPipelines(device, wgslConstants = '', items = 'bodies') {
     const prefix = await getSharedPrefix(wgslConstants);
-    const code = await fetchShader('tree-build.wgsl', prefix);
-    const module = device.createShaderModule({ label: 'treeBuild', code });
+    const code = prefix + '\n' + await fetchShader(`tree-items-${items}.wgsl`) + '\n' + await fetchShader('tree-build.wgsl');
+    const module = device.createShaderModule({ label: `treeBuild-${items}`, code });
+    const storage = (binding) => ({ binding, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } });
 
-    // Group 0: tree node buffer + counter + bounds + visitor flags
+    // Group 0: nodes, the item count, bounds, children per node
     const group0Layout = device.createBindGroupLayout({
-        label: 'treeBuild_group0',
-        entries: [
-            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-        ],
+        label: 'treeBuild_group0', entries: [storage(0), storage(1), storage(2), storage(3)],
     });
-
-    // Group 1: packed particle state + derived + aux = 3 bindings (rw for encoder compat)
+    // Group 1: the items (tree-items-*.wgsl): particle state + derived + aux, or the two pools
+    // and their counts (rw for encoder compat)
     const group1Layout = device.createBindGroupLayout({
         label: 'treeBuild_group1',
-        entries: [
-            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-        ],
+        entries: items === 'bodies' ? [storage(0), storage(1), storage(2)] : [storage(0), storage(1), storage(2), storage(3)],
     });
-
     // Group 2: uniforms
     const group2Layout = device.createBindGroupLayout({
         label: 'treeBuild_group2',
-        entries: [
-            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
-        ],
+        entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }],
+    });
+    // Group 3: sort keys, the radix tree, and the sort step's (k, j) by dynamic offset
+    const group3Layout = device.createBindGroupLayout({
+        label: 'treeBuild_group3',
+        entries: [storage(0), storage(1),
+            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: 16 } }],
     });
 
-    const bindGroupLayouts = [group0Layout, group1Layout, group2Layout];
-    const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts });
-
-    const computeBounds = device.createComputePipeline({
-        label: 'computeBounds',
-        layout: pipelineLayout,
-        compute: { module, entryPoint: 'computeBounds' },
-    });
-
-    const initRoot = device.createComputePipeline({
-        label: 'initRoot',
-        layout: pipelineLayout,
-        compute: { module, entryPoint: 'initRoot' },
-    });
-
-    const insertParticles = device.createComputePipeline({
-        label: 'insertParticles',
-        layout: pipelineLayout,
-        compute: { module, entryPoint: 'insertParticles' },
-    });
-
-    const computeAggregates = device.createComputePipeline({
-        label: 'computeAggregates',
-        layout: pipelineLayout,
-        compute: { module, entryPoint: 'computeAggregates' },
-    });
-
-    return {
-        computeBounds,
-        initRoot,
-        insertParticles,
-        computeAggregates,
-        bindGroupLayouts,
-    };
+    const bindGroupLayouts = [group0Layout, group1Layout, group2Layout, group3Layout];
+    const layout = device.createPipelineLayout({ bindGroupLayouts });
+    const pipeline = (entryPoint) => device.createComputePipeline({ label: entryPoint, layout, compute: { module, entryPoint } });
+    const entries = ['computeBounds', 'initRoot', 'mortonKeys', 'sortLocal', 'sortGlobal', 'sortMerge', 'radixBuild', 'quadLink', 'aggregate'];
+    const out = { bindGroupLayouts };
+    for (const e of entries) out[e] = pipeline(e);
+    return out;
 }
 
 /**
  * Create tree force (Barnes-Hut walk) compute pipeline.
  * Bind groups:
  *   Group 0: nodes (ro) + uniforms = 1 storage + 1 uniform
- *   Group 1: particleState (ro) + particleAux (ro) + derived (ro) + axYukMod (ro) + ghostOriginalIdx (ro) = 5 storage
+ *   Group 1: particleState + the tree's sorted keys + derived + axYukMod + the tree's body count = 5 storage
  *   Group 2: allForces (rw) + maxAccel (rw) = 2 storage
  *   Group 3: wlData (rw) + wlMeta (rw) = 2 storage
  *   Total: 10 storage buffers + 1 uniform
@@ -304,10 +271,10 @@ export async function createTreeForcePipeline(device, wgslConstants = '') {
         label: 'treeForce_group1',
         entries: [
             { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // particleState
-            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // particleAux
+            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // the tree's sorted keys
             { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // derived
             { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // axYukMod
-            { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // ghostOriginalIdx
+            { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // the tree's body count
         ],
     });
 
@@ -882,7 +849,7 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
         };
     }
 
-    // ── Boson Tree (boson-tree.wgsl) ──
+    // ── Boson Tree walks (boson-tree.wgsl; tree-build.wgsl builds the tree) ──
     // Group 0: uniforms + bosonTreeNodes (atomic) + bosonTreeCounter + bosonVisitorFlags = 4 (1 uniform + 3 storage)
     // Group 1: photonPool (rw) + phCount (rw) = 2
     // Group 2: pionPool (rw) + piCount (rw) = 2
@@ -926,7 +893,6 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
     const btPipelineLayout = device.createPipelineLayout({ bindGroupLayouts: btLayouts });
 
     const bosonTreeEntries = [
-        'insertBosonsIntoTree', 'computeBosonAggregates',
         'computeBosonGravity', 'applyBosonBosonGravity',
         'applyPionPionCoulomb', 'annihilatePions',
     ];

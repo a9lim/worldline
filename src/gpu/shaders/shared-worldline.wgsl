@@ -161,11 +161,11 @@ fn wlExtrapolate(p: WLPoint, s: f32) -> WLPoint {
 // Hermite (g' = n̂·v + 1 ≥ 1 − |v| > 0).
 //
 // The bracket comes from a bisection over every point or, given a hint, a gallop out from
-// it (1, 2, 4 … points, then a bisection inside). A pair's retarded point stays a nearly
-// constant number of points back from the last as samples arrive, so the pair force keeps
-// that distance per pair from one call to the next. The hint only places the first probe:
-// where g is monotone the bracket is unique, so every hint finds the same one, and a stale
-// or garbage hint (a recycled slot, a reset, an epoch rebase, a merge break) costs probes.
+// it (1, 2, 4 … points, then a bisection inside). Light from a source at distance R left
+// about R of the world-line clock ago, so the pair force starts R/WL_DT points back from the
+// newest (pair-force.wgsl coneHint), from the pair's current distance. The hint only places
+// the first probe: where g is monotone the bracket is unique, so every hint finds the same
+// one, and a poor one (a fast source, a merge break) costs probes.
 
 /** retardedStateHinted() with no hint: a full bisection. */
 const WL_NO_HINT: u32 = 0xFFFFFFFFu;

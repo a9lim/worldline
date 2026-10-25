@@ -19,7 +19,7 @@ import {
     VELOCITY_VECTOR_SCALE,
     GPU_MAX_PHOTONS, GPU_MAX_PIONS, PHOTON_CULL_AGE, MAX_REJECTION_SAMPLES, GPU_MAX_LEPTONS, LEPTON_CULL_AGE,
     SPAWN_OFFSET_MULTIPLIER, SPAWN_OFFSET_FLOOR, ABERRATION_THRESHOLD,
-    WORLDLINE_LEN, CLOCK_PERIOD,
+    WORLDLINE_LEN, WORLDLINE_DT, CLOCK_PERIOD,
     SCALAR_FIELD_MAX, FIELD_EXCITATION_SIGMA, METRIC_PHI_CLAMP, SHEET_THICKNESS_SQ,
     COL_PASS, COL_MERGE, COL_BOUNCE,
     BOUND_DESPAWN, BOUND_BOUNCE, BOUND_LOOP,
@@ -135,7 +135,6 @@ const MAX_PIONS: u32 = ${GPU_MAX_PIONS}u;
 const MAX_LEPTONS: u32 = ${GPU_MAX_LEPTONS}u;
 const LEPTON_CULL_AGE: f32 = ${wf(LEPTON_CULL_AGE)};
 const PION_POOL_CAP: u32 = ${GPU_MAX_PIONS + GPU_MAX_LEPTONS}u;
-const MAX_GHOSTS: u32 = ${GPU_MAX_PARTICLES}u;
 const PHOTON_CULL_AGE: f32 = ${wf(PHOTON_CULL_AGE)};
 const MAX_REJECTION_SAMPLES: u32 = ${MAX_REJECTION_SAMPLES}u;
 const SPAWN_OFFSET_MUL: f32 = ${wf(SPAWN_OFFSET_MULTIPLIER)};
@@ -160,6 +159,7 @@ const HGRID_SQ: u32 = ${HGRID_SQ}u;
 // World lines (worldline.wgsl documents the sample layout) and clocks
 const WL_LEN: u32 = ${WORLDLINE_LEN}u;
 const WL_MASK: u32 = ${WORLDLINE_LEN - 1}u;
+const WL_DT: f32 = ${wf(WORLDLINE_DT)};
 const WL_STRIDE: u32 = 12u;
 // Meta: writeIdx, count, creationTime (f32 bits), generation, deck flips (bit 0 x, bit 1 y),
 // deck offset x, y (f32 bits), _pad. The deck maps the wrapped position onto the covering plane.
@@ -215,14 +215,6 @@ const BOSON_INTER_BIT: u32 = 32768u;
 // Toggle bit constants (toggles1)
 const FIELD_GRAV_BIT: u32 = 1u;
 const HERTZ_BOUNCE_BIT: u32 = 2u;
-// Barnes–Hut with Relativity: EM runs pairwise (Liénard–Wiechert needs each source's
-// world line, which tree aggregates lack), the tree walk carries everything else
-const EM_PAIRWISE_BIT: u32 = 4u;
-
-// Barnes-Hut tree constants
-// NOTE: QT_CAPACITY intentionally NOT included — GPU uses 1 (lock-free), CPU uses 4.
-const MAX_DEPTH: u32 = 48u;
-const QT_MAX_NODES: u32 = ${GPU_MAX_PARTICLES * 6}u;
 
 // Boundary
 const DESPAWN_MARGIN: f32 = ${wf(DESPAWN_MARGIN)};
@@ -271,7 +263,6 @@ export const BOSON_INTER_BIT = 32768;
 // toggles1
 export const FIELD_GRAV_BIT_T1 = 1;
 export const HERTZ_BOUNCE_BIT_T1 = 2;
-export const EM_PAIRWISE_BIT_T1 = 4;
 
 // World-line buffer layout (must match the WGSL block above)
 export const WL_STRIDE = 12;

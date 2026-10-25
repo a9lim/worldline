@@ -1,22 +1,41 @@
 // ─── Barnes-Hut Tree Walk Force Computation ───
-// One thread per alive particle. Stack-based iterative traversal.
-// Uses theta=0.5 opening angle criterion.
-// Accumulates into the same force buffers as pairwise path.
+// A group walk: each workgroup takes GROUP bodies consecutive in the tree's sorted (Morton)
+// order, so close together, walks the tree once for all of them against their bounding box,
+// breadth first, into an interaction list in workgroup memory, and then sums the list for
+// every body, LANES threads a body, a tile of entries at a time. A node is taken whole when it
+// is far from the whole box (size < θ · distance to the box), and on a periodic domain only
+// when its cell and the box lie within half a domain of each other, so every body sees all of
+// it in one image. One thread walking per body left the GPU waiting on each walk's node reads
+// in series. Lists and frontiers are filled in a fixed order (prefix sums, not atomics) and the
+// lanes add in lane order, so the sums are the same every run.
+//
+// The walk runs only without Relativity: with it every force acts from the sources' world
+// lines, pairwise (pair-force.wgsl), and a node's aggregate has no world line to take.
+// Accumulates into the same force buffers as the pairwise path.
 
 // Constants provided by generated wgslConstants block.
 // Shader-specific constants:
 const NONE: i32 = -1;
-const MAX_STACK: u32 = 128u;
+const GROUP: u32 = 32u;            // bodies per workgroup
+const LANES: u32 = 8u;             // threads per body: each sums every LANES-th list entry
+const WG_SIZE: u32 = GROUP * LANES;
+const JUDGE: u32 = 128u;           // frontier nodes judged a round
+const TILE: u32 = 32u;             // list entries loaded into workgroup memory at a time
+const FRONTIER_MAX: u32 = 1024u;   // nodes at one depth of the walk
+const LIST_MAX: u32 = 768u;        // list entries summed at a time
 
 // Node layout accessors from shared-tree-nodes.wgsl (prepended)
 
 @group(0) @binding(0) var<storage, read_write> nodes: array<u32>;
 @group(0) @binding(1) var<uniform> uniforms: SimUniforms;
 
-// Group 1: packed particle structs (read_write for encoder compat)
+// Group 1: packed particle structs (read_write for encoder compat), the tree's sorted keys
+// (Morton code, slot) and its body count (tree-build.wgsl)
 @group(1) @binding(0) var<storage, read_write> particleState: array<ParticleState>;
+@group(1) @binding(1) var<storage, read_write> treeKeys: array<vec2<u32>>;
 @group(1) @binding(2) var<storage, read_write> derived_in: array<ParticleDerived>;
 @group(1) @binding(3) var<storage, read_write> axYukMod_in: array<vec4<f32>>; // packed: axMod, yukMod, higgsMod, pad
+@group(1) @binding(4) var<storage, read_write> treeCount: array<u32>;
 
 // Group 2: force accumulators + maxAccel — 2 bindings (radiationState removed, jerk now in AllForces)
 @group(2) @binding(0) var<storage, read_write> allForces: array<AllForces>;
@@ -142,8 +161,7 @@ fn accumulateForce(
         (*af).torques.z += -TIDAL_STRENGTH * coupling * coupling * pRi5 * invR6 * dw;
     }
 
-    // Coulomb: -q1*q2/r^2 (like repels). With Relativity on, EM runs pairwise as
-    // Liénard–Wiechert (EM_PAIRWISE_BIT) and coulOn/magOn arrive false here.
+    // Coulomb: -q1*q2/r^2 (like repels)
     if (coulOn) {
         let k = -(pCharge * sCharge) * axModPair;
         let fDir = k * invR3;
@@ -275,219 +293,384 @@ fn accumulateForce(
     }
 }
 
-@compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let pIdx = gid.x;
-    if (pIdx >= uniforms.aliveCount) { return; }
+// Workgroup memory, 16 KB in all: the walk's frontier, next depth and list share one pool,
+// which the lanes' partial sums reuse once the walk is done
+const FRONTIER_AT: u32 = 0u;
+const NEXT_AT: u32 = FRONTIER_MAX;
+const LIST_AT: u32 = 2u * FRONTIER_MAX;
+var<workgroup> wgPool: array<u32, 2816>;          // 2·FRONTIER_MAX + LIST_MAX
+var<workgroup> wgTile: array<TileSource, TILE>;
+var<workgroup> wgScan: array<u32, WG_SIZE>;
+var<workgroup> wgLo: array<vec2<f32>, GROUP>;
+var<workgroup> wgHi: array<vec2<f32>, GROUP>;
+var<workgroup> wgFCount: u32;
+var<workgroup> wgNCount: u32;
+var<workgroup> wgLCount: u32;
+var<workgroup> wgBodies: u32;
 
-    let ps = particleState[pIdx];
-    if ((ps.flags & FLAG_ALIVE) == 0u) { return; }
-    if ((ps.flags & FLAG_GHOST) != 0u) { return; } // Ghosts don't receive forces
+/** A list entry as a source: a body, or a far node's aggregate at its centre of mass. */
+struct TileSource {
+    pos: vec2<f32>,
+    vel: vec2<f32>,
+    mass: f32,
+    charge: f32,
+    angVel: f32,
+    magMoment: f32,
+    angMomentum: f32,
+    axMod: f32,
+    yukMod: f32,
+    higgsMod: f32,
+    slot: u32,          // the body's slot, or NO_SLOT for a node (and for none)
+    _p0: u32, _p1: u32, _p2: u32,
+};
+const NO_SLOT: u32 = 0xFFFFFFFFu;
 
-    let px = ps.posX;
-    let py = ps.posY;
-    let pMass = ps.mass;
-    let pCharge = ps.charge;
-    let pDerived = derived_in[pIdx];
-    let pMagMoment = pDerived.magMoment;
-    let pAngMomentum = pDerived.angMomentum;
-    let pBodyRadiusSq = pDerived.bodyRSq; // true body radius² from cache-derived
-    // Pre-hoist ri5 = mass^(5/3) for tidal locking (avoids pow() per pair in accumulateForce)
-    let pBodyRadius = sqrt(pBodyRadiusSq);
-    let pRi5 = pBodyRadiusSq * pBodyRadiusSq * pBodyRadius;
-    let pAngW = ps.angW;
-    let pAym = axYukMod_in[pIdx];
-    let pAxMod = pAym.x;
-    let pYukMod = pAym.y;
-    let pHiggsMod = pAym.z;
+/** The body one thread sums forces for. */
+struct Observer {
+    valid: bool,
+    idx: u32,
+    pos: vec2<f32>,
+    vel: vec2<f32>,
+    mass: f32,
+    charge: f32,
+    magMoment: f32,
+    angMomentum: f32,
+    angVel: f32,
+    axMod: f32,
+    yukMod: f32,
+    higgsMod: f32,
+    ri5: f32,
+};
 
-    // Derive velocity from proper velocity
-    let wSq = ps.velWX * ps.velWX + ps.velWY * ps.velWY;
-    let relOn = (uniforms.toggles0 & RELATIVITY_BIT) != 0u;
-    let invGamma = select(1.0, 1.0 / sqrt(1.0 + wSq), relOn);
-    let pVelX = ps.velWX * invGamma;
-    let pVelY = ps.velWY * invGamma;
-    let pAngVel = select(pAngW, pAngW / sqrt(1.0 + pAngW * pAngW * pBodyRadiusSq), relOn);
+/** The toggles, read once. */
+struct Laws {
+    gravOn: bool, coulOn: bool, magOn: bool, gmOn: bool, yukOn: bool, onePNOn: bool,
+    bazOn: bool, higgsOn: bool, radOn: bool, bhOn: bool, needAxMod: bool,
+    periodic: bool, domW: f32, domH: f32, topo: u32,
+};
 
-    let pInvMass = pDerived.invMass;
+/** Load list entry nodeIdx as a source. Ghosts and retired bodies never reach the list. */
+fn loadSource(nodeIdx: u32) -> TileSource {
+    var t: TileSource;
+    if (getNW(nodeIdx) == NONE) {
+        let sIdx = u32(getParticleIndex(nodeIdx));
+        let sPs = particleState[sIdx];
+        let sD = derived_in[sIdx];
+        let sAYM = axYukMod_in[sIdx];
+        t.pos = vec2(sPs.posX, sPs.posY);
+        t.vel = vec2(sD.velX, sD.velY);
+        t.mass = sPs.mass;
+        t.charge = sPs.charge;
+        t.angVel = sD.angVel;
+        t.magMoment = sD.magMoment;
+        t.angMomentum = sD.angMomentum;
+        t.axMod = sAYM.x;
+        t.yukMod = sAYM.y;
+        t.higgsMod = sAYM.z;
+        t.slot = sIdx;
+        return t;
+    }
+    let m = getTotalMass(nodeIdx);
+    t.pos = vec2(getComX(nodeIdx), getComY(nodeIdx));
+    t.vel = vec2(getTotalMomX(nodeIdx), getTotalMomY(nodeIdx)) / m;
+    t.mass = m;
+    t.charge = getTotalCharge(nodeIdx);
+    t.angVel = 0.0;   // for aggregate
+    t.magMoment = getTotalMagMoment(nodeIdx);
+    t.angMomentum = getTotalAngMomentum(nodeIdx);
+    t.axMod = 1.0;    // axMod/yukMod/higgsMod = 1 for aggregate
+    t.yukMod = 1.0;
+    t.higgsMod = 1.0;
+    t.slot = NO_SLOT;
+    return t;
+}
 
-    let thetaSq = uniforms.bhTheta * uniforms.bhTheta;
-
-    // G9: Hoist toggle reads before the tree walk loop (avoids repeated uniform reads per call)
-    let _t0 = uniforms.toggles0;
-    // With Relativity on, EM runs pairwise (Liénard–Wiechert) and the walk leaves it out
-    let _emHere  = (uniforms.toggles1 & EM_PAIRWISE_BIT) == 0u;
-    let _gravOn  = (_t0 & GRAVITY_BIT)     != 0u;
-    let _coulOn  = (_t0 & COULOMB_BIT)     != 0u && _emHere;
-    let _magOn   = (_t0 & MAGNETIC_BIT)    != 0u && _emHere;
-    let _gmOn    = (_t0 & GRAVITOMAG_BIT)  != 0u;
-    let _yukOn   = (_t0 & YUKAWA_BIT)      != 0u;
-    let _onePNOn = (_t0 & ONE_PN_BIT)      != 0u;
-    let _bazOn   = _gmOn && (_t0 & COULOMB_BIT) != 0u;
-    let _higgsOn = (_t0 & HIGGS_BIT)       != 0u;
-    let _radOn   = (_t0 & RADIATION_BIT)   != 0u;
-    let _bhOn    = (_t0 & BLACK_HOLE_BIT)  != 0u;
-    let _needAxMod = (_coulOn || _magOn) && (_t0 & AXION_BIT) != 0u;
-
-    // Local jerk accumulator for radiation analytical jerk
-    var localJerk = vec2<f32>(0.0, 0.0);
-
-    // Load AllForces struct ONCE from global memory (zeroed by resetForces, or holding the
-    // pairwise EM pass's result)
-    var localAF = allForces[pIdx];
-
-    let isPeriodic = uniforms.boundaryMode == BOUND_LOOP;
-    let domW = uniforms.domainW;
-    let domH = uniforms.domainH;
-    let topo = uniforms.topologyMode;
-
-    // Forces are computed at pre-drift positions, so the observer sits one substep back
-    // on the world-line clock: dη = dt/a
-    let sdTime = uniforms.simTime - uniforms.dt / uniforms.scaleA;
-
-    // Stack-based iterative tree walk
-    var stack: array<u32, 48>;
-    var stackTop: u32 = 0u;
-    stack[0] = 0u; // push root
-    stackTop = 1u;
-
-    loop {
-        if (stackTop == 0u) { break; }
-        stackTop -= 1u;
-        let nodeIdx = stack[stackTop];
-
-        // Ghost leaves weigh nothing (tree-build.wgsl), so they end here
-        let nodeMass = getTotalMass(nodeIdx);
-        if (nodeMass < EPSILON) { continue; }
-
-        let comX = getComX(nodeIdx);
-        let comY = getComY(nodeIdx);
-        var comDisp = vec2<f32>(comX - px, comY - py);
-        if (isPeriodic) {
-            comDisp = fullMinImageP(px, py, comX, comY, domW, domH, topo);
+/**
+ * Sum the first count list entries, TILE at a time through workgroup memory: each thread
+ * takes every LANES-th entry of a tile for its own body. Every thread of the workgroup calls
+ * this (it has barriers).
+ */
+fn sumList(lid: u32, lane: u32, count: u32, o: Observer, L: Laws,
+           af: ptr<function, AllForces>, jerk: ptr<function, vec2<f32>>) {
+    for (var base = 0u; base < count; base += TILE) {
+        if (lid < TILE && base + lid < count) { wgTile[lid] = loadSource(wgPool[LIST_AT + base + lid]); }
+        workgroupBarrier();
+        if (o.valid) {
+            let n = min(TILE, count - base);
+            for (var j = lane; j < n; j += LANES) {
+                let t = wgTile[j];
+                if (t.slot == o.idx) { continue; }
+                var d = t.pos - o.pos;
+                if (L.periodic) { d = fullMinImageP(o.pos.x, o.pos.y, t.pos.x, t.pos.y, L.domW, L.domH, L.topo); }
+                accumulateForce(
+                    af, d.x, d.y, o.mass, o.charge,
+                    o.magMoment, o.angMomentum, o.angVel, o.vel.x, o.vel.y,
+                    o.axMod, o.yukMod, o.higgsMod,
+                    t.vel.x, t.vel.y,
+                    t.mass, t.charge,
+                    t.angVel, t.magMoment, t.angMomentum,
+                    t.axMod, t.yukMod, t.higgsMod,
+                    o.ri5,
+                    jerk,
+                    false, // no aberration: the walk runs without Relativity
+                    L.gravOn, L.coulOn, L.magOn, L.gmOn, L.yukOn, L.onePNOn, L.bazOn, L.higgsOn, L.radOn, L.bhOn,
+                    false, L.needAxMod,
+                );
+            }
         }
-        let dSq = dot(comDisp, comDisp);
-        let size = getMaxX(nodeIdx) - getMinX(nodeIdx); // node width
+        workgroupBarrier();
+    }
+}
 
-        let isLeaf = getNW(nodeIdx) == NONE;
-        let particleIdx = getParticleIndex(nodeIdx);
+/** Inclusive prefix sum of v over the workgroup (Hillis–Steele), in thread order. */
+fn groupScan(lid: u32, v: u32) -> u32 {
+    var x = v;
+    wgScan[lid] = x;
+    workgroupBarrier();
+    for (var off = 1u; off < WG_SIZE; off <<= 1u) {
+        var y = 0u;
+        if (lid >= off) { y = wgScan[lid - off]; }
+        workgroupBarrier();
+        x += y;
+        wgScan[lid] = x;
+        workgroupBarrier();
+    }
+    return x;
+}
 
-        if (isLeaf && particleIdx >= 0) {
-            // Leaf node: accumulate from the individual particle
-            let sIdx = u32(particleIdx);
-            if (sIdx == pIdx) { continue; }
-            let sPs = particleState[sIdx];
-            let sIsRetired = (sPs.flags & FLAG_RETIRED) != 0u && (sPs.flags & FLAG_ALIVE) == 0u;
-            if ((sPs.flags & FLAG_ALIVE) == 0u && !sIsRetired) { continue; }
-            if (sIsRetired && !relOn) { continue; }
-            let sAYM = axYukMod_in[sIdx];
+/** The 24 accumulator words the walk touches, round r (0–2) of 8. */
+fn partial(a: AllForces, j: vec2<f32>, r: u32) -> array<f32, 8> {
+    if (r == 0u) { return array<f32, 8>(a.f0.x, a.f0.y, a.f0.z, a.f0.w, a.f1.x, a.f1.y, a.f1.z, a.f1.w); }
+    if (r == 1u) { return array<f32, 8>(a.f2.x, a.f2.y, a.f3.z, a.f3.w, a.torques.y, a.torques.z, a.bFields.x, a.bFields.y); }
+    return array<f32, 8>(a.bFieldGrads.x, a.bFieldGrads.y, a.bFieldGrads.z, a.bFieldGrads.w, a.totalForce.x, a.totalForce.y, j.x, j.y);
+}
 
-            if (relOn) {
-                // The source's retarded state; a retired source's world line ends at its death
-                let ret = retardedState(
-                    sIdx, px, py, sdTime,
-                    vec2(sPs.posX, sPs.posY), vec2(sPs.velWX, sPs.velWY), sPs.angW, sPs.mass, sPs.charge,
-                    !sIsRetired, isPeriodic, domW, domH, topo, uniforms.scaleA,
-                );
-                if (!ret.valid) { continue; }
-                let bodyRadSq = pow(max(ret.mass, EPSILON), 2.0 / 3.0);
-                let sAngVelRet = ret.angw / sqrt(1.0 + ret.angw * ret.angw * bodyRadSq);
-                let sMagMomRet = MAG_MOMENT_K * ret.charge * sAngVelRet * bodyRadSq;
-                let sAngMomRet = INERTIA_K * ret.mass * sAngVelRet * bodyRadSq;
-                accumulateForce(
-                    &localAF, ret.rel.x, ret.rel.y, pMass, pCharge,
-                    pMagMoment, pAngMomentum, pAngVel, pVelX, pVelY,
-                    pAxMod, pYukMod, pHiggsMod,
-                    ret.vel.x, ret.vel.y,
-                    ret.mass, ret.charge,
-                    sAngVelRet, sMagMomRet, sAngMomRet,
-                    select(sAYM.x, 1.0, abs(sAYM.x) < EPSILON),
-                    select(sAYM.y, 1.0, abs(sAYM.y) < EPSILON),
-                    select(sAYM.z, 1.0, abs(sAYM.z) < EPSILON),
-                    pRi5,
-                    &localJerk,
-                    true, // aberration
-                    _gravOn, _coulOn, _magOn, _gmOn, _yukOn, _onePNOn, _bazOn, _higgsOn, _radOn, _bhOn,
-                    relOn, _needAxMod,
-                );
-            } else {
-                var d = vec2<f32>(sPs.posX - px, sPs.posY - py);
-                if (isPeriodic) { d = fullMinImageP(px, py, sPs.posX, sPs.posY, domW, domH, topo); }
-                let sDerived = derived_in[sIdx];
-                accumulateForce(
-                    &localAF, d.x, d.y, pMass, pCharge,
-                    pMagMoment, pAngMomentum, pAngVel, pVelX, pVelY,
-                    pAxMod, pYukMod, pHiggsMod,
-                    sDerived.velX, sDerived.velY,
-                    sPs.mass, sPs.charge,
-                    sDerived.angVel,
-                    sDerived.magMoment, sDerived.angMomentum,
-                    sAYM.x, sAYM.y, sAYM.z,
-                    pRi5,
-                    &localJerk,
-                    false, // no aberration
-                    _gravOn, _coulOn, _magOn, _gmOn, _yukOn, _onePNOn, _bazOn, _higgsOn, _radOn, _bhOn,
-                    relOn, _needAxMod,
-                );
-            }
-        } else if (!isLeaf && (size * size < thetaSq * dSq)) {
-            // Distant node: aggregate multipole data at its current centre of mass
-            let avgVx = getTotalMomX(nodeIdx) / nodeMass;
-            let avgVy = getTotalMomY(nodeIdx) / nodeMass;
+@compute @workgroup_size(WG_SIZE)
+fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lidv: vec3<u32>) {
+    let lid = lidv.x;
+    let member = lid % GROUP;      // the body within the group
+    let lane = lid / GROUP;
+    let k = wid.x * GROUP + member;
+    let n = treeCount[0];
 
-            accumulateForce(
-                &localAF, comDisp.x, comDisp.y, pMass, pCharge,
-                pMagMoment, pAngMomentum, pAngVel, pVelX, pVelY,
-                pAxMod, pYukMod, pHiggsMod,
-                avgVx, avgVy,
-                nodeMass, getTotalCharge(nodeIdx),
-                0.0, // sAngVel = 0 for aggregate
-                getTotalMagMoment(nodeIdx), getTotalAngMomentum(nodeIdx),
-                1.0, 1.0, 1.0, // axMod/yukMod/higgsMod = 1 for aggregate
-                pRi5,
-                &localJerk,
-                false, // no aberration on aggregate nodes — velocities are not delayed
-                _gravOn, _coulOn, _magOn, _gmOn, _yukOn, _onePNOn, _bazOn, _higgsOn, _radOn, _bhOn,
-                relOn, _needAxMod,
-            );
-        } else if (!isLeaf) {
-            // Push children (only valid ones; NONE = -1 would become garbage u32)
-            if (stackTop + 4u <= MAX_STACK) {
-                let nw = getNW(nodeIdx);
-                let ne = getNE(nodeIdx);
-                let sw = getSW(nodeIdx);
-                let se = getSE(nodeIdx);
-                if (nw != NONE) { stack[stackTop] = u32(nw); stackTop += 1u; }
-                if (ne != NONE) { stack[stackTop] = u32(ne); stackTop += 1u; }
-                if (sw != NONE) { stack[stackTop] = u32(sw); stackTop += 1u; }
-                if (se != NONE) { stack[stackTop] = u32(se); stackTop += 1u; }
-            }
+    // This thread's body: an alive, non-ghost slot of the tree in sorted order
+    var o: Observer;
+    o.valid = false;
+    o.idx = 0u;
+    if (k < n) {
+        let pIdx = treeKeys[k].y;
+        let ps = particleState[pIdx];
+        if ((ps.flags & FLAG_ALIVE) != 0u && (ps.flags & FLAG_GHOST) == 0u) {
+            o.valid = true;
+            o.idx = pIdx;
+            o.pos = vec2(ps.posX, ps.posY);
+            o.mass = ps.mass;
+            o.charge = ps.charge;
+            let pDerived = derived_in[pIdx];
+            o.vel = vec2(pDerived.velX, pDerived.velY);
+            o.angVel = pDerived.angVel;
+            o.magMoment = pDerived.magMoment;
+            o.angMomentum = pDerived.angMomentum;
+            // Pre-hoist ri5 = mass^(5/3) for tidal locking (avoids pow() per pair in accumulateForce)
+            let pBodyRadiusSq = pDerived.bodyRSq;
+            o.ri5 = pBodyRadiusSq * pBodyRadiusSq * sqrt(pBodyRadiusSq);
+            let pAym = axYukMod_in[pIdx];
+            o.axMod = pAym.x;
+            o.yukMod = pAym.y;
+            o.higgsMod = pAym.z;
         }
     }
 
+    // G9: Hoist toggle reads before the tree walk loop (avoids repeated uniform reads per call)
+    let t0 = uniforms.toggles0;
+    var L: Laws;
+    L.gravOn  = (t0 & GRAVITY_BIT)     != 0u;
+    L.coulOn  = (t0 & COULOMB_BIT)     != 0u;
+    L.magOn   = (t0 & MAGNETIC_BIT)    != 0u;
+    L.gmOn    = (t0 & GRAVITOMAG_BIT)  != 0u;
+    L.yukOn   = (t0 & YUKAWA_BIT)      != 0u;
+    L.onePNOn = (t0 & ONE_PN_BIT)      != 0u;
+    L.bazOn   = L.gmOn && L.coulOn;
+    L.higgsOn = (t0 & HIGGS_BIT)       != 0u;
+    L.radOn   = (t0 & RADIATION_BIT)   != 0u;
+    L.bhOn    = (t0 & BLACK_HOLE_BIT)  != 0u;
+    L.needAxMod = (L.coulOn || L.magOn) && (t0 & AXION_BIT) != 0u;
+    L.periodic = uniforms.boundaryMode == BOUND_LOOP;
+    L.domW = uniforms.domainW;
+    L.domH = uniforms.domainH;
+    L.topo = uniforms.topologyMode;
+    let thetaSq = uniforms.bhTheta * uniforms.bhTheta;
+
+    // The group's bounding box, over the bodies that take forces
+    if (lane == 0u) {
+        wgLo[member] = select(vec2(3.4e38), o.pos, o.valid);
+        wgHi[member] = select(vec2(-3.4e38), o.pos, o.valid);
+    }
+    workgroupBarrier();
+    for (var off = GROUP / 2u; off > 0u; off >>= 1u) {
+        if (lid < off) {
+            wgLo[lid] = min(wgLo[lid], wgLo[lid + off]);
+            wgHi[lid] = max(wgHi[lid], wgHi[lid + off]);
+        }
+        workgroupBarrier();
+    }
+    let bodies = groupScan(lid, select(0u, 1u, o.valid && lane == 0u));
+    if (lid == WG_SIZE - 1u) {
+        wgBodies = bodies;
+        wgPool[FRONTIER_AT] = 0u;
+        wgFCount = 1u;
+        wgNCount = 0u;
+        wgLCount = 0u;
+    }
+    if (workgroupUniformLoad(&wgBodies) == 0u) { return; }
+    let boxLo = wgLo[0];
+    let boxHi = wgHi[0];
+    let boxC = 0.5 * (boxLo + boxHi);
+    let boxHalf = 0.5 * (boxHi - boxLo);
+
+    // Lane 0 starts from the accumulators (zeroed by resetForces), the others from zero
+    var localAF: AllForces;
+    if (o.valid && lane == 0u) { localAF = allForces[o.idx]; }
+    var localJerk = vec2<f32>(0.0, 0.0);
+
+    // Breadth first, a depth at a time: JUDGE threads each judge one frontier node, then prefix
+    // sums place its list entry or its children
+    loop {
+        let fcount = workgroupUniformLoad(&wgFCount);
+        if (fcount == 0u) { break; }
+        for (var base = 0u; base < fcount; base += JUDGE) {
+            // A full list is summed and emptied first
+            let lcount = workgroupUniformLoad(&wgLCount);
+            if (lcount + JUDGE > LIST_MAX) {
+                sumList(lid, lane, lcount, o, L, &localAF, &localJerk);
+                if (lid == 0u) { wgLCount = 0u; }
+                workgroupBarrier();
+            }
+            // A full frontier takes this round's nodes whole (never at these sizes)
+            let roomy = workgroupUniformLoad(&wgNCount) + 4u * JUDGE <= FRONTIER_MAX;
+
+            var node = 0u;
+            var take = 0u;   // 1: into the list
+            var open = 0u;   // children to visit
+            let f = base + lid;
+            if (lid < JUDGE && f < fcount) {
+                node = wgPool[FRONTIER_AT + f];
+                if (getTotalMass(node) >= EPSILON) {
+                    if (getNW(node) == NONE) {
+                        // A body; retired bodies act only with Relativity, and the walk runs without
+                        let pi = getParticleIndex(node);
+                        take = select(0u, 1u, pi >= 0 && (particleState[u32(pi)].flags & FLAG_ALIVE) != 0u);
+                    } else {
+                        let lo = vec2(getMinX(node), getMinY(node));
+                        let hi = vec2(getMaxX(node), getMaxY(node));
+                        let size = max(hi.x - lo.x, hi.y - lo.y);
+                        let com = vec2(getComX(node), getComY(node));
+                        var dc = com - boxC;
+                        if (L.periodic) { dc = fullMinImageP(boxC.x, boxC.y, com.x, com.y, L.domW, L.domH, L.topo); }
+                        let gap = max(abs(dc) - boxHalf, vec2(0.0));
+                        var far = size * size < thetaSq * dot(gap, gap);
+                        if (far && L.periodic) {
+                            let cc = 0.5 * (lo + hi);
+                            let dcc = fullMinImageP(boxC.x, boxC.y, cc.x, cc.y, L.domW, L.domH, L.topo);
+                            let reach = abs(dcc) + 0.5 * (hi - lo) + boxHalf;
+                            far = reach.x < 0.5 * L.domW && reach.y < 0.5 * L.domH;
+                        }
+                        if (far || !roomy) {
+                            take = 1u;
+                        } else {
+                            open = select(0u, 1u, getNW(node) != NONE) + select(0u, 1u, getNE(node) != NONE)
+                                 + select(0u, 1u, getSW(node) != NONE) + select(0u, 1u, getSE(node) != NONE);
+                        }
+                    }
+                }
+            }
+
+            let incl = groupScan(lid, take | (open << 16u));
+            let excl = incl - (take | (open << 16u));
+            let total = wgScan[WG_SIZE - 1u];
+            let lBase = wgLCount;
+            let nBase = wgNCount;
+            if (take == 1u) { wgPool[LIST_AT + lBase + (excl & 0xFFFFu)] = node; }
+            if (open > 0u) {
+                var at = nBase + (excl >> 16u);
+                for (var c = 0u; c < 4u; c++) {
+                    let child = getChild(node, c);
+                    if (child != NONE) { wgPool[NEXT_AT + at] = u32(child); at += 1u; }
+                }
+            }
+            workgroupBarrier();
+            if (lid == 0u) {
+                wgLCount = lBase + (total & 0xFFFFu);
+                wgNCount = nBase + (total >> 16u);
+            }
+            workgroupBarrier();
+        }
+        // The next depth becomes the frontier
+        let ncount = workgroupUniformLoad(&wgNCount);
+        for (var i = lid; i < ncount; i += WG_SIZE) { wgPool[FRONTIER_AT + i] = wgPool[NEXT_AT + i]; }
+        workgroupBarrier();
+        if (lid == 0u) {
+            wgFCount = ncount;
+            wgNCount = 0u;
+        }
+        workgroupBarrier();
+    }
+    sumList(lid, lane, workgroupUniformLoad(&wgLCount), o, L, &localAF, &localJerk);
+
+    // Add the lanes' sums, in lane order, a third of the touched words per round, through the pool
+    var out = localAF;
+    var outJerk = localJerk;
+    for (var r = 0u; r < 3u; r++) {
+        let mine = partial(localAF, localJerk, r);
+        for (var w = 0u; w < 8u; w++) { wgPool[lid * 8u + w] = bitcast<u32>(mine[w]); }
+        workgroupBarrier();
+        if (lane == 0u) {
+            var sum = mine;
+            for (var l = 1u; l < LANES; l++) {
+                for (var w = 0u; w < 8u; w++) { sum[w] += bitcast<f32>(wgPool[(l * GROUP + member) * 8u + w]); }
+            }
+            if (r == 0u) {
+                out.f0 = vec4(sum[0], sum[1], sum[2], sum[3]);
+                out.f1 = vec4(sum[4], sum[5], sum[6], sum[7]);
+            } else if (r == 1u) {
+                out.f2 = vec4(sum[0], sum[1], out.f2.z, out.f2.w);
+                out.f3 = vec4(out.f3.x, out.f3.y, sum[2], sum[3]);
+                out.torques = vec4(out.torques.x, sum[4], sum[5], out.torques.w);
+                out.bFields = vec4(sum[6], sum[7], out.bFields.z, out.bFields.w);
+            } else {
+                out.bFieldGrads = vec4(sum[0], sum[1], sum[2], sum[3]);
+                out.totalForce = vec2(sum[4], sum[5]);
+                outJerk = vec2(sum[6], sum[7]);
+            }
+        }
+        workgroupBarrier();
+    }
+    if (!o.valid || lane != 0u) { return; }
+
     // Write accumulated jerk to AllForces (NaN guard)
-    localAF.jerk += vec2(
-        select(localJerk.x, 0.0, localJerk.x != localJerk.x),
-        select(localJerk.y, 0.0, localJerk.y != localJerk.y)
+    out.jerk += vec2(
+        select(outJerk.x, 0.0, outJerk.x != outJerk.x),
+        select(outJerk.y, 0.0, outJerk.y != outJerk.y)
     );
 
     // NaN guard on B-field accumulators — corruption propagates to Boris rotation + spin-orbit
-    localAF.bFields = vec4(
-        select(localAF.bFields.x, 0.0, localAF.bFields.x != localAF.bFields.x),
-        select(localAF.bFields.y, 0.0, localAF.bFields.y != localAF.bFields.y),
-        localAF.bFields.z, localAF.bFields.w);
-    localAF.bFieldGrads = vec4(
-        select(localAF.bFieldGrads.x, 0.0, localAF.bFieldGrads.x != localAF.bFieldGrads.x),
-        select(localAF.bFieldGrads.y, 0.0, localAF.bFieldGrads.y != localAF.bFieldGrads.y),
-        select(localAF.bFieldGrads.z, 0.0, localAF.bFieldGrads.z != localAF.bFieldGrads.z),
-        select(localAF.bFieldGrads.w, 0.0, localAF.bFieldGrads.w != localAF.bFieldGrads.w));
+    out.bFields = vec4(
+        select(out.bFields.x, 0.0, out.bFields.x != out.bFields.x),
+        select(out.bFields.y, 0.0, out.bFields.y != out.bFields.y),
+        out.bFields.z, out.bFields.w);
+    out.bFieldGrads = vec4(
+        select(out.bFieldGrads.x, 0.0, out.bFieldGrads.x != out.bFieldGrads.x),
+        select(out.bFieldGrads.y, 0.0, out.bFieldGrads.y != out.bFieldGrads.y),
+        select(out.bFieldGrads.z, 0.0, out.bFieldGrads.z != out.bFieldGrads.z),
+        select(out.bFieldGrads.w, 0.0, out.bFieldGrads.w != out.bFieldGrads.w));
 
     // Write accumulated forces back to global memory ONCE
-    allForces[pIdx] = localAF;
+    allForces[o.idx] = out;
 
     // Adaptive substepping: atomicMax of |F/m| as fixed-point u32
-    let totalFSq = localAF.totalForce.x * localAF.totalForce.x + localAF.totalForce.y * localAF.totalForce.y;
-    let accelSq = totalFSq * pInvMass * pInvMass;
+    let totalFSq = out.totalForce.x * out.totalForce.x + out.totalForce.y * out.totalForce.y;
+    let invMass = derived_in[o.idx].invMass;
+    let accelSq = totalFSq * invMass * invMass;
     if (accelSq == accelSq && accelSq < 1e20) {
         let accelBits = bitcast<u32>(sqrt(accelSq));
         atomicMax(&maxAccel[0], accelBits);

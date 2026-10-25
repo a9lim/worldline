@@ -9,8 +9,8 @@
 // (shared-worldline.wgsl): charges through their Liénard–Wiechert fields, everything else
 // through the static laws at the retarded position, scaled by the toy aberration factor
 // (1 − n̂·v)⁻³. Retired particles keep acting until the light from their world line's end
-// has passed. With Barnes–Hut and Relativity on, this pass carries EM alone
-// (EM_PAIRWISE_BIT) and the tree walk adds the rest.
+// has passed. With Relativity on this pass carries every force, Barnes–Hut or not: a tree
+// node's aggregate has no world line to take its retarded state from.
 //
 // Uses packed ParticleState + ParticleDerived + ParticleAux structs. Jerk written to AllForces.
 // Requires shared-worldline.wgsl and shared-1pn.wgsl prepended.
@@ -39,7 +39,13 @@ struct TileParticle {
     higgsMod: f32,
     bodyRadSq: f32,  // pow(mass, 2/3) — true body radius squared (not BH horizon)
     srcIdx: u32,     // global index for signal delay lookup
+    kind: u32,       // SRC_NONE, SRC_ALIVE, or SRC_RETIRED (its world line ended at deathTime)
+    deathTime: f32,
+    spacing: f32,    // the world line's mean time between samples (a substep longer than WL_DT records one)
 };
+const SRC_NONE: u32 = 0u;
+const SRC_ALIVE: u32 = 1u;
+const SRC_RETIRED: u32 = 2u;
 
 var<workgroup> tile: array<TileParticle, TILE_SIZE>;
 // The lanes' partial sums, a third of ForceAccum at a time (8 KB)
@@ -59,10 +65,37 @@ var<workgroup> laneSums: array<array<f32, 8>, WG_SIZE>;
 @group(2) @binding(1) var<storage, read_write> maxAccel: array<atomic<u32>>;
 
 // Bind group 3: world lines (shared-worldline.wgsl) and the per-pair light-cone hints,
-// source-major (wlHints[src * MAX_PARTICLES + observer]) so a workgroup's reads coalesce
+// source-major (wlHints[src * capacity + observer]) so a workgroup's reads coalesce; the
+// table grows with the world lines (gpu-physics.js _growStore), so its stride is a uniform
 @group(3) @binding(0) var<storage, read_write> wlData: array<f32>;
 @group(3) @binding(1) var<storage, read_write> wlMeta: array<u32>;
 @group(3) @binding(2) var<storage, read_write> wlHints: array<u32>;
+
+/** The mean time between source src's samples, from its oldest and newest. */
+fn sampleSpacing(src: u32) -> f32 {
+    let mb = src * WL_META_STRIDE;
+    let count = wlMeta[mb + 1u];
+    if (count < 2u) { return WL_DT; }
+    let newest = wlData[wlSampleBase(src, wlMeta[mb] + WL_LEN - 1u)];
+    let oldest = wlData[wlSampleBase(src, wlMeta[mb] + WL_LEN - count)];
+    return max((newest - oldest) / f32(count - 1u), 1e-3);
+}
+
+/**
+ * A first guess at where on source s's world line the light-cone search starts, for a pair
+ * with no hint yet (a new slot, a grown table): as points back from its last, light from the
+ * source's distance R now left about R/a of the world-line clock ago (comoving and conformal,
+ * light runs at 1), that over its sample spacing back (a retired source's line ends at its
+ * death, T − deathTime ago). Each pair then keeps the bracket it found: in a crowded scene the
+ * paths curve too much over a light-crossing time for any guess from now to match it.
+ */
+fn coneHint(s: TileParticle, pPos: vec2<f32>, T: f32, periodic: bool, domW: f32, domH: f32, topo: u32) -> u32 {
+    var d = vec2(s.posX, s.posY) - pPos;
+    if (periodic) { d = fullMinImageP(pPos.x, pPos.y, s.posX, s.posY, domW, domH, topo); }
+    var back = length(d) / uniforms.scaleA;
+    if (s.kind == SRC_RETIRED) { back -= T - s.deathTime; }
+    return u32(clamp(back / s.spacing, 0.0, f32(WL_LEN))) + 1u;
+}
 
 // ── Source data struct for force computation (used by both tile loop and dead loop) ──
 struct SourceData {
@@ -443,15 +476,13 @@ fn main(
             pRi5 = pBodyRSq * pBodyRSq * sqrt(pBodyRSq);
         }
 
-        // With Barnes–Hut and Relativity this pass carries EM alone; the tree walk adds the rest
-        let emOnly = hasToggle1(EM_PAIRWISE_BIT);
-        let gravOn = hasToggle0(GRAVITY_BIT) && !emOnly;
+        let gravOn = hasToggle0(GRAVITY_BIT);
         let coulOn = hasToggle0(COULOMB_BIT);
         let magOn = hasToggle0(MAGNETIC_BIT);
-        let gmOn = hasToggle0(GRAVITOMAG_BIT) && !emOnly;
-        let onePNOn = hasToggle0(ONE_PN_BIT) && !emOnly;
+        let gmOn = hasToggle0(GRAVITOMAG_BIT);
+        let onePNOn = hasToggle0(ONE_PN_BIT);
         let relOn = hasToggle0(RELATIVITY_BIT);
-        let yukawaOn = hasToggle0(YUKAWA_BIT) && !emOnly;
+        let yukawaOn = hasToggle0(YUKAWA_BIT);
         let higgsOn = hasToggle0(HIGGS_BIT);
         let radOn = hasToggle0(RADIATION_BIT);
         let bhOn = hasToggle0(BLACK_HOLE_BIT);
@@ -497,8 +528,26 @@ fn main(
             // Collaborative tile load: each of the first TILE_SIZE threads loads one source
             let tileIdx = lid.x;
             let tileSrcIdx = t * TILE_SIZE + tileIdx;
+            var flags = 0u;
+            if (tileIdx < TILE_SIZE && tileSrcIdx < N) { flags = particles[tileSrcIdx].flags; }
+            // With Relativity, retired particles keep acting until the light from their world
+            // line's end has passed: from their world line, through their death snapshot
+            let retired = relOn && (flags & FLAG_RETIRED) != 0u && (flags & FLAG_ALIVE) == 0u;
             if (tileIdx >= TILE_SIZE) {
-            } else if (tileSrcIdx < N && (particles[tileSrcIdx].flags & FLAG_ALIVE) != 0u) {
+            } else if (retired) {
+                let sp = particles[tileSrcIdx];
+                tile[tileIdx].posX = sp.posX;
+                tile[tileIdx].posY = sp.posY;
+                tile[tileIdx].charge = sp.charge;
+                let saym = axYukMod[tileSrcIdx];
+                tile[tileIdx].axMod = select(saym.x, 1.0, abs(saym.x) < EPSILON);
+                tile[tileIdx].yukMod = select(saym.y, 1.0, abs(saym.y) < EPSILON);
+                tile[tileIdx].higgsMod = select(saym.z, 1.0, abs(saym.z) < EPSILON);
+                tile[tileIdx].srcIdx = tileSrcIdx;
+                tile[tileIdx].kind = SRC_RETIRED;
+                tile[tileIdx].deathTime = particleAux[tileSrcIdx].deathTime;
+                tile[tileIdx].spacing = sampleSpacing(tileSrcIdx);
+            } else if ((flags & FLAG_ALIVE) != 0u) {
                 let sp = particles[tileSrcIdx];
                 tile[tileIdx].posX = sp.posX;
                 tile[tileIdx].posY = sp.posY;
@@ -519,10 +568,10 @@ fn main(
                 tile[tileIdx].higgsMod = saym.z;
                 tile[tileIdx].bodyRadSq = sd.bodyRSq;
                 tile[tileIdx].srcIdx = tileSrcIdx;
+                tile[tileIdx].kind = select(SRC_NONE, SRC_ALIVE, sp.mass >= EPSILON);
+                if (relOn) { tile[tileIdx].spacing = sampleSpacing(tileSrcIdx); }
             } else {
-                // Mark as invalid (zero mass = no force contribution)
-                tile[tileIdx].mass = 0.0;
-                tile[tileIdx].srcIdx = 0xFFFFFFFFu;
+                tile[tileIdx].kind = SRC_NONE;
             }
 
             workgroupBarrier();
@@ -533,17 +582,20 @@ fn main(
                     let sIdx = t * TILE_SIZE + j;
                     if (sIdx >= N || sIdx == idx) { continue; }
                     let s = tile[j];
-                    if (s.mass < EPSILON) { continue; }
+                    if (s.kind == SRC_NONE) { continue; }
 
                     var src: SourceData;
                     if (relOn) {
-                        let hIdx = s.srcIdx * MAX_PARTICLES + idx;
+                        let hIdx = s.srcIdx * uniforms.maxParticles + idx;
                         let hintIn = wlHints[hIdx];
                         var hint = hintIn;
+                        if (hintIn == 0u) { hint = coneHint(s, vec2(pPosX, pPosY), sdTime, isPeriodic, domW, domH, topo); }
+                        let alive = s.kind == SRC_ALIVE;
                         let ret = retardedStateHinted(
                             s.srcIdx, pPosX, pPosY, sdTime,
-                            vec2(s.posX, s.posY), vec2(s.wX, s.wY), s.angW, s.mass, s.charge,
-                            true, isPeriodic, domW, domH, topo, uniforms.scaleA, &hint,
+                            vec2(s.posX, s.posY), select(vec2(0.0), vec2(s.wX, s.wY), alive),
+                            select(0.0, s.angW, alive), select(0.0, s.mass, alive), s.charge,
+                            alive, isPeriodic, domW, domH, topo, uniforms.scaleA, &hint,
                         );
                         if (hint != hintIn) { wlHints[hIdx] = hint; }
                         if (!ret.valid) { continue; }
@@ -584,48 +636,6 @@ fn main(
             }
 
             workgroupBarrier();
-        }
-
-        // ── Retired particles keep acting until the light from their world line's end has passed ──
-        if (alive && relOn) {
-            let totalCount = uniforms.particleCount;
-            for (var ri: u32 = lane; ri < totalCount; ri += LANES) {
-                let flags = particles[ri].flags;
-                if ((flags & FLAG_RETIRED) == 0u || (flags & FLAG_ALIVE) != 0u) { continue; }
-
-                let rp = particles[ri];
-                let hIdx = ri * MAX_PARTICLES + idx;
-                let hintIn = wlHints[hIdx];
-                var hint = hintIn;
-                let ret = retardedStateHinted(
-                    ri, pPosX, pPosY, sdTime,
-                    vec2(rp.posX, rp.posY), vec2(0.0), 0.0, 0.0, rp.charge,
-                    false, isPeriodic, domW, domH, topo, uniforms.scaleA, &hint,
-                );
-                if (hint != hintIn) { wlHints[hIdx] = hint; }
-                if (!ret.valid) { continue; }
-
-                let deadAxYuk = axYukMod[ri];
-                let src = makeDelayedSource(
-                    ret,
-                    select(deadAxYuk.x, 1.0, abs(deadAxYuk.x) < EPSILON),
-                    select(deadAxYuk.y, 1.0, abs(deadAxYuk.y) < EPSILON),
-                    select(deadAxYuk.z, 1.0, abs(deadAxYuk.z) < EPSILON),
-                );
-
-                accumulatePairForce(
-                    pVelX, pVelY,
-                    pMass, pCharge, pAngVel,
-                    pMagMom, pAngMom,
-                    pAxMod, pYukMod, pHiggsMod, pRi5,
-                    src, softeningSq,
-                    yukMu, yukCutoffSq,
-                    gravOn, coulOn, magOn, gmOn,
-                    onePNOn, yukawaOn, higgsOn, radOn,
-                    bhOn, relOn, needAxMod,
-                    &accum,
-                );
-            }
         }
 
         // Add the lanes' sums, in lane order, a third of the accumulator per round

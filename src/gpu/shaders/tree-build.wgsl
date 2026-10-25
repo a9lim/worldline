@@ -1,15 +1,45 @@
-// ─── GPU Quadtree Build (GraphWaGu-style) ───
-// Three dispatches:
-//   1. computeBounds — parallel min/max reduction → root node bounds
-//   2. initRoot — single-thread: read bounds, write root node
-//   3. insertParticles — one thread per particle, CAS lock insertion
-//   4. computeAggregates — bottom-up aggregation via visitor flags
+// ─── GPU Quadtree Build: sorted, deterministic ───
+// A quadtree over a set of items: the bodies (alive, retired, and ghosts), which the
+// Barnes–Hut walk, collisions, hit tests, the heatmap and boson absorption read, or the
+// bosons, which boson gravity, pion Coulomb and kugelblitz read (node layout below, read-only
+// accessors in shared-tree-nodes.wgsl). The items come from an include prepended to this
+// file, tree-items-bodies.wgsl or tree-items-bosons.wgsl, which binds group 1 and defines
+// itemSlots(), itemActive(i), itemPos(i) and itemLeaf(i). Built from sorted Morton codes, so
+// the tree depends only on the positions, never on thread timing:
+//   1. computeBounds    parallel min/max reduction (fixed-point atomics)
+//   2. initRoot         one thread: the padded root box
+//   3. mortonKeys       one thread per item slot: (Morton code, slot), or (NO_KEY, slot)
+//   4. sortLocal        bitonic sort of each block of SORT_BLOCK keys in workgroup memory;
+//      sortGlobal       the network's steps wider than a block, one dispatch each;
+//      sortMerge        then the steps within a block, for one width k (both after k > block)
+//   5. radixBuild       one thread per internal node of the binary radix tree (Karras 2012)
+//   6. quadLink         one thread per binary node that starts a quadtree cell: its children
+//   7. aggregate        one thread per item: its leaf, then up the tree, the last child to
+//                       arrive at a node summing it from its children in slot order
+//
+// The quadtree is compressed: a cell exists where its bodies split among two or more of its
+// quadrants, so a node has two to four children, at any deeper level. They fill the child
+// slots in Morton order, the rest NONE; walks take children generically, and a node is a
+// leaf when its first slot is NONE. Every cell a CAS-built quadtree would have and this one
+// lacks holds the same bodies as a cell this one has, so Barnes–Hut sees the same aggregates.
+// Internal nodes carry their cell's bounds; leaves carry their body's position as a point.
+//
+// Morton codes are 15 bits per axis (30 bits, y above x per level). Equal codes split by
+// sorted position, as further bits below the code (Karras's tie-break), so every key is
+// distinct; cells past level 15 keep the level-15 bounds.
+//
+// Node indices: binary internal node i is quadtree node i (only the ones that start a cell
+// are used; node 0, the root, always is; the others weigh nothing and hold no bodies, for the
+// kugelblitz scan over every node), and sorted item k is leaf nActive − 1 + k. With a single
+// item the leaf is node 0.
 
 // Constants provided by generated wgslConstants block.
-// Shader-specific constants:
 const NONE: i32 = -1;
-const QT_CAPACITY: u32 = 1u; // Leaves hold 1 particle (GPU simplification for lock-free)
-const LOCK_BIT: i32 = -2147483648; // 0x80000000 (MSB)
+const NO_KEY: u32 = 0xFFFFFFFFu;
+const LEAF_BIT: u32 = 0x80000000u;
+const SORT_BLOCK: u32 = 1024u;
+const MORTON_BITS: u32 = 15u;
+const MORTON_SCALE: f32 = 32768.0;
 
 // Fixed-point scale for atomic min/max (f32 → i32: multiply by 2^16)
 const FP_SCALE: f32 = 65536.0;
@@ -26,107 +56,43 @@ const FP_INV_SCALE: f32 = 0.0000152587890625; // 1/65536
 // [9]: totalAngMomentum
 // [10]: totalMomentumX
 // [11]: totalMomentumY
-// [12..15]: nw, ne, sw, se (as i32)
-// [16]: particleIndex (i32, with LOCK_BIT for CAS)
-// [17]: particleCount (u32)
+// [12..15]: children (i32), the first two to four used, the rest NONE
+// [16]: particleIndex (i32, leaves; NONE on internal nodes)
+// [17]: particleCount: items under the node (during aggregate, the arrival counter)
 // [18]: parentIndex (i32)
 // [19]: padding
 
 @group(0) @binding(0) var<storage, read_write> nodes: array<atomic<u32>>;
-@group(0) @binding(1) var<storage, read_write> nodeCounter: atomic<u32>;
+@group(0) @binding(1) var<storage, read_write> nActive: atomic<u32>;
+// [0..3] the fixed-point reduction; [4..7] the padded root box (minX, minY, width, height)
 @group(0) @binding(2) var<storage, read_write> bounds: array<atomic<i32>>;
+// Children per quadtree node: how many arrivals aggregate waits for
 @group(0) @binding(3) var<storage, read_write> visitorFlags: array<atomic<u32>>;
 
-// Group 1: packed particle state + derived + aux (read_write for encoder compat)
-@group(1) @binding(0) var<storage, read_write> particleState: array<ParticleState>;
-@group(1) @binding(1) var<storage, read_write> derived_in: array<ParticleDerived>;
-@group(1) @binding(2) var<storage, read_write> particleAux: array<ParticleAux>;
-
 @group(2) @binding(0) var<uniform> uniforms: SimUniforms;
+
+// Group 3: the sort and the radix tree
+// keys: (Morton code, slot) pairs, M of them (a power of 2, at least SORT_BLOCK)
+@group(3) @binding(0) var<storage, read_write> keys: array<vec2<u32>>;
+// radix: binary internal node i at [6i, 6i + 6): left, right (LEAF_BIT on a sorted body),
+// prefix length δ, first and last sorted position, parent
+@group(3) @binding(1) var<storage, read_write> radix: array<u32>;
+// One sort step's network width k and step j, picked by dynamic offset
+struct SortParams { k: u32, j: u32, _p0: u32, _p1: u32 };
+@group(3) @binding(2) var<uniform> sortParams: SortParams;
 
 // ── Node accessors ──
 const NODE_STRIDE: u32 = 20u;
 
 fn nodeOffset(idx: u32) -> u32 { return idx * NODE_STRIDE; }
 
-fn getMinX(idx: u32) -> f32 { return bitcast<f32>(atomicLoad(&nodes[nodeOffset(idx)])); }
-fn getMinY(idx: u32) -> f32 { return bitcast<f32>(atomicLoad(&nodes[nodeOffset(idx) + 1u])); }
-fn getMaxX(idx: u32) -> f32 { return bitcast<f32>(atomicLoad(&nodes[nodeOffset(idx) + 2u])); }
-fn getMaxY(idx: u32) -> f32 { return bitcast<f32>(atomicLoad(&nodes[nodeOffset(idx) + 3u])); }
+fn ldF(idx: u32, w: u32) -> f32 { return bitcast<f32>(atomicLoad(&nodes[nodeOffset(idx) + w])); }
+fn stF(idx: u32, w: u32, v: f32) { atomicStore(&nodes[nodeOffset(idx) + w], bitcast<u32>(v)); }
+fn ldI(idx: u32, w: u32) -> i32 { return bitcast<i32>(atomicLoad(&nodes[nodeOffset(idx) + w])); }
+fn stI(idx: u32, w: u32, v: i32) { atomicStore(&nodes[nodeOffset(idx) + w], bitcast<u32>(v)); }
 
-fn setMinX(idx: u32, v: f32) { atomicStore(&nodes[nodeOffset(idx)], bitcast<u32>(v)); }
-fn setMinY(idx: u32, v: f32) { atomicStore(&nodes[nodeOffset(idx) + 1u], bitcast<u32>(v)); }
-fn setMaxX(idx: u32, v: f32) { atomicStore(&nodes[nodeOffset(idx) + 2u], bitcast<u32>(v)); }
-fn setMaxY(idx: u32, v: f32) { atomicStore(&nodes[nodeOffset(idx) + 3u], bitcast<u32>(v)); }
-
-fn getComX(idx: u32) -> f32 { return bitcast<f32>(atomicLoad(&nodes[nodeOffset(idx) + 4u])); }
-fn getComY(idx: u32) -> f32 { return bitcast<f32>(atomicLoad(&nodes[nodeOffset(idx) + 5u])); }
-fn setComX(idx: u32, v: f32) { atomicStore(&nodes[nodeOffset(idx) + 4u], bitcast<u32>(v)); }
-fn setComY(idx: u32, v: f32) { atomicStore(&nodes[nodeOffset(idx) + 5u], bitcast<u32>(v)); }
-
-fn getTotalMass(idx: u32) -> f32 { return bitcast<f32>(atomicLoad(&nodes[nodeOffset(idx) + 6u])); }
-fn setTotalMass(idx: u32, v: f32) { atomicStore(&nodes[nodeOffset(idx) + 6u], bitcast<u32>(v)); }
-
-fn getTotalCharge(idx: u32) -> f32 { return bitcast<f32>(atomicLoad(&nodes[nodeOffset(idx) + 7u])); }
-fn setTotalCharge(idx: u32, v: f32) { atomicStore(&nodes[nodeOffset(idx) + 7u], bitcast<u32>(v)); }
-
-fn getTotalMagMoment(idx: u32) -> f32 { return bitcast<f32>(atomicLoad(&nodes[nodeOffset(idx) + 8u])); }
-fn setTotalMagMoment(idx: u32, v: f32) { atomicStore(&nodes[nodeOffset(idx) + 8u], bitcast<u32>(v)); }
-
-fn getTotalAngMomentum(idx: u32) -> f32 { return bitcast<f32>(atomicLoad(&nodes[nodeOffset(idx) + 9u])); }
-fn setTotalAngMomentum(idx: u32, v: f32) { atomicStore(&nodes[nodeOffset(idx) + 9u], bitcast<u32>(v)); }
-
-fn getTotalMomX(idx: u32) -> f32 { return bitcast<f32>(atomicLoad(&nodes[nodeOffset(idx) + 10u])); }
-fn setTotalMomX(idx: u32, v: f32) { atomicStore(&nodes[nodeOffset(idx) + 10u], bitcast<u32>(v)); }
-
-fn getTotalMomY(idx: u32) -> f32 { return bitcast<f32>(atomicLoad(&nodes[nodeOffset(idx) + 11u])); }
-fn setTotalMomY(idx: u32, v: f32) { atomicStore(&nodes[nodeOffset(idx) + 11u], bitcast<u32>(v)); }
-
-fn getNW(idx: u32) -> i32 { return bitcast<i32>(atomicLoad(&nodes[nodeOffset(idx) + 12u])); }
-fn getNE(idx: u32) -> i32 { return bitcast<i32>(atomicLoad(&nodes[nodeOffset(idx) + 13u])); }
-fn getSW(idx: u32) -> i32 { return bitcast<i32>(atomicLoad(&nodes[nodeOffset(idx) + 14u])); }
-fn getSE(idx: u32) -> i32 { return bitcast<i32>(atomicLoad(&nodes[nodeOffset(idx) + 15u])); }
-
-fn setNW(idx: u32, v: i32) { atomicStore(&nodes[nodeOffset(idx) + 12u], bitcast<u32>(v)); }
-fn setNE(idx: u32, v: i32) { atomicStore(&nodes[nodeOffset(idx) + 13u], bitcast<u32>(v)); }
-fn setSW(idx: u32, v: i32) { atomicStore(&nodes[nodeOffset(idx) + 14u], bitcast<u32>(v)); }
-fn setSE(idx: u32, v: i32) { atomicStore(&nodes[nodeOffset(idx) + 15u], bitcast<u32>(v)); }
-
-fn getParticleIndex(idx: u32) -> i32 { return bitcast<i32>(atomicLoad(&nodes[nodeOffset(idx) + 16u])); }
-fn getParticleCount(idx: u32) -> u32 { return atomicLoad(&nodes[nodeOffset(idx) + 17u]); }
-
-fn getParentIndex(idx: u32) -> i32 { return bitcast<i32>(atomicLoad(&nodes[nodeOffset(idx) + 18u])); }
-fn setParentIndex(idx: u32, v: i32) { atomicStore(&nodes[nodeOffset(idx) + 18u], bitcast<u32>(v)); }
-
-// Atomic CAS on particleIndex field (for lock protocol)
-fn casParticleIndex(idx: u32, expected: i32, desired: i32) -> i32 {
-    let offset = nodeOffset(idx) + 16u;
-    let result = atomicCompareExchangeWeak(&nodes[offset], bitcast<u32>(expected), bitcast<u32>(desired));
-    return bitcast<i32>(result.old_value);
-}
-
-fn setParticleIndex(idx: u32, v: i32) {
-    atomicStore(&nodes[nodeOffset(idx) + 16u], bitcast<u32>(v));
-}
-
-fn setParticleCount(idx: u32, v: u32) {
-    atomicStore(&nodes[nodeOffset(idx) + 17u], v);
-}
-
-fn atomicAddParticleCount(idx: u32, delta: u32) -> u32 {
-    return atomicAdd(&nodes[nodeOffset(idx) + 17u], delta);
-}
-
-fn allocNode() -> u32 {
-    let idx = atomicAdd(&nodeCounter, 1u);
-    if (idx >= QT_MAX_NODES) { return 0u; } // OOB → alias root (safe no-op)
-    return idx;
-}
-
-// ─── Dispatch 1: computeBounds ───
-// Parallel reduction over alive particles → fixed-point atomic min/max.
-// bounds[0..3] = (minX, minY, maxX, maxY) as fixed-point i32.
-// Initialize: bounds[0,1] = +MAX, bounds[2,3] = -MAX before dispatch.
+// ─── 1: computeBounds ───
+// bounds[0..3] = (minX, minY, maxX, maxY) as fixed-point i32, reset to ±MAX before dispatch.
 
 var<workgroup> wgMinX: atomic<i32>;
 var<workgroup> wgMinY: atomic<i32>;
@@ -137,24 +103,21 @@ var<workgroup> wgMaxY: atomic<i32>;
 fn computeBounds(@builtin(global_invocation_id) gid: vec3<u32>,
                  @builtin(local_invocation_id) lid: vec3<u32>) {
     let idx = gid.x;
-    let n = uniforms.particleCount; // totalCount = aliveCount + ghostCount
+    let n = itemSlots();
 
-    // Initialize workgroup atomics
     if (lid.x == 0u) {
-        atomicStore(&wgMinX, 2147483647);  // i32 max
+        atomicStore(&wgMinX, 2147483647);
         atomicStore(&wgMinY, 2147483647);
-        atomicStore(&wgMaxX, -2147483647); // i32 min
+        atomicStore(&wgMaxX, -2147483647);
         atomicStore(&wgMaxY, -2147483647);
     }
     workgroupBarrier();
 
-    if (idx < n) {
-        let ps = particleState[idx];
-        let isAliveOrGhost = (ps.flags & (FLAG_ALIVE | FLAG_GHOST)) != 0u;
-        let isRetired = (ps.flags & FLAG_RETIRED) != 0u && (ps.flags & FLAG_ALIVE) == 0u;
-        if (isAliveOrGhost || isRetired) {
-            let px = i32(ps.posX * FP_SCALE);
-            let py = i32(ps.posY * FP_SCALE);
+    if (idx < n && itemActive(idx)) {
+        let p = itemPos(idx);
+        {
+            let px = i32(p.x * FP_SCALE);
+            let py = i32(p.y * FP_SCALE);
             atomicMin(&wgMinX, px);
             atomicMin(&wgMinY, py);
             atomicMax(&wgMaxX, px);
@@ -164,7 +127,6 @@ fn computeBounds(@builtin(global_invocation_id) gid: vec3<u32>,
 
     workgroupBarrier();
 
-    // Workgroup leader writes to global atomics
     if (lid.x == 0u) {
         atomicMin(&bounds[0], atomicLoad(&wgMinX));
         atomicMin(&bounds[1], atomicLoad(&wgMinY));
@@ -173,8 +135,8 @@ fn computeBounds(@builtin(global_invocation_id) gid: vec3<u32>,
     }
 }
 
-// ─── Dispatch 2: initRoot ───
-// Single-thread: read fixed-point bounds, convert to f32, write root node.
+// ─── 2: initRoot ───
+// The root box, padded by 10% and a unit like the CPU tree; nActive counts from zero.
 
 @compute @workgroup_size(1)
 fn initRoot() {
@@ -182,312 +144,341 @@ fn initRoot() {
     let minY = f32(atomicLoad(&bounds[1])) * FP_INV_SCALE;
     let maxX = f32(atomicLoad(&bounds[2])) * FP_INV_SCALE;
     let maxY = f32(atomicLoad(&bounds[3])) * FP_INV_SCALE;
-
-    // Add padding (10% margin like CPU boundary)
     let padX = (maxX - minX) * 0.1 + 1.0;
     let padY = (maxY - minY) * 0.1 + 1.0;
-
-    setMinX(0u, minX - padX);
-    setMinY(0u, minY - padY);
-    setMaxX(0u, maxX + padX);
-    setMaxY(0u, maxY + padY);
-    setNW(0u, NONE);
-    setNE(0u, NONE);
-    setSW(0u, NONE);
-    setSE(0u, NONE);
-    setParticleIndex(0u, NONE);
-    setParticleCount(0u, 0u);
-    setParentIndex(0u, NONE);
-    setTotalMass(0u, 0.0);
-    setTotalCharge(0u, 0.0);
-    setTotalMagMoment(0u, 0.0);
-    setTotalAngMomentum(0u, 0.0);
-    setTotalMomX(0u, 0.0);
-    setTotalMomY(0u, 0.0);
+    atomicStore(&bounds[4], bitcast<i32>(minX - padX));
+    atomicStore(&bounds[5], bitcast<i32>(minY - padY));
+    atomicStore(&bounds[6], bitcast<i32>(maxX - minX + 2.0 * padX));
+    atomicStore(&bounds[7], bitcast<i32>(maxY - minY + 2.0 * padY));
+    atomicStore(&nActive, 0u);
 }
 
-// ─── Dispatch 3: insertParticles ───
-// One thread per particle. Walk from root to appropriate leaf.
-// CAS lock protocol for concurrent insertion.
+fn rootBox() -> vec4<f32> {
+    return vec4(bitcast<f32>(atomicLoad(&bounds[4])), bitcast<f32>(atomicLoad(&bounds[5])),
+                bitcast<f32>(atomicLoad(&bounds[6])), bitcast<f32>(atomicLoad(&bounds[7])));
+}
 
-fn childFor(nodeIdx: u32, px: f32, py: f32) -> u32 {
-    let cx = (getMinX(nodeIdx) + getMaxX(nodeIdx)) * 0.5;
-    let cy = (getMinY(nodeIdx) + getMaxY(nodeIdx)) * 0.5;
-    if (py <= cy) {
-        if (px <= cx) { return u32(getNW(nodeIdx)); }
-        else { return u32(getNE(nodeIdx)); }
-    } else {
-        if (px <= cx) { return u32(getSW(nodeIdx)); }
-        else { return u32(getSE(nodeIdx)); }
+// ─── 3: mortonKeys ───
+
+/** Spread the low 15 bits of v to the even bits. */
+fn spreadBits(v: u32) -> u32 {
+    var x = v & 0x7FFFu;
+    x = (x | (x << 8u)) & 0x00FF00FFu;
+    x = (x | (x << 4u)) & 0x0F0F0F0Fu;
+    x = (x | (x << 2u)) & 0x33333333u;
+    x = (x | (x << 1u)) & 0x55555555u;
+    return x;
+}
+
+/** The even bits of v, gathered into the low bits. */
+fn gatherBits(v: u32) -> u32 {
+    var x = v & 0x55555555u;
+    x = (x | (x >> 1u)) & 0x33333333u;
+    x = (x | (x >> 2u)) & 0x0F0F0F0Fu;
+    x = (x | (x >> 4u)) & 0x00FF00FFu;
+    x = (x | (x >> 8u)) & 0x0000FFFFu;
+    return x;
+}
+
+fn quantize(v: f32, lo: f32, size: f32) -> u32 {
+    let q = (v - lo) / max(size, EPSILON) * MORTON_SCALE;
+    if (!(q > 0.0)) { return 0u; }   // also NaN
+    return min(u32(q), 32767u);
+}
+
+@compute @workgroup_size(256)
+fn mortonKeys(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= arrayLength(&keys)) { return; }
+    var k = vec2(NO_KEY, i);
+    if (i < itemSlots() && itemActive(i)) {
+        let p = itemPos(i);
+        {
+            let root = rootBox();
+            let qx = quantize(p.x, root.x, root.z);
+            let qy = quantize(p.y, root.y, root.w);
+            k.x = (spreadBits(qy) << 1u) | spreadBits(qx);
+            atomicAdd(&nActive, 1u);
+        }
+    }
+    keys[i] = k;
+}
+
+// ─── 4: the bitonic sort, ascending by (code, slot) ───
+
+fn keyLess(a: vec2<u32>, b: vec2<u32>) -> bool {
+    return a.x < b.x || (a.x == b.x && a.y < b.y);
+}
+
+var<workgroup> block: array<vec2<u32>, SORT_BLOCK>;
+
+/** Compare-exchange step j of width k inside the workgroup's block (base: its first index). */
+fn blockStep(lid: u32, base: u32, k: u32, j: u32) {
+    for (var c = lid; c < SORT_BLOCK / 2u; c += 256u) {
+        let i = (c / j) * 2u * j + (c % j);
+        let l = i + j;
+        let up = ((base + i) & k) == 0u;
+        let a = block[i];
+        let b = block[l];
+        if (keyLess(b, a) == up) {
+            block[i] = b;
+            block[l] = a;
+        }
+    }
+    workgroupBarrier();
+}
+
+/** Sort each block whole: every width up to SORT_BLOCK. */
+@compute @workgroup_size(256)
+fn sortLocal(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
+    let base = wid.x * SORT_BLOCK;
+    for (var e = lid.x; e < SORT_BLOCK; e += 256u) { block[e] = keys[base + e]; }
+    workgroupBarrier();
+    for (var k = 2u; k <= SORT_BLOCK; k <<= 1u) {
+        for (var j = k >> 1u; j > 0u; j >>= 1u) { blockStep(lid.x, base, k, j); }
+    }
+    for (var e = lid.x; e < SORT_BLOCK; e += 256u) { keys[base + e] = block[e]; }
+}
+
+/** One step wider than a block: j ≥ SORT_BLOCK, one compare-exchange per thread. */
+@compute @workgroup_size(256)
+fn sortGlobal(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let c = gid.x;
+    let k = sortParams.k;
+    let j = sortParams.j;
+    if (c >= arrayLength(&keys) / 2u) { return; }
+    let i = (c / j) * 2u * j + (c % j);
+    let l = i + j;
+    let up = (i & k) == 0u;
+    let a = keys[i];
+    let b = keys[l];
+    if (keyLess(b, a) == up) {
+        keys[i] = b;
+        keys[l] = a;
     }
 }
 
-fn subdivide(nodeIdx: u32) {
-    let minX = getMinX(nodeIdx);
-    let minY = getMinY(nodeIdx);
-    let maxX = getMaxX(nodeIdx);
-    let maxY = getMaxY(nodeIdx);
-    let cx = (minX + maxX) * 0.5;
-    let cy = (minY + maxY) * 0.5;
-
-    let nw = allocNode();
-    let ne = allocNode();
-    let sw = allocNode();
-    let se = allocNode();
-
-    // OOB guard: if any child aliased root, skip subdivision
-    if (nw == 0u || ne == 0u || sw == 0u || se == 0u) { return; }
-
-    // Initialize NW
-    setMinX(nw, minX); setMinY(nw, minY); setMaxX(nw, cx); setMaxY(nw, cy);
-    setNW(nw, NONE); setNE(nw, NONE); setSW(nw, NONE); setSE(nw, NONE);
-    setParticleIndex(nw, NONE); setParticleCount(nw, 0u);
-    setParentIndex(nw, i32(nodeIdx));
-    setTotalMass(nw, 0.0); setTotalCharge(nw, 0.0);
-    setTotalMagMoment(nw, 0.0); setTotalAngMomentum(nw, 0.0);
-    setTotalMomX(nw, 0.0); setTotalMomY(nw, 0.0);
-
-    // Initialize NE
-    setMinX(ne, cx); setMinY(ne, minY); setMaxX(ne, maxX); setMaxY(ne, cy);
-    setNW(ne, NONE); setNE(ne, NONE); setSW(ne, NONE); setSE(ne, NONE);
-    setParticleIndex(ne, NONE); setParticleCount(ne, 0u);
-    setParentIndex(ne, i32(nodeIdx));
-    setTotalMass(ne, 0.0); setTotalCharge(ne, 0.0);
-    setTotalMagMoment(ne, 0.0); setTotalAngMomentum(ne, 0.0);
-    setTotalMomX(ne, 0.0); setTotalMomY(ne, 0.0);
-
-    // Initialize SW
-    setMinX(sw, minX); setMinY(sw, cy); setMaxX(sw, cx); setMaxY(sw, maxY);
-    setNW(sw, NONE); setNE(sw, NONE); setSW(sw, NONE); setSE(sw, NONE);
-    setParticleIndex(sw, NONE); setParticleCount(sw, 0u);
-    setParentIndex(sw, i32(nodeIdx));
-    setTotalMass(sw, 0.0); setTotalCharge(sw, 0.0);
-    setTotalMagMoment(sw, 0.0); setTotalAngMomentum(sw, 0.0);
-    setTotalMomX(sw, 0.0); setTotalMomY(sw, 0.0);
-
-    // Initialize SE
-    setMinX(se, cx); setMinY(se, cy); setMaxX(se, maxX); setMaxY(se, maxY);
-    setNW(se, NONE); setNE(se, NONE); setSW(se, NONE); setSE(se, NONE);
-    setParticleIndex(se, NONE); setParticleCount(se, 0u);
-    setParentIndex(se, i32(nodeIdx));
-    setTotalMass(se, 0.0); setTotalCharge(se, 0.0);
-    setTotalMagMoment(se, 0.0); setTotalAngMomentum(se, 0.0);
-    setTotalMomX(se, 0.0); setTotalMomY(se, 0.0);
-
-    setNW(nodeIdx, i32(nw));
-    setNE(nodeIdx, i32(ne));
-    setSW(nodeIdx, i32(sw));
-    setSE(nodeIdx, i32(se));
+/** The steps of width k (> SORT_BLOCK) that fall within a block: j < SORT_BLOCK. */
+@compute @workgroup_size(256)
+fn sortMerge(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
+    let base = wid.x * SORT_BLOCK;
+    let k = sortParams.k;
+    for (var e = lid.x; e < SORT_BLOCK; e += 256u) { block[e] = keys[base + e]; }
+    workgroupBarrier();
+    for (var j = SORT_BLOCK >> 1u; j > 0u; j >>= 1u) { blockStep(lid.x, base, k, j); }
+    for (var e = lid.x; e < SORT_BLOCK; e += 256u) { keys[base + e] = block[e]; }
 }
 
-@compute @workgroup_size(64)
-fn insertParticles(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let pIdx = gid.x;
-    let n = uniforms.particleCount; // totalCount
-    if (pIdx >= n) { return; }
+// ─── 5: radixBuild (Karras 2012, "Maximizing parallelism in the construction of BVHs,
+// octrees, and k-d trees") ───
 
-    let ps = particleState[pIdx];
-    let isAliveOrGhost = (ps.flags & (FLAG_ALIVE | FLAG_GHOST)) != 0u;
-    let isRetired = (ps.flags & FLAG_RETIRED) != 0u && (ps.flags & FLAG_ALIVE) == 0u;
-    if (!isAliveOrGhost && !isRetired) { return; }
+/** Common prefix length of sorted keys a and b in bits, or −1 out of range. */
+fn delta(a: i32, b: i32, n: i32) -> i32 {
+    if (b < 0 || b >= n) { return -1; }
+    let ka = keys[u32(a)].x;
+    let kb = keys[u32(b)].x;
+    if (ka == kb) { return 30 + i32(countLeadingZeros(u32(a) ^ u32(b))); }
+    return i32(countLeadingZeros(ka ^ kb)) - 2;
+}
 
-    let px = ps.posX;
-    let py = ps.posY;
-    var cur: u32 = 0u; // root is always node 0
-    var depth: u32 = 0u;
+const R_STRIDE: u32 = 6u;
 
+@compute @workgroup_size(256)
+fn radixBuild(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let n = i32(atomicLoad(&nActive));
+    let i = i32(gid.x);
+    if (i == 0 && n == 0) {
+        // No bodies: an empty root
+        for (var w = 0u; w < 12u; w++) { stF(0u, w, 0.0); }
+        for (var w = 12u; w < 17u; w++) { stI(0u, w, NONE); }
+        stI(0u, 17u, 0);
+        stI(0u, 18u, NONE);
+        return;
+    }
+    if (i >= n - 1) { return; }
+
+    // Direction of the node's range from i, and its other end j
+    let d = select(-1, 1, delta(i, i + 1, n) - delta(i, i - 1, n) > 0);
+    let dMin = delta(i, i - d, n);
+    var lMax = 2;
+    while (delta(i, i + lMax * d, n) > dMin) { lMax *= 2; }
+    var l = 0;
+    for (var t = lMax / 2; t >= 1; t /= 2) {
+        if (delta(i, i + (l + t) * d, n) > dMin) { l += t; }
+    }
+    let j = i + l * d;
+    let dNode = delta(i, j, n);
+
+    // The split: the last key sharing more than dNode bits with i
+    var s = 0;
+    var div = 2;
     loop {
-        if (depth >= MAX_DEPTH) {
-            break; // depth guard — particle accepted at max depth
-        }
-
-        // Try to CAS particleIndex from NONE to our particle index (claim empty leaf)
-        let prev = casParticleIndex(cur, NONE, i32(pIdx));
-
-        if (prev == NONE) {
-            // Successfully claimed empty leaf.
-            // Increment DIRECT PARENT's expected-visitor count in visitorFlags.
-            // Each non-empty child subtree sends exactly one thread up to its
-            // parent (the last visitor), so the expected count at any internal
-            // node = number of its populated children.
-            setParticleCount(cur, 1u);
-            let parentIdx = getParentIndex(cur);
-            if (parentIdx >= 0) {
-                atomicAdd(&visitorFlags[u32(parentIdx)], 1u);
-            }
-            break;
-        }
-
-        // Node is occupied or being subdivided
-        let prevUnlocked = prev & ~LOCK_BIT;
-
-        if (prevUnlocked >= 0 && getNW(cur) == NONE) {
-            // Occupied leaf with no children — try to lock for subdivision
-            let lockResult = casParticleIndex(cur, prev, prev | LOCK_BIT);
-            if (lockResult == prev) {
-                // We got the lock — subdivide and reinsert displaced particle
-                subdivide(cur);
-                let displacedIdx = u32(prev);
-                let displacedPs = particleState[displacedIdx];
-
-                // Transition cur from leaf to internal: reset particleCount to 0.
-                // particleCount on internal nodes is reused as the actual-visit
-                // counter during computeAggregates (separate from visitorFlags
-                // which holds the expected count).
-                setParticleCount(cur, 0u);
-
-                // Reinsert displaced particle into correct child.
-                let childForDisplaced = childFor(cur, displacedPs.posX, displacedPs.posY);
-                setParticleIndex(childForDisplaced, i32(displacedIdx));
-                setParticleCount(childForDisplaced, 1u);
-
-                // Count displaced child as a populated child of cur.
-                // cur is now an internal node; its visitorFlags tracks how many
-                // of its 4 children have particles (the expected-visitor count).
-                atomicAdd(&visitorFlags[cur], 1u);
-
-                // Mark current node as internal (clear particleIndex).
-                setParticleIndex(cur, NONE);
-
-                // Now descend into correct child for our particle
-                cur = childFor(cur, px, py);
-                depth += 1u;
-                continue;
-            }
-            // Failed to lock — someone else is subdividing. Spin/retry.
-        }
-
-        // Node has children (internal node) or is being subdivided — descend
-        if (getNW(cur) != NONE) {
-            cur = childFor(cur, px, py);
-            depth += 1u;
-        }
-        // If NW is still NONE, another thread is subdividing — spin
-        // (bounded by depth guard)
+        let t = (l + div - 1) / div;
+        if (delta(i, i + (s + t) * d, n) > dNode) { s += t; }
+        if (t <= 1) { break; }
+        div *= 2;
     }
+    let g = u32(i + s * d + min(d, 0));
+    let first = u32(min(i, j));
+    let last = u32(max(i, j));
+    let leftLeaf = first == g;
+    let rightLeaf = last == g + 1u;
+
+    let b = u32(i) * R_STRIDE;
+    radix[b] = select(g, g | LEAF_BIT, leftLeaf);
+    radix[b + 1u] = select(g + 1u, (g + 1u) | LEAF_BIT, rightLeaf);
+    radix[b + 2u] = u32(dNode);
+    radix[b + 3u] = first;
+    radix[b + 4u] = last;
+    if (i == 0) { radix[5u] = 0xFFFFFFFFu; }
+    // The internal children's parent (quadLink finds the leaves' own)
+    if (!leftLeaf) { radix[g * R_STRIDE + 5u] = u32(i); }
+    if (!rightLeaf) { radix[(g + 1u) * R_STRIDE + 5u] = u32(i); }
 }
 
-// ─── Dispatch 4: computeAggregates ───
-// Each leaf thread walks to root via parentIndex.
-// First visitor to an internal node sets flag and exits.
-// Second visitor computes aggregate from children.
+// ─── 6: quadLink ───
 
-@compute @workgroup_size(64)
-fn computeAggregates(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let pIdx = gid.x;
-    let n = uniforms.particleCount; // totalCount
-    if (pIdx >= n) { return; }
+/** The quadtree level of binary internal node i: its prefix in 2-bit steps. */
+fn levelOf(i: u32) -> u32 { return radix[i * R_STRIDE + 2u] / 2u; }
 
-    let ps = particleState[pIdx];
-    let isAliveOrGhost = (ps.flags & (FLAG_ALIVE | FLAG_GHOST)) != 0u;
-    let isRetired = (ps.flags & FLAG_RETIRED) != 0u && (ps.flags & FLAG_ALIVE) == 0u;
-    if (!isAliveOrGhost && !isRetired) { return; }
+fn leafNode(k: u32, n: u32) -> u32 { return n - 1u + k; }
 
-    // Find the leaf node containing this particle
-    // Walk from root to leaf to find our node
-    let px = ps.posX;
-    let py = ps.posY;
-    var leafNode: u32 = 0u;
-    var depth: u32 = 0u;
-    loop {
-        if (depth >= MAX_DEPTH) { break; }
-        if (getNW(leafNode) == NONE) { break; } // leaf
-        leafNode = childFor(leafNode, px, py);
-        depth += 1u;
+/** The node a binary child names: a leaf, or the internal node itself. */
+fn childNode(c: u32, n: u32) -> u32 {
+    return select(c, leafNode(c & ~LEAF_BIT, n), (c & LEAF_BIT) != 0u);
+}
+
+/** Bounds of the level-l cell (l ≤ 15) holding Morton code key. */
+fn cellBounds(key: u32, l: u32) -> vec4<f32> {
+    let root = rootBox();
+    let lv = min(l, MORTON_BITS);
+    let prefix = key >> (2u * (MORTON_BITS - lv));
+    let ix = f32(gatherBits(prefix));
+    let iy = f32(gatherBits(prefix >> 1u));
+    let cells = f32(1u << lv);
+    let w = root.z / cells;
+    let h = root.w / cells;
+    return vec4(root.x + ix * w, root.y + iy * h, root.x + (ix + 1.0) * w, root.y + (iy + 1.0) * h);
+}
+
+@compute @workgroup_size(256)
+fn quadLink(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let n = atomicLoad(&nActive);
+    let i = gid.x;
+    if (n < 2u || i >= n - 1u) { return; }
+    let lvl = levelOf(i);
+    let parent = radix[i * R_STRIDE + 5u];
+    // A binary node in its parent's cell is part of the parent's quadtree node; its own node
+    // goes unused, and weighs nothing
+    if (i != 0u && levelOf(parent) == lvl) {
+        stF(i, 6u, 0.0);
+        stI(i, 17u, 0);
+        return;
     }
 
-    // Write leaf aggregates (single particle)
-    // Retired particles use deathMass/deathAngVel from aux buffer
-    // (their mass is zeroed on merge, so ps.mass == 0)
-    var m: f32;
-    var q: f32;
-    var mm: f32;
-    var am: f32;
-    var wx: f32;
-    var wy: f32;
-
-    if ((ps.flags & FLAG_GHOST) != 0u) {
-        // Ghosts stay in the tree for seam collisions and hit tests, but weigh nothing:
-        // every tree walk takes minimum-image displacements, so the original already
-        // supplies the nearest image and a weighted ghost would count the pair twice.
-        m = 0.0; q = 0.0; mm = 0.0; am = 0.0; wx = 0.0; wy = 0.0;
-    } else if (isRetired) {
-        let aux = particleAux[pIdx];
-        m = aux.deathMass;
-        q = ps.charge;
-        let bodyRadSq = pow(m, 2.0 / 3.0);
-        let dAngW = aux.deathAngVel;
-        let dAngWSq = dAngW * dAngW;
-        let dAngVel = dAngW / sqrt(1.0 + dAngWSq * bodyRadSq);
-        mm = MAG_MOMENT_K * q * dAngVel * bodyRadSq;
-        am = INERTIA_K * m * dAngVel * bodyRadSq;
-        wx = 0.0;
-        wy = 0.0;
-    } else {
-        m = ps.mass;
-        q = ps.charge;
-        let drvd = derived_in[pIdx];
-        mm = drvd.magMoment;
-        am = drvd.angMomentum;
-        wx = ps.velWX;
-        wy = ps.velWY;
-    }
-
-    setTotalMass(leafNode, m);
-    setTotalCharge(leafNode, q);
-    setTotalMagMoment(leafNode, mm);
-    setTotalAngMomentum(leafNode, am);
-    setTotalMomX(leafNode, m * wx);
-    setTotalMomY(leafNode, m * wy);
-    if (m > 0.0) {
-        setComX(leafNode, px);
-        setComY(leafNode, py);
-    }
-
-    // Walk up to root via parent indices
-    var curNode: i32 = getParentIndex(leafNode);
-    loop {
-        if (curNode < 0) { break; } // reached root's parent (NONE)
-
-        let nodeU = u32(curNode);
-        // Two separate counters avoid races between insertion and aggregation:
-        //   visitorFlags[nodeU] = expected leaf-descendant count (set during
-        //                         insertParticles by each leaf's ancestor walk)
-        //   particleCount[nodeU] = actual visit count (atomicAdd here, starts
-        //                          at 0 — set by subdivide path in insertParticles)
-        //
-        // The last visitor (who brings actual count to expected) aggregates.
-        let expectedVisitors = atomicLoad(&visitorFlags[nodeU]);
-        let prev = atomicAddParticleCount(nodeU, 1u);
-        if (prev < expectedVisitors - 1u) {
-            // Not the last visitor — exit, let the last one aggregate
-            break;
+    // The cell's children: each binary child that starts a deeper cell or is a body, looking
+    // through a child in this same cell to its own two (whose cells are deeper still)
+    var kids: array<u32, 4>;
+    var count = 0u;
+    for (var side = 0u; side < 2u; side++) {
+        let c = radix[i * R_STRIDE + side];
+        if ((c & LEAF_BIT) == 0u && levelOf(c) == lvl) {
+            kids[count] = childNode(radix[c * R_STRIDE], n);
+            kids[count + 1u] = childNode(radix[c * R_STRIDE + 1u], n);
+            count += 2u;
+        } else {
+            kids[count] = childNode(c, n);
+            count += 1u;
         }
+    }
 
-        // Last visitor — all populated children have written their data, aggregate
-        let c0 = u32(getNW(nodeU));
-        let c1 = u32(getNE(nodeU));
-        let c2 = u32(getSW(nodeU));
-        let c3 = u32(getSE(nodeU));
+    let cb = cellBounds(keys[radix[i * R_STRIDE + 3u]].x, lvl);
+    stF(i, 0u, cb.x);
+    stF(i, 1u, cb.y);
+    stF(i, 2u, cb.z);
+    stF(i, 3u, cb.w);
+    for (var s = 0u; s < 4u; s++) {
+        stI(i, 12u + s, select(NONE, i32(kids[s]), s < count));
+        if (s < count) { stI(kids[s], 18u, i32(i)); }
+    }
+    stI(i, 16u, NONE);
+    stI(i, 17u, 0);
+    if (i == 0u) { stI(0u, 18u, NONE); }
+    atomicStore(&visitorFlags[i], count);
+}
 
-        let m0 = getTotalMass(c0);
-        let m1 = getTotalMass(c1);
-        let m2 = getTotalMass(c2);
-        let m3 = getTotalMass(c3);
-        let totalM = m0 + m1 + m2 + m3;
+// ─── 7: aggregate ───
 
-        setTotalMass(nodeU, totalM);
-        setTotalCharge(nodeU, getTotalCharge(c0) + getTotalCharge(c1) + getTotalCharge(c2) + getTotalCharge(c3));
-        setTotalMagMoment(nodeU, getTotalMagMoment(c0) + getTotalMagMoment(c1) + getTotalMagMoment(c2) + getTotalMagMoment(c3));
-        setTotalAngMomentum(nodeU, getTotalAngMomentum(c0) + getTotalAngMomentum(c1) + getTotalAngMomentum(c2) + getTotalAngMomentum(c3));
-        setTotalMomX(nodeU, getTotalMomX(c0) + getTotalMomX(c1) + getTotalMomX(c2) + getTotalMomX(c3));
-        setTotalMomY(nodeU, getTotalMomY(c0) + getTotalMomY(c1) + getTotalMomY(c2) + getTotalMomY(c3));
+@compute @workgroup_size(256)
+fn aggregate(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let n = atomicLoad(&nActive);
+    let k = gid.x;
+    if (k >= n) { return; }
+    let pIdx = keys[k].y;
+    let leaf = leafNode(k, n);
+    let p = itemPos(pIdx);
+    let d = itemLeaf(pIdx);
 
-        if (totalM > 0.0) {
-            setComX(nodeU, (getComX(c0) * m0 + getComX(c1) * m1 + getComX(c2) * m2 + getComX(c3) * m3) / totalM);
-            setComY(nodeU, (getComY(c0) * m0 + getComY(c1) * m1 + getComY(c2) * m2 + getComY(c3) * m3) / totalM);
+    stF(leaf, 0u, p.x);
+    stF(leaf, 1u, p.y);
+    stF(leaf, 2u, p.x);
+    stF(leaf, 3u, p.y);
+    stF(leaf, 4u, p.x);
+    stF(leaf, 5u, p.y);
+    stF(leaf, 6u, d.mass);
+    stF(leaf, 7u, d.charge);
+    stF(leaf, 8u, d.magMoment);
+    stF(leaf, 9u, d.angMomentum);
+    stF(leaf, 10u, d.momentum.x);
+    stF(leaf, 11u, d.momentum.y);
+    for (var w = 12u; w < 16u; w++) { stI(leaf, w, NONE); }
+    stI(leaf, 16u, i32(pIdx));
+    stI(leaf, 17u, 1);
+    if (n == 1u) { stI(leaf, 18u, NONE); }
+
+    // Up the tree: the last child to arrive sums the node, so each node is summed once,
+    // from all its children, in slot order
+    var cur = select(ldI(leaf, 18u), NONE, n == 1u);
+    loop {
+        if (cur < 0) { break; }
+        let node = u32(cur);
+        let expected = atomicLoad(&visitorFlags[node]);
+        let prev = atomicAdd(&nodes[nodeOffset(node) + 17u], 1u);
+        if (prev + 1u < expected) { break; }
+
+        var tm = 0.0;
+        var tq = 0.0;
+        var tmm = 0.0;
+        var tam = 0.0;
+        var tpx = 0.0;
+        var tpy = 0.0;
+        var cx = 0.0;
+        var cy = 0.0;
+        var bodies = 0u;
+        for (var s = 0u; s < expected; s++) {
+            let c = u32(ldI(node, 12u + s));
+            let cm = ldF(c, 6u);
+            tm += cm;
+            tq += ldF(c, 7u);
+            tmm += ldF(c, 8u);
+            tam += ldF(c, 9u);
+            tpx += ldF(c, 10u);
+            tpy += ldF(c, 11u);
+            cx += ldF(c, 4u) * cm;
+            cy += ldF(c, 5u) * cm;
+            bodies += atomicLoad(&nodes[nodeOffset(c) + 17u]);
         }
-
-        curNode = getParentIndex(nodeU);
+        stF(node, 6u, tm);
+        stF(node, 7u, tq);
+        stF(node, 8u, tmm);
+        stF(node, 9u, tam);
+        stF(node, 10u, tpx);
+        stF(node, 11u, tpy);
+        // A node of weightless items (ghosts) weighs nothing; its centre is its cell's
+        let invM = select(0.0, 1.0 / tm, tm > 0.0);
+        stF(node, 4u, select(0.5 * (ldF(node, 0u) + ldF(node, 2u)), cx * invM, tm > 0.0));
+        stF(node, 5u, select(0.5 * (ldF(node, 1u) + ldF(node, 3u)), cy * invM, tm > 0.0));
+        atomicStore(&nodes[nodeOffset(node) + 17u], bodies);
+        cur = ldI(node, 18u);
     }
 }
