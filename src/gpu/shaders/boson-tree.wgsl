@@ -316,11 +316,13 @@ fn annihilationPartner(i: u32, pi1: Pion, piN: u32) -> u32 {
 }
 
 // Annihilation pairs pions in two passes, deterministically. proposePions: each pion proposes
-// to its partner, and a pion keeps its lowest proposer (pionClaims holds PION_POOL_CAP − i,
-// so atomicMax keeps the lowest i; 0 is none). annihilatePions: a pion that nobody proposed
-// to annihilates with its partner if its own proposal was the one kept, so no pion is in two
-// pairs; a chain's leftovers pair on a later frame. (Each pion used to claim itself first, so
-// a partner's claim on it failed: threads in lockstep left nearly every pair unmatched.)
+// to its partner, and a pion keeps its lowest proposer (pionClaims[j] holds PION_POOL_CAP − i,
+// so atomicMax keeps the lowest i; 0 is none), and records its partner as j + 1 at
+// pionClaims[PION_POOL_CAP + i]. annihilatePions: a pion that nobody proposed to annihilates
+// with its partner if its own proposal was the one kept, so no pion is in two pairs and only
+// the pair's proposer touches either pion; a chain's leftovers pair on a later frame. (Each
+// pion used to claim itself first, so a partner's claim on it failed: threads in lockstep left
+// nearly every pair unmatched.)
 
 @compute @workgroup_size(64)
 fn proposePions(@builtin(global_invocation_id) gid: vec3u) {
@@ -330,7 +332,10 @@ fn proposePions(@builtin(global_invocation_id) gid: vec3u) {
     let pi1 = pions[i];
     if (!annihilable(pi1)) { return; }
     let j = annihilationPartner(i, pi1, piN);
-    if (j != NO_PARTNER) { atomicMax(&pionClaims[j], PION_POOL_CAP - i); }
+    if (j != NO_PARTNER) {
+        atomicMax(&pionClaims[j], PION_POOL_CAP - i);
+        atomicStore(&pionClaims[PION_POOL_CAP + i], j + 1u);
+    }
 }
 
 @compute @workgroup_size(64)
@@ -339,12 +344,14 @@ fn annihilatePions(@builtin(global_invocation_id) gid: vec3u) {
     let piN = atomicLoad(&piCount);
     if (i >= piN) { return; }
 
-    let pi1 = pions[i];
-    if (!annihilable(pi1)) { return; }
-    // Proposed to: the proposer annihilates this pion, or it waits
+    // Proposed to: the proposer annihilates this pion, or it waits (before reading it, which
+    // the proposer may be clearing)
     if (atomicLoad(&pionClaims[i]) != 0u) { return; }
-    let j = annihilationPartner(i, pi1, piN);
-    if (j == NO_PARTNER || atomicLoad(&pionClaims[j]) != PION_POOL_CAP - i) { return; }
+    let partner = atomicLoad(&pionClaims[PION_POOL_CAP + i]);
+    if (partner == 0u) { return; }
+    let j = partner - 1u;
+    if (atomicLoad(&pionClaims[j]) != PION_POOL_CAP - i) { return; }
+    let pi1 = pions[i];
 
     let p1x = pi1.posX;
     let p1y = pi1.posY;

@@ -289,9 +289,9 @@ export function createParticleBuffers(device, maxParticles, storeCapacity = maxP
         label: 'piCount',
     }); // atomic<u32>
 
-    // Pion annihilation claim buffer: atomic CAS to prevent double-annihilation races
+    // Pion annihilation (boson-tree.wgsl): each pion's kept proposer, then each one's partner
     const pionClaims = device.createBuffer({
-        size: 4 * PION_POOL_CAP,
+        size: 8 * PION_POOL_CAP,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         label: 'pionClaims',
     });

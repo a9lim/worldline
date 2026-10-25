@@ -1,8 +1,10 @@
 // ─── Barnes-Hut Tree Walk Force Computation ───
 // A group walk: each workgroup takes GROUP bodies consecutive in the tree's sorted (Morton)
-// order, so close together, walks the tree once for all of them against their bounding box,
-// breadth first, into an interaction list in workgroup memory, and then sums the list for
-// every body, LANES threads a body, a tile of entries at a time. A node is taken whole when it
+// order, so close together, walks the tree once for all of them against their bounding box
+// into an interaction list in workgroup memory, and then sums the list for every body, LANES
+// threads a body, a tile of entries at a time. The walk pops a batch of nodes off a stack each
+// round, the batch shrinking as the stack fills so that a reserve always holds a depth-first
+// descent: no tree, however deep or crowded, overflows it. A node is taken whole when it
 // is far from the whole box (size < θ · distance to the box), and on a periodic domain only
 // when its cell and the box lie within half a domain of each other, so every body sees all of
 // it in one image. One thread walking per body left the GPU waiting on each walk's node reads
@@ -19,10 +21,13 @@ const NONE: i32 = -1;
 const GROUP: u32 = 32u;            // bodies per workgroup
 const LANES: u32 = 8u;             // threads per body: each sums every LANES-th list entry
 const WG_SIZE: u32 = GROUP * LANES;
-const JUDGE: u32 = 128u;           // frontier nodes judged a round
+const JUDGE: u32 = 128u;           // nodes judged a round, at most
 const TILE: u32 = 32u;             // list entries loaded into workgroup memory at a time
-const FRONTIER_MAX: u32 = 1024u;   // nodes at one depth of the walk
-const LIST_MAX: u32 = 768u;        // list entries summed at a time
+const STACK_MAX: u32 = 1792u;      // nodes waiting to be judged
+// Kept free for a depth-first descent: three more waiting nodes a level, over the 31 levels
+// a compressed quadtree of 30-bit codes and sorted positions can have
+const STACK_RESERVE: u32 = 100u;
+const LIST_MAX: u32 = 1024u;       // list entries summed at a time
 
 // Node layout accessors from shared-tree-nodes.wgsl (prepended)
 
@@ -293,18 +298,16 @@ fn accumulateForce(
     }
 }
 
-// Workgroup memory, 16 KB in all: the walk's frontier, next depth and list share one pool,
-// which the lanes' partial sums reuse once the walk is done
-const FRONTIER_AT: u32 = 0u;
-const NEXT_AT: u32 = FRONTIER_MAX;
-const LIST_AT: u32 = 2u * FRONTIER_MAX;
-var<workgroup> wgPool: array<u32, 2816>;          // 2·FRONTIER_MAX + LIST_MAX
+// Workgroup memory, 16 KB in all: the walk's stack and list share one pool, which the lanes'
+// partial sums reuse once the walk is done
+const STACK_AT: u32 = 0u;
+const LIST_AT: u32 = STACK_MAX;
+var<workgroup> wgPool: array<u32, 2816>;          // STACK_MAX + LIST_MAX
 var<workgroup> wgTile: array<TileSource, TILE>;
 var<workgroup> wgScan: array<u32, WG_SIZE>;
 var<workgroup> wgLo: array<vec2<f32>, GROUP>;
 var<workgroup> wgHi: array<vec2<f32>, GROUP>;
-var<workgroup> wgFCount: u32;
-var<workgroup> wgNCount: u32;
+var<workgroup> wgTop: u32;
 var<workgroup> wgLCount: u32;
 var<workgroup> wgBodies: u32;
 
@@ -517,9 +520,8 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     let bodies = groupScan(lid, select(0u, 1u, o.valid && lane == 0u));
     if (lid == WG_SIZE - 1u) {
         wgBodies = bodies;
-        wgPool[FRONTIER_AT] = 0u;
-        wgFCount = 1u;
-        wgNCount = 0u;
+        wgPool[STACK_AT] = 0u;
+        wgTop = 1u;
         wgLCount = 0u;
     }
     if (workgroupUniformLoad(&wgBodies) == 0u) { return; }
@@ -533,85 +535,77 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     if (o.valid && lane == 0u) { localAF = allForces[o.idx]; }
     var localJerk = vec2<f32>(0.0, 0.0);
 
-    // Breadth first, a depth at a time: JUDGE threads each judge one frontier node, then prefix
-    // sums place its list entry or its children
+    // Each round the top `batch` nodes come off the stack, a thread judging each, and prefix
+    // sums place each one's list entry or push its children where the batch was
     loop {
-        let fcount = workgroupUniformLoad(&wgFCount);
-        if (fcount == 0u) { break; }
-        for (var base = 0u; base < fcount; base += JUDGE) {
-            // A full list is summed and emptied first
-            let lcount = workgroupUniformLoad(&wgLCount);
-            if (lcount + JUDGE > LIST_MAX) {
-                sumList(lid, lane, lcount, o, L, &localAF, &localJerk);
-                if (lid == 0u) { wgLCount = 0u; }
-                workgroupBarrier();
-            }
-            // A full frontier takes this round's nodes whole (never at these sizes)
-            let roomy = workgroupUniformLoad(&wgNCount) + 4u * JUDGE <= FRONTIER_MAX;
+        let top = workgroupUniformLoad(&wgTop);
+        if (top == 0u) { break; }
+        // A full list is summed and emptied first
+        let lcount = workgroupUniformLoad(&wgLCount);
+        if (lcount + JUDGE > LIST_MAX) {
+            sumList(lid, lane, lcount, o, L, &localAF, &localJerk);
+            if (lid == 0u) { wgLCount = 0u; }
+            workgroupBarrier();
+        }
+        // A batch that leaves room for four children each above the reserve; within the
+        // reserve, one node at a time, which deepens the stack by at most three a level
+        let free = STACK_MAX - min(top + STACK_RESERVE, STACK_MAX);
+        let batch = min(min(JUDGE, top), max(free / 3u, 1u));
+        let base = top - batch;
 
-            var node = 0u;
-            var take = 0u;   // 1: into the list
-            var open = 0u;   // children to visit
-            let f = base + lid;
-            if (lid < JUDGE && f < fcount) {
-                node = wgPool[FRONTIER_AT + f];
-                if (getTotalMass(node) >= EPSILON) {
-                    if (getNW(node) == NONE) {
-                        // A body; retired bodies act only with Relativity, and the walk runs without
-                        let pi = getParticleIndex(node);
-                        take = select(0u, 1u, pi >= 0 && (particleState[u32(pi)].flags & FLAG_ALIVE) != 0u);
+        var node = 0u;
+        var take = 0u;   // 1: into the list
+        var open = 0u;   // children to push
+        if (lid < batch) {
+            node = wgPool[STACK_AT + base + lid];
+            if (getTotalMass(node) >= EPSILON) {
+                if (getNW(node) == NONE) {
+                    // A body; retired bodies act only with Relativity, and the walk runs without
+                    let pi = getParticleIndex(node);
+                    take = select(0u, 1u, pi >= 0 && (particleState[u32(pi)].flags & FLAG_ALIVE) != 0u);
+                } else {
+                    let lo = vec2(getMinX(node), getMinY(node));
+                    let hi = vec2(getMaxX(node), getMaxY(node));
+                    let size = max(hi.x - lo.x, hi.y - lo.y);
+                    let com = vec2(getComX(node), getComY(node));
+                    var dc = com - boxC;
+                    if (L.periodic) { dc = fullMinImageP(boxC.x, boxC.y, com.x, com.y, L.domW, L.domH, L.topo); }
+                    let gap = max(abs(dc) - boxHalf, vec2(0.0));
+                    var far = size * size < thetaSq * dot(gap, gap);
+                    if (far && L.periodic) {
+                        let cc = 0.5 * (lo + hi);
+                        let dcc = fullMinImageP(boxC.x, boxC.y, cc.x, cc.y, L.domW, L.domH, L.topo);
+                        let reach = abs(dcc) + 0.5 * (hi - lo) + boxHalf;
+                        far = reach.x < 0.5 * L.domW && reach.y < 0.5 * L.domH;
+                    }
+                    if (far) {
+                        take = 1u;
                     } else {
-                        let lo = vec2(getMinX(node), getMinY(node));
-                        let hi = vec2(getMaxX(node), getMaxY(node));
-                        let size = max(hi.x - lo.x, hi.y - lo.y);
-                        let com = vec2(getComX(node), getComY(node));
-                        var dc = com - boxC;
-                        if (L.periodic) { dc = fullMinImageP(boxC.x, boxC.y, com.x, com.y, L.domW, L.domH, L.topo); }
-                        let gap = max(abs(dc) - boxHalf, vec2(0.0));
-                        var far = size * size < thetaSq * dot(gap, gap);
-                        if (far && L.periodic) {
-                            let cc = 0.5 * (lo + hi);
-                            let dcc = fullMinImageP(boxC.x, boxC.y, cc.x, cc.y, L.domW, L.domH, L.topo);
-                            let reach = abs(dcc) + 0.5 * (hi - lo) + boxHalf;
-                            far = reach.x < 0.5 * L.domW && reach.y < 0.5 * L.domH;
-                        }
-                        if (far || !roomy) {
-                            take = 1u;
-                        } else {
-                            open = select(0u, 1u, getNW(node) != NONE) + select(0u, 1u, getNE(node) != NONE)
-                                 + select(0u, 1u, getSW(node) != NONE) + select(0u, 1u, getSE(node) != NONE);
-                        }
+                        open = select(0u, 1u, getNW(node) != NONE) + select(0u, 1u, getNE(node) != NONE)
+                             + select(0u, 1u, getSW(node) != NONE) + select(0u, 1u, getSE(node) != NONE);
                     }
                 }
             }
-
-            let incl = groupScan(lid, take | (open << 16u));
-            let excl = incl - (take | (open << 16u));
-            let total = wgScan[WG_SIZE - 1u];
-            let lBase = wgLCount;
-            let nBase = wgNCount;
-            if (take == 1u) { wgPool[LIST_AT + lBase + (excl & 0xFFFFu)] = node; }
-            if (open > 0u) {
-                var at = nBase + (excl >> 16u);
-                for (var c = 0u; c < 4u; c++) {
-                    let child = getChild(node, c);
-                    if (child != NONE) { wgPool[NEXT_AT + at] = u32(child); at += 1u; }
-                }
-            }
-            workgroupBarrier();
-            if (lid == 0u) {
-                wgLCount = lBase + (total & 0xFFFFu);
-                wgNCount = nBase + (total >> 16u);
-            }
-            workgroupBarrier();
         }
-        // The next depth becomes the frontier
-        let ncount = workgroupUniformLoad(&wgNCount);
-        for (var i = lid; i < ncount; i += WG_SIZE) { wgPool[FRONTIER_AT + i] = wgPool[NEXT_AT + i]; }
+
+        let incl = groupScan(lid, take | (open << 16u));
+        let excl = incl - (take | (open << 16u));
+        let total = wgScan[WG_SIZE - 1u];
+        let lBase = wgLCount;
+        // Every thread has read its node before any child overwrites the batch
+        workgroupBarrier();
+        if (take == 1u) { wgPool[LIST_AT + lBase + (excl & 0xFFFFu)] = node; }
+        if (open > 0u) {
+            var at = base + (excl >> 16u);
+            for (var c = 0u; c < 4u; c++) {
+                let child = getChild(node, c);
+                if (child != NONE) { wgPool[STACK_AT + at] = u32(child); at += 1u; }
+            }
+        }
         workgroupBarrier();
         if (lid == 0u) {
-            wgFCount = ncount;
-            wgNCount = 0u;
+            wgLCount = lBase + (total & 0xFFFFu);
+            wgTop = base + (total >> 16u);
         }
         workgroupBarrier();
     }

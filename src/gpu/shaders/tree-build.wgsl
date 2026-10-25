@@ -144,7 +144,9 @@ fn computeBounds(@builtin(global_invocation_id) gid: vec3<u32>,
 }
 
 // ─── 2: initRoot ───
-// The root box, padded by 10% and a unit like the CPU tree; nActive counts from zero.
+// The root box: a square about the items' bounds, padded by 10% and a unit, so every cell is
+// square and the walks' opening tests, which read a cell's width, read its size. nActive
+// counts from zero.
 
 @compute @workgroup_size(1)
 fn initRoot() {
@@ -152,12 +154,11 @@ fn initRoot() {
     let minY = f32(atomicLoad(&bounds[1])) * FP_INV_SCALE;
     let maxX = f32(atomicLoad(&bounds[2])) * FP_INV_SCALE;
     let maxY = f32(atomicLoad(&bounds[3])) * FP_INV_SCALE;
-    let padX = (maxX - minX) * 0.1 + 1.0;
-    let padY = (maxY - minY) * 0.1 + 1.0;
-    atomicStore(&bounds[4], bitcast<i32>(minX - padX));
-    atomicStore(&bounds[5], bitcast<i32>(minY - padY));
-    atomicStore(&bounds[6], bitcast<i32>(maxX - minX + 2.0 * padX));
-    atomicStore(&bounds[7], bitcast<i32>(maxY - minY + 2.0 * padY));
+    let side = max(maxX - minX, maxY - minY) * 1.2 + 2.0;
+    atomicStore(&bounds[4], bitcast<i32>(0.5 * (minX + maxX - side)));
+    atomicStore(&bounds[5], bitcast<i32>(0.5 * (minY + maxY - side)));
+    atomicStore(&bounds[6], bitcast<i32>(side));
+    atomicStore(&bounds[7], bitcast<i32>(side));
     atomicStore(&nActive, 0u);
 }
 

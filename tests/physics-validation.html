@@ -478,6 +478,38 @@ cases.push({
     },
 });
 
+// A crowded tree: 4000 spinning bodies at one point, so the tree runs past the Morton codes
+// into sorted positions, every cell is the same, and no node is ever far: the walk must list
+// every body. Its stack keeps a reserve for a depth-first descent, so it never runs out of
+// room. A breadth-first frontier did, here, and took the overflow's nodes whole: a body met its
+// own mass in an aggregate. (Aggregates are why a looser cluster can't test this: a node's tidal
+// torque squares its total mass where pairwise sums the squares, a far-field approximation.)
+cases.push({
+    name: 'Barnes–Hut through 4000 spinning bodies at one point: the walk never runs out of room',
+    async run() {
+        const N = 4000;
+        const step = async (bh) => {
+            const gp = await makeSim({ on: ['gravityEnabled', ...(bh ? ['barnesHutEnabled'] : [])], domainW: 96, domainH: 96, boundary: 1 });
+            let s = 7;
+            const r = () => (s = (Math.imul(s, 1103515245) + 12345) >>> 0) / 4294967296;
+            for (let i = 0; i < N; i++) gp.addParticle({ x: 48, y: 48, mass: 0.5 + r(), angw: 0.5 });
+            gp.update(0.01);
+            const f = new Float32Array(await readBuffer(gp, gp.buffers.particleState, N * PARTICLE_STATE_SIZE));
+            gp.destroy();
+            return Array.from({ length: N }, (_, i) => [f[i * 9 + 2], f[i * 9 + 3], f[i * 9 + 6]]);
+        };
+        const pair = await step(false), bh = await step(true);
+        let spin = 0, moved = 0;
+        for (let i = 0; i < N; i++) {
+            moved = Math.max(moved, Math.abs(bh[i][0]), Math.abs(bh[i][1]));
+            const dPair = pair[i][2] - 0.5, dBh = bh[i][2] - 0.5;
+            spin = Math.max(spin, Math.abs(dBh / dPair - 1));
+        }
+        return { expected: 'no force (they coincide), spin change within 0.1% of pairwise', measured: `largest w ${fmt(moved, 3)}, worst spin change off by ${fmt(spin * 100, 3)}%`,
+                 metric: `${fmt(spin * 100, 3)}%`, pass: moved === 0 && spin < 1e-3 };
+    },
+});
+
 // The world lines and light-cone hints grow in tiers as slots fill (GPUPhysics._growStore):
 // growing mid-run keeps every ring's samples, so a charge's Liénard–Wiechert field carries on
 // as if nothing happened, and a reset gives the memory back. 600 neutral bodies far away add
@@ -558,7 +590,9 @@ cases.push({
 // Collision detection through the tree finds every overlapping pair once: each pair by its
 // smaller body, which looks only under nodes whose largest radius reaches its own size, so a
 // grown body's walk stays short. Bodies at rest with every force off, on a torus, a few giants
-// among them; the GPU's pair count against a direct count by minimum image.
+// among them; the GPU's pair count against a direct count by minimum image. And the tree is
+// from before the substep's drift: two unit bodies 2.015 apart closing at 0.2 overlap only
+// after it, and must still merge (Codex found the search took the tree's positions as now).
 cases.push({
     name: 'Collision detection finds every overlapping pair once (700 bodies with giants, on a torus)',
     async run() {
@@ -582,7 +616,14 @@ cases.push({
         gp.update(1 / 1024);
         const got = new Uint32Array(await readBuffer(gp, gp.buffers.collisionPairCounter, 4))[0];
         gp.destroy();
-        return { expected: `${want} pairs`, measured: `${got} pairs`, metric: `${got - want}`, pass: got === want };
+        const pair = await makeSim({ params: { collisionMode: COL_MERGE }, domainW: 64, domainH: 64, boundary: 1 });
+        pair.addParticle({ x: 30, y: 32, vx: 0.1, mass: 1 });
+        pair.addParticle({ x: 32.015, y: 32, vx: -0.1, mass: 1 });
+        pair.update(0.1);
+        const alive = (await readParticles(pair)).filter(p => p.alive && p.mass > 0).length;
+        pair.destroy();
+        return { expected: `${want} pairs; the closing pair merges`, measured: `${got} pairs; ${alive} left of the closing pair`,
+                 metric: `${got - want}`, pass: got === want && alive === 1 };
     },
 });
 

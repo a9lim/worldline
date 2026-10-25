@@ -82,9 +82,11 @@ fn detectCollisions(@builtin(global_invocation_id) gid: vec3<u32>) {
         // partners at least its size: none under a node whose largest radius is smaller, and
         // the rest within that largest radius (a horizon in black-hole mode, which also finds
         // a small body deep inside a large hole). A grown body's own walk stays short.
+        // The tree is from before this substep's drift, so its bodies have moved since by up
+        // to c·dt: the search reaches that much further (the test below takes them as they are)
         let nodeR = getMaxRadius(nodeIdx);
         if (nodeR < p1Radius) { continue; }
-        let searchR = p1Radius + nodeR;
+        let searchR = p1Radius + nodeR + uniforms.dt + 1e-3;
         if (!nodeIntersects(nodeIdx, px, py, searchR, searchR)) { continue; }
 
         let isLeaf = getNW(nodeIdx) == NONE;

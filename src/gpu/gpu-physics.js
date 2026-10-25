@@ -929,7 +929,7 @@ export default class GPUPhysics {
      * 0 off a periodic boundary.
      */
     _ghostSlots() {
-        return this.boundaryMode === BOUND_LOOP && this.aliveCount > 0 ? this.buffers.storeCapacity : 0;
+        return this.boundaryMode === BOUND_LOOP && this.aliveCount > 0 ? MAX_PARTICLES : 0;
     }
 
     /**
@@ -2748,7 +2748,7 @@ export default class GPUPhysics {
         this._maxAccel = (a === a && a < 1e20) ? a : 0;
         // The counter keeps counting past the ghost slots (ghost-gen drops the overflow), and a
         // copy sized by it would invalidate every substep's command buffer
-        this._ghostCount = this.boundaryMode === BOUND_LOOP ? Math.min(u[RB_GHOSTS / 4], this.buffers.storeCapacity) : 0;
+        this._ghostCount = this.boundaryMode === BOUND_LOOP ? Math.min(u[RB_GHOSTS / 4], MAX_PARTICLES) : 0;
         if (slot.merges) {
             const n = Math.min(u[RB_MERGES / 4], this.buffers.maxParticles);
             for (let i = 0; i < n; i++) {

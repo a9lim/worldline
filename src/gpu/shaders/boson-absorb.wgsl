@@ -135,7 +135,7 @@ fn findAbsorber(b: Boson, useTree: bool) -> u32 {
             if (j >= u.aliveCount) {
                 // A ghost copy: its original takes the boson, measured by minimum image
                 let g = j - u.aliveCount;
-                if (g >= u.maxParticles || (particles[j].flags & FLAG_GHOST) == 0u) { continue; }
+                if (g >= u.particleCount - u.aliveCount || (particles[j].flags & FLAG_GHOST) == 0u) { continue; }
                 j = ghostOriginalIdx[g];
                 if (j >= u.aliveCount) { continue; }
             }
