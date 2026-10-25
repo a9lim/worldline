@@ -132,8 +132,10 @@ export default class Caption {
         const name = key !== 'none' && opt ? opt.textContent.trim() + (getLang() === 'ja' ? '。' : '. ') : '';
 
         const n = sim.gpu ? sim.gpu.physics.aliveCount : 0;
+        // A preset of fields alone (Kibble–Zurek) is not an empty plane
+        const fieldsOn = sim.settings.higgsEnabled || sim.settings.axionEnabled;
         let text = sim.running ? '' : L.paused;
-        if (n === 0) {
+        if (n === 0 && (key === 'none' || !fieldsOn)) {
             text += L.empty(this._touch);
         } else if (sim.frames.active) {
             const st = sim.frames.state;

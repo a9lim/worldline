@@ -47,10 +47,10 @@ export const PRESETS = {
         toggles: ['relativityEnabled'],
         modes: { collision: 'pass', boundary: 'bounce' },
         speed: 16,
-        // The round trip, about 109, fits the world lines' reach (127), and the spacetime view
-        // shows all of that reach, so the tilted plate holds a whole trip as it ends
+        // The round trip, about 95, fits the world lines' reach (127), and the spacetime view
+        // shows all of that reach, so for a third of each trip the tilted plate holds a whole one
         visuals: { showClocks: true, depth: Infinity },
-        domain: [46, 32],
+        domain: [40, 32],
         spawn(sim) {
             // Home at rest by the near wall; the traveller leaves at 0.8c (γ = 5/3), turns at the
             // far wall and comes home, ageing 0.6 of home's time apart from the turn. Then it
@@ -113,8 +113,6 @@ export const PRESETS = {
             // The symmetric phase, φ ≈ 0, with a Langevin bath; the mass term crosses the
             // transition τ_Q in (the Quench time slider re-runs it)
             startQuench(sim);
-            // The simulation steps only with a body: one tracer, too light to bias the field
-            sim.addParticle(sim.domainW / 2, sim.domainH / 2, 0, 0, { mass: 1e-3, charge: 0, spin: 0 });
         },
     },
 

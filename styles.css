@@ -121,7 +121,8 @@ body.wl.margin-open { grid-template-columns: minmax(0, 1fr) var(--margin-w); }
     color: var(--text-secondary);
 }
 
-.scene-key-row svg { flex: none; overflow: visible; }
+/* The swatch itself, not the nested svg a hatch clips to */
+.scene-key-row > svg { flex: none; overflow: visible; }
 
 .touch-only { display: none; }
 @media (pointer: coarse) { .touch-only { display: inline-block; } }
