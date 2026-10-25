@@ -37,7 +37,7 @@
  *  Under expansion the domain is a × the comoving domain and the world-line clock is
  *  conformal time (cosmology.js, expansion.wgsl).
  */
-import { createParticleBuffers, createUniformBuffer, writeFrameUniforms, writeSubstepUniforms, UNIFORM_DT_OFFSET, UNIFORM_RADIUS_MAX_OFFSET, createFieldBuffers, createGravityGridBuffers, createAtomicGridBuffer, createHeatmapBuffers, createExcitationBuffers, createKugelblitzBuffers, createFrameBuffers, FRAME_PARAMS_SIZE, FRAME_STATE_SIZE, FIELD_GRID_RES, PARTICLE_STATE_SIZE, PARTICLE_AUX_SIZE, RADIATION_STATE_SIZE, PHOTON_SIZE, PION_SIZE, DERIVED_SIZE } from './gpu-buffers.js';
+import { createParticleBuffers, createUniformBuffer, writeFrameUniforms, writeSubstepUniforms, UNIFORM_DT_OFFSET, UNIFORM_RADIUS_MAX_OFFSET, createFieldBuffers, createGravityGridBuffers, createAtomicGridBuffer, createHeatmapBuffers, createExcitationBuffers, createKugelblitzBuffers, createFrameBuffers, FRAME_PARAMS_SIZE, FRAME_STATE_SIZE, FIELD_GRID_RES, PARTICLE_STATE_SIZE, PARTICLE_AUX_SIZE, RADIATION_STATE_SIZE, PHOTON_SIZE, PION_SIZE, DERIVED_SIZE, MERGE_RESULT_SIZE } from './gpu-buffers.js';
 import { fetchShader, createLensPipeline, createPhase2Pipelines, createGhostGenPipeline, createTreeBuildPipelines, createTreeForcePipeline, createCollisionPipelines, createMergePhotonPipeline, createDeadGCPipeline, createPhase4Pipelines, createFieldDepositPipelines, createFieldEvolvePipelines, createFieldForcesPipelines, createFieldParticleGravPipeline, createFieldGravityPipelines, createFFTPipelines, createFieldExcitationPipeline, createHeatmapPipelines, createExpansionPipeline, createExtremalPipeline, createBosonDispatchArgsPipeline, createUpdateColorsPipeline, createHitTestPipeline, createComputeStatsPipeline, createFrameSlicePipelines } from './gpu-pipelines.js';
 import { buildWGSLConstants, GRAVITY_BIT, COULOMB_BIT, MAGNETIC_BIT, GRAVITOMAG_BIT, ONE_PN_BIT, RELATIVITY_BIT, SPIN_ORBIT_BIT, RADIATION_BIT, BLACK_HOLE_BIT, EXPANSION_BIT, YUKAWA_BIT, HIGGS_BIT, AXION_BIT, BARNES_HUT_BIT, BOSON_INTER_BIT, FIELD_GRAV_BIT_T1, HERTZ_BOUNCE_BIT_T1, EM_PAIRWISE_BIT_T1, WL_STRIDE, WL_META_STRIDE } from './gpu-constants.js';
 import { createGPUDispatchPlan, updateGPUDispatchPlan } from './pass-graph.js';
@@ -79,6 +79,14 @@ function _inkABGR(charge, dark, hole) {
 const _qtNodeCounterData = new Uint32Array([1]);
 const _qtBoundsResetData = new Int32Array([2147483647, 2147483647, -2147483647, -2147483647]);
 const _postSubDt = new Float32Array(1); // scratch for writing total dt to uniforms post-substep
+
+// One frame's readback (_encodeFrameReadback), byte offsets: the small counters, then the merge
+// results, the kugelblitz event and the free stack
+const RB_MAX_ACCEL = 0, RB_GHOSTS = 4, RB_MERGES = 8, RB_KB = 12, RB_FREE_TOP = 16;
+const RB_MERGE_RESULTS = 32;
+const RB_KB_EVENT = RB_MERGE_RESULTS + MAX_PARTICLES * MERGE_RESULT_SIZE;
+const RB_FREE_STACK = RB_KB_EVENT + 64;
+const RB_SIZE = RB_FREE_STACK + MAX_PARTICLES * 4;
 const _bosonRootData = new Uint32Array(20);
 const _bosonRootF32 = new Float32Array(_bosonRootData.buffer);
 
@@ -205,6 +213,11 @@ export default class GPUPhysics {
         // with everything else) and the energy the expansion has taken (stats-display.js)
         this.ledger = Object.assign({}, EMPTY_LEDGER);
         this.substepsRun = 0;         // substeps since construction (the ?perf profiler reads it)
+        this._resetGen = 0;           // reset() count: a frame readback from before one is stale
+        this._frameReadback = Array.from({ length: 3 }, (_, k) => ({
+            buf: device.createBuffer({ label: 'frameReadback-' + k, size: RB_SIZE, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
+            busy: false,
+        }));
         this.heatmapRect = { left: 0, top: 0, cellW: 1, cellH: 1 };   // dispatchHeatmap's grid
         this._frameA = null;          // update(): the frame's midpoint a while the substeps run
         this._frameH = 0;             // update(): the Hubble rate the substeps see
@@ -280,7 +293,6 @@ export default class GPUPhysics {
         this._ghostGenPipeline = null;
         this._ghostGenBindGroups = null;
         this._ghostCount = 0;
-        this._ghostCountPending = false;
 
         // Phase 3: Tree build (GPU Barnes-Hut)
         this._treeBuild = null;
@@ -296,9 +308,7 @@ export default class GPUPhysics {
         this._collisionBindGroups = null;
         this._mergePhotonPipeline = null;
         this._mergePhotonBindGroup = null;
-        this._mergeResultsPending = false;
         this._pendingMergeEvents = [];
-        this._kbResultsPending = false;
         this._pendingKugelblitzEvents = [];
 
         // Phase 3: Dead particle GC
@@ -448,11 +458,9 @@ export default class GPUPhysics {
 
         // Free slot management: CPU-side mirror of GPU free stack
         this._cpuFreeSlots = [];
-        this._freeTopPending = false;
 
         // Adaptive substepping state
         this._maxAccel = 0;
-        this._maxAccelPending = false;
 
         this._ready = false;
     }
@@ -1794,63 +1802,6 @@ export default class GPUPhysics {
     }
 
     /**
-     * Non-blocking readback of merge results for post-processing by JS.
-     * Returns pending merge events for field excitations and debugging.
-     * Uses 1-frame latency like other readbacks.
-     */
-    async _readbackMergeResults() {
-        if (this._mergeResultsPending) return;
-        if (this._collisionMode !== COL_MERGE) return;
-        this._mergeResultsPending = true;
-
-        try {
-            const b = this.buffers;
-            const encoder = this.device.createCommandEncoder();
-            encoder.copyBufferToBuffer(b.mergeResultCounter, 0, b.mergeCountStaging, 0, 4);
-            this.device.queue.submit([encoder.finish()]);
-
-            await b.mergeCountStaging.mapAsync(GPUMapMode.READ);
-            const countData = new Uint32Array(b.mergeCountStaging.getMappedRange().slice(0));
-            b.mergeCountStaging.unmap();
-
-            const mergeCount = countData[0];
-            if (mergeCount > 0) {
-                const eventStride = 8;
-                const readCount = Math.min(mergeCount, this.buffers.maxParticles);
-                const readBytes = readCount * eventStride * 4;
-                const encoder2 = this.device.createCommandEncoder();
-                encoder2.copyBufferToBuffer(b.mergeResultBuffer, 0, b.mergeResultStaging, 0, readBytes);
-                this.device.queue.submit([encoder2.finish()]);
-
-                await b.mergeResultStaging.mapAsync(GPUMapMode.READ);
-                const resultData = new Float32Array(b.mergeResultStaging.getMappedRange(0, readBytes).slice(0));
-                b.mergeResultStaging.unmap();
-
-                // Parse merge events: two vec4s, {x,y,energy,type} + {px,py,pad,pad}
-                const events = [];
-                for (let i = 0; i < readCount; i++) {
-                    const base = i * eventStride;
-                    events.push({
-                        x: resultData[base],
-                        y: resultData[base + 1],
-                        energy: resultData[base + 2],
-                        type: resultData[base + 3] < 0.5 ? 'annihilation' : 'merge',
-                        px: resultData[base + 4],
-                        py: resultData[base + 5],
-                    });
-                }
-                this._pendingMergeEvents = events;
-            } else {
-                this._pendingMergeEvents = [];
-            }
-        } catch (e) {
-            // Device lost or other error — don't block future readbacks
-        } finally {
-            this._mergeResultsPending = false;
-        }
-    }
-
-    /**
      * Consume pending merge events.
      * @returns {Array} Array of { x, y, energy, px, py, type } events
      */
@@ -1858,53 +1809,6 @@ export default class GPUPhysics {
         const events = this._pendingMergeEvents;
         this._pendingMergeEvents = [];
         return events;
-    }
-
-    /**
-     * Non-blocking readback of kugelblitz collapse events.
-     * Max 1 event per substep (32 bytes = 8 × f32).
-     */
-    async _readbackKugelblitzResults() {
-        if (this._kbResultsPending) return;
-        if (!this._kbBuffers) return;
-        this._kbResultsPending = true;
-
-        try {
-            const kb = this._kbBuffers;
-
-            const encoder = this.device.createCommandEncoder();
-            encoder.copyBufferToBuffer(kb.counter, 0, kb.counterStaging, 0, 4);
-            this.device.queue.submit([encoder.finish()]);
-
-            await kb.counterStaging.mapAsync(GPUMapMode.READ);
-            const countData = new Uint32Array(kb.counterStaging.getMappedRange().slice(0));
-            kb.counterStaging.unmap();
-
-            const eventCount = countData[0];
-            if (eventCount > 0) {
-                const encoder2 = this.device.createCommandEncoder();
-                encoder2.copyBufferToBuffer(kb.events, 0, kb.staging, 0, 48);
-                this.device.queue.submit([encoder2.finish()]);
-
-                await kb.staging.mapAsync(GPUMapMode.READ);
-                const f32 = new Float32Array(kb.staging.getMappedRange(0, 48).slice(0));
-                kb.staging.unmap();
-
-                this._pendingKugelblitzEvents = [{
-                    x: f32[0], y: f32[1],
-                    px: f32[2], py: f32[3],
-                    energy: f32[4], charge: f32[5],
-                    angL: f32[6], count: f32[7],
-                    radiatedEnergy: f32[8], radiatedPx: f32[9], radiatedPy: f32[10],
-                }];
-            } else {
-                this._pendingKugelblitzEvents = [];
-            }
-        } catch (e) {
-            // Device lost or other error
-        } finally {
-            this._kbResultsPending = false;
-        }
     }
 
     consumeKugelblitzEvents() {
@@ -1985,38 +1889,6 @@ export default class GPUPhysics {
         pass4.setBindGroup(2, this._treeBuildBG2);
         pass4.dispatchWorkgroups(aggWG);
         pass4.end();
-    }
-
-    /**
-     * Non-blocking readback of ghost count for tree build sizing.
-     * Uses 1-frame latency like maxAccel readback.
-     */
-    async _readbackGhostCount() {
-        if (this._ghostCountPending) return;
-        if (this.boundaryMode !== BOUND_LOOP) {
-            this._ghostCount = 0;
-            return;
-        }
-        this._ghostCountPending = true;
-
-        try {
-            const encoder = this.device.createCommandEncoder();
-            encoder.copyBufferToBuffer(this.buffers.ghostCounter, 0,
-                this.buffers.ghostCountStaging, 0, 4);
-            this.device.queue.submit([encoder.finish()]);
-
-            await this.buffers.ghostCountStaging.mapAsync(GPUMapMode.READ);
-            const data = new Uint32Array(this.buffers.ghostCountStaging.getMappedRange().slice(0));
-            this.buffers.ghostCountStaging.unmap();
-
-            // The counter keeps counting past MAX_GHOSTS (ghost-gen drops the overflow), and a
-            // copy sized by it would invalidate every substep's command buffer
-            this._ghostCount = Math.min(data[0], MAX_PARTICLES);
-        } catch (e) {
-            // Device lost or other error — don't block future readbacks
-        } finally {
-            this._ghostCountPending = false;
-        }
     }
 
     /**
@@ -3669,28 +3541,88 @@ export default class GPUPhysics {
                 p.end();
             }
 
+            const readback = this._encodeFrameReadback(encoder);
             this.device.queue.submit([encoder.finish()]);
             this._mapHeatmapReadback();
+            if (readback) this._mapFrameReadback(readback);
         }
         this._frameA = null;
         if (half !== 1) this.setComovingDomain(this.comovingW, this.comovingH);
 
-        // Readback maxAccel for next frame (non-blocking)
-        this._readbackMaxAccel();
+    }
 
-        // Readback ghost count for next frame (non-blocking)
-        this._readbackGhostCount();
-
-        // Readback merge results for field excitations/debugging (non-blocking)
-        this._readbackMergeResults();
-
-        // Readback kugelblitz collapse events (non-blocking)
-        if (this._dispatchPlan.kugelblitzReadback) {
-            this._readbackKugelblitzResults();
+    /**
+     * The frame's readback, copied at the end of its last encoder into a free slot of a small
+     * ring (null when all are still mapped, and then the free stack stays on the GPU for the
+     * next frame): the largest acceleration and the ghost count for the next frame's sizing,
+     * the merge and kugelblitz events, and the free stack, which the same encoder then clears,
+     * so each freed slot reaches the host once.
+     */
+    _encodeFrameReadback(encoder) {
+        const slot = this._frameReadback.find((r) => !r.busy);
+        if (!slot) return null;
+        slot.busy = true;
+        slot.gen = this._resetGen;
+        slot.merges = this._collisionMode === COL_MERGE;
+        slot.kugelblitz = this._dispatchPlan.kugelblitzReadback;
+        const b = this.buffers, dst = slot.buf, max = b.maxParticles;
+        encoder.copyBufferToBuffer(b.maxAccelBuffer, 0, dst, RB_MAX_ACCEL, 4);
+        encoder.copyBufferToBuffer(b.ghostCounter, 0, dst, RB_GHOSTS, 4);
+        encoder.copyBufferToBuffer(b.mergeResultCounter, 0, dst, RB_MERGES, 4);
+        encoder.copyBufferToBuffer(b.mergeResultBuffer, 0, dst, RB_MERGE_RESULTS, max * MERGE_RESULT_SIZE);
+        if (slot.kugelblitz) {
+            encoder.copyBufferToBuffer(this._kbBuffers.counter, 0, dst, RB_KB, 4);
+            encoder.copyBufferToBuffer(this._kbBuffers.events, 0, dst, RB_KB_EVENT, 48);
         }
+        encoder.copyBufferToBuffer(b.freeTop, 0, dst, RB_FREE_TOP, 4);
+        encoder.copyBufferToBuffer(b.freeStack, 0, dst, RB_FREE_STACK, max * 4);
+        encoder.clearBuffer(b.freeTop, 0, 4);
+        return slot;
+    }
 
-        // Readback free stack for slot reuse (non-blocking)
-        this._readbackFreeStack();
+    _mapFrameReadback(slot) {
+        slot.buf.mapAsync(GPUMapMode.READ).then(() => {
+            // A reset since the copy makes its slots and events stale
+            if (slot.gen === this._resetGen) this._readFrameReadback(slot, slot.buf.getMappedRange());
+            slot.buf.unmap();
+        }).catch(() => {}).finally(() => { slot.busy = false; });
+    }
+
+    _readFrameReadback(slot, raw) {
+        const f = new Float32Array(raw), u = new Uint32Array(raw);
+        // NaN/Inf guard: a corrupted value would break adaptive substepping
+        const a = f[RB_MAX_ACCEL / 4];
+        this._maxAccel = (a === a && a < 1e20) ? a : 0;
+        // The counter keeps counting past MAX_GHOSTS (ghost-gen drops the overflow), and a
+        // copy sized by it would invalidate every substep's command buffer
+        this._ghostCount = this.boundaryMode === BOUND_LOOP ? Math.min(u[RB_GHOSTS / 4], MAX_PARTICLES) : 0;
+        if (slot.merges) {
+            const n = Math.min(u[RB_MERGES / 4], this.buffers.maxParticles);
+            for (let i = 0; i < n; i++) {
+                // Two vec4s: { x, y, energy, type } and { px, py, _, _ }
+                const k = RB_MERGE_RESULTS / 4 + i * (MERGE_RESULT_SIZE / 4);
+                this._pendingMergeEvents.push({
+                    x: f[k], y: f[k + 1], energy: f[k + 2],
+                    type: f[k + 3] < 0.5 ? 'annihilation' : 'merge',
+                    px: f[k + 4], py: f[k + 5],
+                });
+            }
+        }
+        if (slot.kugelblitz && u[RB_KB / 4] > 0) {
+            const k = RB_KB_EVENT / 4;
+            this._pendingKugelblitzEvents.push({
+                x: f[k], y: f[k + 1], px: f[k + 2], py: f[k + 3],
+                energy: f[k + 4], charge: f[k + 5], angL: f[k + 6], count: f[k + 7],
+                radiatedEnergy: f[k + 8], radiatedPx: f[k + 9], radiatedPy: f[k + 10],
+            });
+        }
+        const top = u[RB_FREE_TOP / 4];
+        if (top <= MAX_PARTICLES) {
+            for (let i = 0; i < top; i++) {
+                const slotIdx = u[RB_FREE_STACK / 4 + i];
+                if (slotIdx < MAX_PARTICLES) this._cpuFreeSlots.push(slotIdx);
+            }
+        }
     }
 
     /**
@@ -3886,82 +3818,6 @@ export default class GPUPhysics {
 
         // Pass 14: 1PN velocity-Verlet correction
         this._dispatch1PNVV(encoder);
-    }
-
-    /**
-     * Non-blocking readback of maxAccel from GPU for adaptive substepping.
-     * Uses 1-frame latency: reads previous frame's max acceleration.
-     */
-    async _readbackMaxAccel() {
-        if (this._maxAccelPending) return;
-        this._maxAccelPending = true;
-
-        try {
-            const encoder = this.device.createCommandEncoder();
-            encoder.copyBufferToBuffer(this.buffers.maxAccelBuffer, 0,
-                this.buffers.maxAccelStaging, 0, 4);
-            this.device.queue.submit([encoder.finish()]);
-
-            await this.buffers.maxAccelStaging.mapAsync(GPUMapMode.READ);
-            const data = new Float32Array(this.buffers.maxAccelStaging.getMappedRange().slice(0));
-            this.buffers.maxAccelStaging.unmap();
-
-            // NaN/Inf guard: corrupted GPU readback would break adaptive substepping
-            const val = data[0];
-            this._maxAccel = (val === val && val < 1e20) ? val : 0;
-        } catch (e) {
-            // Device lost or other error — don't block future readbacks
-        } finally {
-            this._maxAccelPending = false;
-        }
-    }
-
-    /**
-     * Non-blocking readback of free stack from GPU for slot reuse.
-     * Reads freeTop count first, then copies free indices to CPU pool.
-     * Uses 1-frame latency.
-     */
-    async _readbackFreeStack() {
-        if (this._freeTopPending) return;
-        this._freeTopPending = true;
-        const b = this.buffers;
-
-        try {
-            // Copy freeTop counter to staging
-            const enc = this.device.createCommandEncoder();
-            enc.copyBufferToBuffer(b.freeTop, 0, b.freeTopStaging, 0, 4);
-            this.device.queue.submit([enc.finish()]);
-
-            await b.freeTopStaging.mapAsync(GPUMapMode.READ);
-            const topData = new Uint32Array(b.freeTopStaging.getMappedRange().slice(0));
-            b.freeTopStaging.unmap();
-
-            const count = topData[0];
-            if (count > 0 && count <= MAX_PARTICLES) {
-                // Copy free stack indices to staging
-                const readBytes = count * 4;
-                const enc2 = this.device.createCommandEncoder();
-                enc2.copyBufferToBuffer(b.freeStack, 0, b.freeStackStaging, 0, readBytes);
-                this.device.queue.submit([enc2.finish()]);
-
-                await b.freeStackStaging.mapAsync(GPUMapMode.READ);
-                const stackData = new Uint32Array(b.freeStackStaging.getMappedRange(0, readBytes).slice(0));
-                b.freeStackStaging.unmap();
-
-                // Transfer to CPU free pool (deduplicate against existing)
-                for (let i = 0; i < stackData.length; i++) {
-                    const slot = stackData[i];
-                    if (slot < MAX_PARTICLES) this._cpuFreeSlots.push(slot);
-                }
-
-                // Reset GPU free stack (we've consumed all entries)
-                this.device.queue.writeBuffer(b.freeTop, 0, _zeroU32);
-            }
-        } catch (e) {
-            // Device lost or other error — don't block future readbacks
-        } finally {
-            this._freeTopPending = false;
-        }
     }
 
     /** Store camera state for heatmap viewport calculation */
@@ -4232,6 +4088,7 @@ export default class GPUPhysics {
     }
 
     reset() {
+        this._resetGen++;
         this.aliveCount = 0;
         this.simTime = 0;
         this.conformalTime = 0;

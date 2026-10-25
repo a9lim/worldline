@@ -123,12 +123,6 @@ export function createParticleBuffers(device, maxParticles) {
     // Ghost original index mapping (which alive particle each ghost copies)
     const ghostOriginalIdx = storageBuffer('ghostOriginalIdx', UINT_SIZE, maxParticles);
 
-    // Staging buffer for reading back ghost count
-    const ghostCountStaging = device.createBuffer({
-        label: 'ghostCountStaging',
-        size: 4,
-        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-    });
 
     // ── Quadtree buffers (Phase 3: GPU Barnes-Hut) ──
     // Each QTNode is 20 u32 words = 80 bytes
@@ -219,17 +213,7 @@ export function createParticleBuffers(device, maxParticles) {
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
-    const mergeCountStaging = device.createBuffer({
-        label: 'mergeCountStaging',
-        size: 4,
-        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-    });
 
-    const mergeResultStaging = device.createBuffer({
-        label: 'mergeResultStaging',
-        size: MERGE_RESULT_SIZE * maxParticles,
-        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-    });
 
     // Free stack for slot reuse (managed by dead GC shader)
     const freeStack = storageBuffer('freeStack', UINT_SIZE, maxParticles);
@@ -238,27 +222,12 @@ export function createParticleBuffers(device, maxParticles) {
         size: 4,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     });
-    const freeTopStaging = device.createBuffer({
-        label: 'freeTopStaging',
-        size: 4,
-        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-    });
-    const freeStackStaging = device.createBuffer({
-        label: 'freeStackStaging',
-        size: maxParticles * UINT_SIZE,
-        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-    });
 
     // ── Phase 4: 1PN velocity-Verlet correction ──
     const f1pnOld = storageBuffer('f1pnOld', FLOAT_SIZE, maxParticles * 2);
 
     // Max acceleration for adaptive substepping (single u32, atomicMax in force shader)
     const maxAccelBuffer = storageBuffer('maxAccel', UINT_SIZE, 1);
-    const maxAccelStaging = device.createBuffer({
-        label: 'maxAccelStaging',
-        size: 4,
-        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-    });
 
     // ── Boson pool buffers (Phase 4: packed photon/pion structs) ──
     // Photon pool: array<Photon, GPU_MAX_PHOTONS> (32 bytes each)
@@ -324,9 +293,9 @@ export function createParticleBuffers(device, maxParticles) {
         // Stats
         statsBuffer, statsStagingA, statsStagingB,
         // Adaptive substepping
-        maxAccelBuffer, maxAccelStaging,
+        maxAccelBuffer,
         // Ghost generation
-        ghostCounter, ghostOriginalIdx, ghostCountStaging, radiusMax,
+        ghostCounter, ghostOriginalIdx, radiusMax,
         ghostState, ghostAux, ghostDerived,
         // Quadtree (Phase 3)
         qtNodeBuffer, qtNodeCounter, qtBoundsBuffer, qtVisitorFlags,
@@ -335,9 +304,8 @@ export function createParticleBuffers(device, maxParticles) {
         collisionPairBuffer, collisionPairCounter,
         mergeResultBuffer, mergeResultCounter,
         collisionClaims,
-        mergeCountStaging, mergeResultStaging,
         // Free stack (Phase 3: dead particle GC)
-        freeStack, freeTop, freeTopStaging, freeStackStaging,
+        freeStack, freeTop,
         // 1PN VV correction (Phase 4)
         f1pnOld,
         // Photon pool (Phase 4, packed struct)
@@ -469,10 +437,6 @@ export function createKugelblitzBuffers(device) {
     return {
         events: device.createBuffer({ label: 'kugelblitz-events', size: 48, usage }),
         counter: device.createBuffer({ label: 'kugelblitz-counter', size: 4, usage }),
-        staging: device.createBuffer({ label: 'kugelblitz-staging', size: 48,
-            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
-        counterStaging: device.createBuffer({ label: 'kugelblitz-count-staging', size: 4,
-            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
     };
 }
 
@@ -504,7 +468,7 @@ export function createFrameBuffers(device, maxParticles) {
 export {
     FIELD_GRID_RES, FIELD_GRID_SQ,
     PARTICLE_STATE_SIZE, PARTICLE_AUX_SIZE, RADIATION_STATE_SIZE,
-    PHOTON_SIZE, PION_SIZE, DERIVED_SIZE, VEC2_SIZE, VEC4_SIZE, ALLFORCES_SIZE,
+    PHOTON_SIZE, PION_SIZE, DERIVED_SIZE, VEC2_SIZE, VEC4_SIZE, ALLFORCES_SIZE, MERGE_RESULT_SIZE,
 };
 
 /**
