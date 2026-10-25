@@ -80,7 +80,7 @@ Neutral pions decay into two photons (rest-frame half-life 32), and charged ones
 
 ## Black holes
 
-Black-hole mode makes every body a Kerr–Newman hole, with horizon r₊ = M + √(M² − a² − Q²) and a = J/M. Super-extremal inputs clamp to r₊ = M, an effective radius rather than a naked singularity. In Merge mode, which black-hole mode forces, a body whose centre crosses a horizon is swallowed. Holes carry no antimatter flag (no hair), and the equatorial ergosphere, at M + √(M² − Q²), is drawn dashed.
+Black-hole mode makes every body a Kerr–Newman hole, with horizon r₊ = M + √(M² − a² − Q²) and a = J/M. Super-extremal inputs clamp to r₊ = M, an effective radius rather than a naked singularity. In Merge mode, which black-hole mode forces, a body whose centre crosses a horizon is swallowed, and the hole takes the invariant mass of the pair's four-momentum. That keeps the kinetic energy the fall gained but not the potential that paid for it, so captures create energy: two bodies of mass 1 and 8, at rest 10 apart when black-hole mode is switched on, become one hole of mass 25. Holes carry no antimatter flag (no hair), and the equatorial ergosphere, at M + √(M² − Q²), is drawn dashed.
 
 Gravity near a hole is the Paczyński–Wiita pseudo-potential Φ = −M/(r − r₊), floored at a small gap. It is phenomenological: it steepens the well so that near-horizon orbits plunge, but it is not a geodesic solve, and its orbital radii are not Kerr–Newman's.
 
@@ -172,6 +172,7 @@ So the drift is not just numerical error. Only Newtonian gravity and Coulomb, su
 - field damping, grid viscosity, and the work of the quench and heat bath;
 - flat-space field energy, with no field–body gravitational term;
 - the expansion ledger's first-order, lagging terms;
+- black-hole captures, which keep the infall's kinetic energy without its potential;
 - the Barnes–Hut approximation.
 
 ## Topology, scope and technical details
