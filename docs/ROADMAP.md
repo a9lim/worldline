@@ -739,6 +739,12 @@ and benchmark harnesses (§3.1).
   sum overcounts; compare spans (first begin to last end), per phase. Other GPU work (another
   benchmark, another agent's browser) skews them: A/B by alternating two frozen trees, and
   never edit a tree that a benchmark is serving.
+- **An idle GPU clocks down:** a paused page redrawing every frame leaves the GPU mostly idle,
+  so a render's span reads several times its cost at speed and swings 2× between identical runs
+  (the scene without world lines read 0.12 and 0.58 ms). Time render work back to back instead,
+  many renders in one task and the wall time each, with and without the part measured; the
+  spacetime view's world lines cost 0.58 ms at 500 bodies tilted that way, not the 2.6 a paused
+  redraw showed. Latency-bound compute (a serial chain a thread) inflates most at low clocks.
 - **Occupancy:** a pass of one thread per body over N sources leaves the GPU idle at
   Worldline's sizes (500 bodies is eight workgroups); give each body a group of threads.
 - **A render pass per layer** costs a full-canvas load and store each on a tiled GPU.
