@@ -41,8 +41,6 @@ fn shedExtremalCharge(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (absQ <= targetAbs + EPSILON) { return; }
 
     let sign = select(-1.0, 1.0, q0 > 0.0);
-    let netGapPerLepton = max(BOSON_CHARGE - ELECTRON_MASS, BOSON_CHARGE * 0.5);
-    let shedUnits = min(u32(ceil((absQ - targetAbs) / netGapPerLepton)), 64u);
     var emitted: u32 = 0u;
     var seed = (pid * 2654435761u) ^ u.aliveCount;
     let offset = max(particleAux[pid].radius * SPAWN_OFFSET_MUL, SPAWN_OFFSET_FLOOR);
@@ -53,8 +51,14 @@ fn shedExtremalCharge(@builtin(global_invocation_id) gid: vec3<u32>) {
     let restSpeed = 0.57735;
     let restGamma = 1.0 / sqrt(1.0 - restSpeed * restSpeed);
     var pShed = vec2<f32>(0.0);
+    var qLeft = absQ;
+    var mLeft = m;
     for (var ci = 0u; ci < 64u; ci++) {
-        if (ci >= shedUnits) { break; }
+        // Stop at the first whole-quantum charge the lightened hole can hold
+        let rSqLeft = pow(mLeft, 2.0 / 3.0);
+        let aLeft = INERTIA_K * rSqLeft * abs(p.angW / sqrt(1.0 + p.angW * p.angW * rSqLeft));
+        let limLeft = floor((sqrt(max(mLeft * mLeft - aLeft * aLeft, 0.0)) + EPSILON) / BOSON_CHARGE) * BOSON_CHARGE;
+        if (qLeft <= limLeft + EPSILON) { break; }
         let li = atomicAdd(&piCount, 1u);
         if (li >= PION_POOL_CAP) {
             atomicSub(&piCount, 1u);
@@ -82,6 +86,8 @@ fn shedExtremalCharge(@builtin(global_invocation_id) gid: vec3<u32>) {
         lep._pad1 = 0u;
         pions[li] = lep;
         emitted++;
+        qLeft -= BOSON_CHARGE;
+        mLeft = max(mLeft - ELECTRON_MASS, MIN_MASS);
     }
 
     let emittedF = f32(emitted);
