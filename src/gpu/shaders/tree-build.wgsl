@@ -8,7 +8,12 @@
 // the tree depends only on the positions, never on thread timing:
 //   1. computeBounds    parallel min/max reduction (fixed-point atomics)
 //   2. initRoot         one thread: the padded root box
-//   3. mortonKeys       one thread per item slot: (Morton code, slot), or (NO_KEY, slot)
+//   3. mortonKeys       one thread per item slot: an active item's (Morton code, slot), packed
+//                       to the front in whatever order (the sort orders it)
+//      treePlan         one thread: the sort's size M, the active items' count up to a power
+//                       of two, and every later sort dispatch's size for dispatchWorkgroupsIndirect,
+//                       so the sort costs what the items need, not what the pools hold
+//      padKeys          (NO_KEY, k) from the count to M
 //   4. sortLocal        bitonic sort of each block of SORT_BLOCK keys in workgroup memory;
 //      sortGlobal       the network's steps wider than a block, one dispatch each;
 //      sortMerge        then the steps within a block, for one width k (both after k > block)
@@ -64,7 +69,8 @@ const FP_INV_SCALE: f32 = 0.0000152587890625; // 1/65536
 
 @group(0) @binding(0) var<storage, read_write> nodes: array<atomic<u32>>;
 @group(0) @binding(1) var<storage, read_write> nActive: atomic<u32>;
-// [0..3] the fixed-point reduction; [4..7] the padded root box (minX, minY, width, height)
+// [0..3] the fixed-point reduction; [4..7] the padded root box (minX, minY, width, height);
+// [8] the sort's size M
 @group(0) @binding(2) var<storage, read_write> bounds: array<atomic<i32>>;
 // Children per quadtree node: how many arrivals aggregate waits for
 @group(0) @binding(3) var<storage, read_write> visitorFlags: array<atomic<u32>>;
@@ -75,7 +81,9 @@ const FP_INV_SCALE: f32 = 0.0000152587890625; // 1/65536
 // keys: (Morton code, slot) pairs, M of them (a power of 2, at least SORT_BLOCK)
 @group(3) @binding(0) var<storage, read_write> keys: array<vec2<u32>>;
 // radix: binary internal node i at [6i, 6i + 6): left, right (LEAF_BIT on a sorted body),
-// prefix length δ, first and last sorted position, parent
+// prefix length δ, first and last sorted position, parent. treePlan's bind group puts the
+// sort's indirect dispatch records here instead: a buffer a dispatch reads its size from can't
+// be bound for writing in it, so the plan has its own
 @group(3) @binding(1) var<storage, read_write> radix: array<u32>;
 // One sort step's network width k and step j, picked by dynamic offset
 struct SortParams { k: u32, j: u32, _p0: u32, _p1: u32 };
@@ -189,19 +197,52 @@ fn quantize(v: f32, lo: f32, size: f32) -> u32 {
 @compute @workgroup_size(256)
 fn mortonKeys(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x;
-    if (i >= arrayLength(&keys)) { return; }
-    var k = vec2(NO_KEY, i);
-    if (i < itemSlots() && itemActive(i)) {
-        let p = itemPos(i);
-        {
-            let root = rootBox();
-            let qx = quantize(p.x, root.x, root.z);
-            let qy = quantize(p.y, root.y, root.w);
-            k.x = (spreadBits(qy) << 1u) | spreadBits(qx);
-            atomicAdd(&nActive, 1u);
+    if (i >= itemSlots() || !itemActive(i)) { return; }
+    let p = itemPos(i);
+    let root = rootBox();
+    let qx = quantize(p.x, root.x, root.z);
+    let qy = quantize(p.y, root.y, root.w);
+    keys[atomicAdd(&nActive, 1u)] = vec2((spreadBits(qy) << 1u) | spreadBits(qx), i);
+}
+
+fn sortSize() -> u32 { return u32(atomicLoad(&bounds[8])); }
+
+/** Indirect dispatch record r: x workgroups (treePlan's binding of radix is the records). */
+fn planRecord(r: u32, x: u32) {
+    radix[3u * r] = x;
+    radix[3u * r + 1u] = 1u;
+    radix[3u * r + 2u] = 1u;
+}
+
+/**
+ * The sort's size and its dispatches: record 0 padKeys, 1 sortLocal, then the network's steps
+ * past a block in the order the host's step table lists them (gpu-physics.js
+ * _createTreeBuildBindGroups), none for a width past M.
+ */
+@compute @workgroup_size(1)
+fn treePlan() {
+    let n = atomicLoad(&nActive);
+    var M = SORT_BLOCK;
+    while (M < n) { M <<= 1u; }
+    atomicStore(&bounds[8], i32(M));
+    planRecord(0u, M / 256u);
+    planRecord(1u, M / SORT_BLOCK);
+    var r = 2u;
+    for (var k = 2u * SORT_BLOCK; k <= arrayLength(&keys); k <<= 1u) {
+        for (var j = k >> 1u; j >= SORT_BLOCK; j >>= 1u) {
+            planRecord(r, select(0u, M / 512u, k <= M));
+            r++;
         }
+        planRecord(r, select(0u, M / SORT_BLOCK, k <= M));
+        r++;
     }
-    keys[i] = k;
+}
+
+/** The keys past the active items, to the sort's size, sort last and stay distinct. */
+@compute @workgroup_size(256)
+fn padKeys(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= atomicLoad(&nActive) && i < sortSize()) { keys[i] = vec2(NO_KEY, i); }
 }
 
 // ─── 4: the bitonic sort, ascending by (code, slot) ───
@@ -246,7 +287,7 @@ fn sortGlobal(@builtin(global_invocation_id) gid: vec3<u32>) {
     let c = gid.x;
     let k = sortParams.k;
     let j = sortParams.j;
-    if (c >= arrayLength(&keys) / 2u) { return; }
+    if (c >= sortSize() / 2u) { return; }
     let i = (c / j) * 2u * j + (c % j);
     let l = i + j;
     let up = (i & k) == 0u;

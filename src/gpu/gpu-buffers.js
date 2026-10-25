@@ -33,6 +33,17 @@ const VEC2_SIZE = 8;             // 2 × f32
 const VEC4_SIZE = 16;            // 4 × f32
 const ALLFORCES_SIZE = 160;      // 10 × vec4
 
+/** Indirect dispatch records a tree's sort can need (tree-build.wgsl treePlan), with room. */
+export const TREE_PLAN_RECORDS = 64;
+
+/** A tree sort's indirect dispatch records (tree-build.wgsl treePlan). */
+function createTreePlan(device, label) {
+    return device.createBuffer({
+        label, size: 12 * TREE_PLAN_RECORDS,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_SRC,
+    });
+}
+
 /** The capacities the world-line store grows through (GPUPhysics._growStore), the last the cap. */
 export const STORE_TIERS = [512, 1024, 2048, 4096];
 
@@ -167,10 +178,10 @@ export function createParticleBuffers(device, maxParticles, storeCapacity = maxP
     });
 
     // Bounds: the reduction (minX, minY, maxX, maxY as fixed-point i32 atomics), then the
-    // padded root box (minX, minY, width, height as f32 bits)
+    // padded root box (minX, minY, width, height as f32 bits), then the sort's size
     const qtBoundsBuffer = device.createBuffer({
         label: 'qtBounds',
-        size: 32,
+        size: 36,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     });
 
@@ -181,9 +192,11 @@ export function createParticleBuffers(device, maxParticles, storeCapacity = maxP
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     });
 
-    // The sort's (Morton code, slot) pairs and the binary radix tree, 6 u32 per internal node
+    // The sort's (Morton code, slot) pairs, the binary radix tree (6 u32 per internal node), and
+    // the sort's indirect dispatch records (tree-build.wgsl treePlan)
     const treeKeys = storageBuffer('treeKeys', 8, TREE_KEYS);
     const treeRadix = storageBuffer('treeRadix', 24, TREE_KEYS);
+    const treePlan = createTreePlan(device, 'treePlan');
 
     // Pool management: aliveCount + freeStack + freeTop
     // Packed into one buffer: [aliveCount: u32, freeTop: u32, freeStack: u32[maxParticles]]
@@ -297,7 +310,8 @@ export function createParticleBuffers(device, maxParticles, storeCapacity = maxP
     const MAX_BOSON_NODES = 2 * BOSON_TREE_KEYS;
     const bosonTreeKeys = storageBuffer('bosonTreeKeys', 8, BOSON_TREE_KEYS);
     const bosonTreeRadix = storageBuffer('bosonTreeRadix', 24, BOSON_TREE_KEYS);
-    const bosonTreeBounds = storageBuffer('bosonTreeBounds', 4, 8);
+    const bosonTreePlan = createTreePlan(device, 'bosonTreePlan');
+    const bosonTreeBounds = storageBuffer('bosonTreeBounds', 4, 9);
     const bosonTreeNodes = device.createBuffer({
         size: MAX_BOSON_NODES * QTNODE_SIZE_BYTES,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
@@ -341,7 +355,7 @@ export function createParticleBuffers(device, maxParticles, storeCapacity = maxP
         ghostState, ghostAux, ghostDerived,
         // Quadtree (Phase 3)
         qtNodeBuffer, qtNodeCounter, qtBoundsBuffer, qtVisitorFlags,
-        QT_MAX_NODES, TREE_KEYS, treeKeys, treeRadix,
+        QT_MAX_NODES, TREE_KEYS, treeKeys, treeRadix, treePlan,
         // Collision (Phase 3)
         collisionPairBuffer, collisionPairCounter,
         mergeResultBuffer, mergeResultCounter,
@@ -358,7 +372,7 @@ export function createParticleBuffers(device, maxParticles, storeCapacity = maxP
         GPU_MAX_PIONS, PION_POOL_CAP,
         // Boson tree (Phase 4)
         bosonTreeNodes, bosonTreeCounter, bosonVisitorFlags, MAX_BOSON_NODES,
-        BOSON_TREE_KEYS, bosonTreeKeys, bosonTreeRadix, bosonTreeBounds,
+        BOSON_TREE_KEYS, bosonTreeKeys, bosonTreeRadix, bosonTreeBounds, bosonTreePlan,
 
         /** Destroy all buffers */
         destroy() {

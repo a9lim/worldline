@@ -1044,20 +1044,24 @@ export default class GPUPhysics {
         this.device.queue.writeBuffer(this._treeSortParams, 0, table);
         this._treeSortSteps = steps;
 
-        const groups = (label, t, nodes, count, bounds, visits, items, keys, radix) => {
+        // Groups 0–3, and treePlan's group 3, which binds the plan's records in place of the radix
+        // nodes: a dispatch can't read its size from a buffer it may write
+        const groups = (label, t, nodes, count, bounds, visits, items, keys, radix, plan) => {
             const L = t.bindGroupLayouts;
+            const params = { buffer: this._treeSortParams, size: 16 };
             return [
                 bg(label + '_g0', L[0], [{ buffer: nodes }, { buffer: count }, { buffer: bounds }, { buffer: visits }]),
                 bg(label + '_g1', L[1], items.map((buffer) => ({ buffer }))),
                 bg(label + '_g2', L[2], [{ buffer: this.uniformBuffer }]),
-                bg(label + '_g3', L[3], [{ buffer: keys }, { buffer: radix }, { buffer: this._treeSortParams, size: 16 }]),
+                bg(label + '_g3', L[3], [{ buffer: keys }, { buffer: radix }, params]),
+                bg(label + '_g3plan', L[3], [{ buffer: keys }, { buffer: plan }, params]),
             ];
         };
         this._treeBuildBGs = groups('treeBuild', this._treeBuild, b.qtNodeBuffer, b.qtNodeCounter, b.qtBoundsBuffer,
-            b.qtVisitorFlags, [b.particleState, b.derived, b.particleAux], b.treeKeys, b.treeRadix);
+            b.qtVisitorFlags, [b.particleState, b.derived, b.particleAux], b.treeKeys, b.treeRadix, b.treePlan);
         this._bosonTreeBuildBGs = groups('bosonTreeBuild', this._bosonTreeBuild, b.bosonTreeNodes, b.bosonTreeCounter,
             b.bosonTreeBounds, b.bosonVisitorFlags, [b.photonPool, b.phCount, b.pionPool, b.piCount],
-            b.bosonTreeKeys, b.bosonTreeRadix);
+            b.bosonTreeKeys, b.bosonTreeRadix, b.bosonTreePlan);
     }
 
     /**
@@ -1564,7 +1568,8 @@ export default class GPUPhysics {
         const bosonWG = Math.ceil(totalBosons / 64);
 
         // The bosons' quadtree, from sorted keys like the bodies'
-        this._buildTree(encoder, 'bosonTree', this._bosonTreeBuild, this._bosonTreeBuildBGs, b.bosonTreeBounds, totalBosons);
+        this._buildTree(encoder, 'bosonTree', this._bosonTreeBuild, this._bosonTreeBuildBGs, b.bosonTreeBounds,
+            b.bosonTreePlan, totalBosons);
 
         // computeBosonGravity: particle <- boson gravity (only when gravity enabled)
         if (this._gravityEnabled) {
@@ -1801,7 +1806,8 @@ export default class GPUPhysics {
     _dispatchTreeBuild(encoder) {
         const totalCount = this.aliveCount + this._ghostSlots();
         if (totalCount === 0) return;
-        this._buildTree(encoder, 'tree', this._treeBuild, this._treeBuildBGs, this.buffers.qtBoundsBuffer, totalCount);
+        const b = this.buffers;
+        this._buildTree(encoder, 'tree', this._treeBuild, this._treeBuildBGs, b.qtBoundsBuffer, b.treePlan, totalCount);
     }
 
     /**
@@ -1809,15 +1815,16 @@ export default class GPUPhysics {
      * The bounds reset is an encoder op, not queue.writeBuffer, because the bodies' tree is
      * built twice in a substep with 1PN's velocity-Verlet correction under Barnes–Hut.
      */
-    _buildTree(encoder, label, t, groups, bounds, slots) {
+    _buildTree(encoder, label, t, groups, bounds, plan, slots) {
         encoder.copyBufferToBuffer(this._qtBoundsSrc, 0, bounds, 0, 16);
 
-        // Keys for every slot up to a power of two, at least a sort block
+        // The sort steps the slots could need, each sized on the GPU by the active items
         const M = Math.max(TREE_SORT_BLOCK, 2 ** Math.ceil(Math.log2(slots)));
         // Under ?perf a pass per stage, so the profiler times each (an empty pass writes no
         // timestamps on Metal, and its stale ones would stretch the frame's span)
         let pass = null;
-        const run = (pipeline, workgroups, step = 0) => {
+        // workgroups: a count, or an indirect record of the plan
+        const run = (pipeline, workgroups, step = 0, record = -1) => {
             if (PERF || !pass) {
                 if (pass) pass.end();
                 pass = encoder.beginComputePass({ label: PERF ? label + ':' + pipeline.label : label });
@@ -1826,17 +1833,19 @@ export default class GPUPhysics {
             pass.setBindGroup(0, groups[0]);
             pass.setBindGroup(1, groups[1]);
             pass.setBindGroup(2, groups[2]);
-            pass.setBindGroup(3, groups[3], [step * 256]);
-            pass.dispatchWorkgroups(workgroups);
+            pass.setBindGroup(3, groups[pipeline === t.treePlan ? 4 : 3], [step * 256]);
+            if (record >= 0) pass.dispatchWorkgroupsIndirect(plan, 12 * record);
+            else pass.dispatchWorkgroups(workgroups);
         };
         run(t.computeBounds, Math.ceil(slots / 256));
         run(t.initRoot, 1);
-        run(t.mortonKeys, M / 256);
-        run(t.sortLocal, M / TREE_SORT_BLOCK);
+        run(t.mortonKeys, Math.ceil(slots / 256));
+        run(t.treePlan, 1);
+        run(t.padKeys, 0, 0, 0);
+        run(t.sortLocal, 0, 0, 1);
         const steps = this._treeSortSteps;
         for (let i = 1; i < steps.length && steps[i][0] <= M; i++) {
-            if (steps[i][1]) run(t.sortGlobal, M / 512, i);
-            else run(t.sortMerge, M / TREE_SORT_BLOCK, i);
+            run(steps[i][1] ? t.sortGlobal : t.sortMerge, 0, i, 1 + i);
         }
         const wg = Math.ceil(slots / 256);
         run(t.radixBuild, wg);
