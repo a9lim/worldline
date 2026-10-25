@@ -67,9 +67,9 @@ export const BH_THETA_SQ = BH_THETA * BH_THETA;
 // Pool culls: photons and leptons are removed after this lab-time age.
 // Non-physical (leptons are stable, photons don't expire); they bound the pools.
 export const PHOTON_CULL_AGE = 256;
-export const GPU_MAX_PHOTONS = 4096;
-export const GPU_MAX_PIONS = 1024;
-export const GPU_MAX_LEPTONS = 1024;
+export const GPU_MAX_PHOTONS = 16384;
+export const GPU_MAX_PIONS = 4096;
+export const GPU_MAX_LEPTONS = 4096;
 export const LEPTON_CULL_AGE = 512;
 export const PION_HALF_LIFE = 32;         // pi0 rest-frame half-life (fast EM decay)
 export const CHARGED_PION_HALF_LIFE = 64; // pi+/- rest-frame half-life (slower weak decay)
