@@ -73,6 +73,8 @@ src/phase-plot.js, effective-potential.js, plot-labels.js   Particle-tab plots
 src/i18n.js, reference.js, topology.js (minImage), fft.js (Green's function), vec2.js
 src/gpu/gpu-backend.js   GPU runtime: step, events, render, stats, auto-save
 src/gpu/gpu-physics.js   GPUPhysics: buffers, dispatch, readbacks, serialize
+src/gpu/gpu-fields.js    the scalar fields' half of GPUPhysics (installed on its prototype)
+src/gpu/gpu-profiler.js  ?perf: per-pass GPU timestamps and CPU frame timings (sim.perf)
 src/gpu/gpu-pipelines.js pipelines, fetchShader, SHADER_VERSION
 src/gpu/gpu-buffers.js   allocation and packed struct sizes
 src/gpu/gpu-constants.js generated WGSL constants and toggle bits
@@ -80,6 +82,7 @@ src/gpu/gpu-renderer.js  instanced rendering, light/dark pipeline pairs
 src/gpu/pass-graph.js    per-frame dispatch plan
 src/gpu/shaders/         62 WGSL files; shared-*.wgsl are prepended includes
 tests/physics-validation.html   analytic oracles against a headless GPUPhysics
+docs/second-pass/tools/  the headless harness (tour.mjs), benchmarks, serve.mjs
 ```
 
 ## How it works
