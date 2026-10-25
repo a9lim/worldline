@@ -11,7 +11,7 @@
  */
 import { fetchShader, getSharedPrefix, createBosonRenderPipelines, createFieldRenderPipeline, createHeatmapRenderPipeline, createArrowRenderPipeline, createClockRenderPipeline, createTorqueRenderPipeline, createRingRenderPipeline, createGridRenderPipeline, createSpacetimeRenderPipelines } from './gpu-pipelines.js';
 import { buildWGSLConstants, paletteRGB } from './gpu-constants.js';
-import { HEATMAP_SENSITIVITY, HEATMAP_MAX_ALPHA, GPU_MAX_PHOTONS, GPU_MAX_PIONS, GPU_MAX_LEPTONS, WORLDLINE_LEN } from '../config.js';
+import { HEATMAP_SENSITIVITY, HEATMAP_MAX_ALPHA, GPU_MAX_PHOTONS, GPU_MAX_PIONS, GPU_MAX_LEPTONS, WORLDLINE_LEN, WORLDLINE_DT } from '../config.js';
 
 // Pre-allocated typed arrays for per-frame writeBuffer calls (eliminate GC pressure)
 const _cameraData = new ArrayBuffer(256);
@@ -371,6 +371,11 @@ export default class GPURenderer {
         _spacetimeF32[24] = st.pierce;
         _spacetimeF32[25] = Math.atanh(Math.min(Math.hypot(o.u[0], o.u[1]), 0.999));
         _spacetimeF32[26] = st.trails ? 1 : 0;
+        // Past the depth the lines have faded out (ageAlpha), so in the lab's coordinates, where
+        // a sample's height is its age, only the newest depth / WORLDLINE_DT samples are drawn;
+        // an observer's coordinates shift heights by the lag, so they draw the whole ring
+        const window = o.active ? 0 : Math.min(WORLDLINE_LEN, Math.ceil(st.depth / WORLDLINE_DT) + 2);
+        _spacetimeU32[27] = window;
         this.device.queue.writeBuffer(this._spacetimeUniformBuffer, 0, _spacetimeData);
         pass.setPipeline(sp.cone);
         pass.setBindGroup(0, sp.coneGroup);
@@ -380,11 +385,11 @@ export default class GPURenderer {
         pass.draw(4, GPU_MAX_PHOTONS + GPU_MAX_PIONS + GPU_MAX_LEPTONS);
         pass.setPipeline(sp.line);
         pass.setBindGroup(0, sp.lineGroup);
-        if (slots > 0) pass.draw(4 * (WORLDLINE_LEN + 1), slots);
+        if (slots > 0) pass.draw(4 * ((window || WORLDLINE_LEN) + 1), slots);
         if (slots > 0 && st.tilt > 0.05) {
             pass.setPipeline(sp.event);
             pass.setBindGroup(0, sp.eventGroup);
-            pass.draw(4, slots * WORLDLINE_LEN);
+            pass.draw(4, slots * (window || WORLDLINE_LEN));
         }
         if (st.pierce && slots > 0) {
             pass.setPipeline(sp.pierce);

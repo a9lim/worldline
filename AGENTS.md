@@ -382,7 +382,8 @@ and Spacetime buttons, ease between the two (`EL_SPACETIME` ≈ 30°).
   (127); the fit `k` shrinks the scene so the plane and its past share the screen.
 - **World lines** (`vs_line`): one triangle strip per slot straight from the history ring
   (4 vertices a sample, an incoming and an outgoing pair, so a seam or merge break zeroes a
-  segment without bridging it), mapped from the cover through the slot's deck and on a
+  segment without bridging it; in the lab's coordinates only the newest depth / `WORLDLINE_DT`
+  samples, `SpacetimeParams.lineWindow`, since older ones have faded out), mapped from the cover through the slot's deck and on a
   periodic domain to the image nearest the body (or the observer). The fragment draws a
   hairline and a bead every `beadStep` of the body's proper time (a power of 2 near depth/14),
   fading beads closer than ~8 px. Opacity falls with age; the selected body is the accent.
@@ -396,7 +397,9 @@ and Spacetime buttons, ease between the two (`EL_SPACETIME` ≈ 30°).
   pions and leptons on timelike lines beaded by their own clocks.
 - **Events** (`vs_event`, `fs_event`, tilted): open circles, the ground inside a hairline, where
   a world line begins during the run, ends, merges, or takes a kick (a jump in proper
-  velocity above `KICK_DW` (0.15) between samples, at its local maximum).
+  velocity above `KICK_DW` (0.15) between samples, at its local maximum). Found by scanning
+  every sample in the window each frame, the plate's costliest draw at 500 bodies (0.8 ms on an
+  M5 Max); 2.5's event log (`docs/ROADMAP.md` §4.2) would draw logged events instead.
 - **The sheet of the present.** In the lab's coordinates, world lines and light that pass
   under the tilted plane's fill are drawn at `SEEN` (0.45) (`underSheet()`).
 - **The plane and box.** `grid-render.wgsl` keeps the rulers to the domain and gives it a faint

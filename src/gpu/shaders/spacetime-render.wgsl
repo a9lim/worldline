@@ -72,7 +72,8 @@ struct SpacetimeParams {
     pierce: f32,        // slice points: 0 none, 1 rings (lab, tilted present), 2 filled (boosting)
     phi: f32,           // the observer's rapidity, atanh|u|
     trails: f32,        // 1: world lines show in the plane view too, as its trails
-    _pad: f32,
+    lineWindow: u32,    // samples drawn back from each line's newest (0: all); past the depth
+                        // the lines fade to nothing, so in the lab's coordinates only these show
 };
 
 // The slicer's observer (frame-slice.wgsl)
@@ -388,7 +389,10 @@ fn vs_line(@builtin(vertex_index) vid: u32, @builtin(instance_index) s: u32) -> 
     if (!l.ok) { return collapsed(); }
     let n = l.n;
 
-    let i = min(vid >> 2u, n - 1u);
+    // The vertex's sample, counted within the window of the newest lineWindow samples
+    let first = select(0u, n - min(n, params.lineWindow), params.lineWindow > 0u);
+    let k = first + (vid >> 2u);
+    let i = min(k, n - 1u);
     let outgoing = (vid & 2u) != 0u;
     let side = select(-1.0, 1.0, (vid & 1u) != 0u);
 
@@ -410,8 +414,8 @@ fn vs_line(@builtin(vertex_index) vid: u32, @builtin(instance_index) s: u32) -> 
 
     // This vertex belongs to the segment into i (incoming) or out of it (outgoing)
     var visible = true;
-    if (outgoing) { visible = i + 1u < n && (vid >> 2u) < n && !isBreak(cur, next); }
-    else { visible = i > 0u && (vid >> 2u) < n && !isBreak(prev, cur); }
+    if (outgoing) { visible = i + 1u < n && k < n && !isBreak(cur, next); }
+    else { visible = i > 0u && k < n && !isBreak(prev, cur); }
 
     // Ahead of the observer's present is the observer's future: faint, as not yet seen
     let ahead = o.observing && sliceG(o, cur) > 0.0;
@@ -665,11 +669,13 @@ fn vs_event(@builtin(vertex_index) vid: u32, @builtin(instance_index) idx: u32) 
     out.ring = 1.0;
     out.px = EVENT_PX;
     if (params.tilt < 0.05) { return out; }
-    let s = idx / WL_LEN;
-    let i = idx % WL_LEN;
+    // One instance per sample in each line's window (lineWindow, as vs_line draws)
+    let window = select(WL_LEN, min(params.lineWindow, WL_LEN), params.lineWindow > 0u);
+    let s = idx / window;
     let o = observer();
     let l = lineOf(s, o);
-    if (!l.ok || i >= l.count) { return out; }
+    if (!l.ok || idx % window >= min(l.count, window)) { return out; }
+    let i = l.count - min(l.count, window) + idx % window;
     let cur = pointOf(s, l, i);
     var isEvent = false;
     // A birth during the run: the first sample of a ring that never wrapped (preset and
