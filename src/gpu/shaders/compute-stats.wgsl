@@ -3,8 +3,8 @@
 //
 // Four entry points dispatched sequentially:
 //   statsKEMom:  (1,1,1) @workgroup_size(64) — Passes 1+2: KE, momentum, COM, angular momentum
-//   statsPE:     (1,1,1) @workgroup_size(1)  — Pass 3: PE, the 1PN energies, Darwin field
-//                                              energy and momentum (O(N²))
+//   statsPE:     (1,1,1) @workgroup_size(256) — Pass 3: PE, the 1PN energies, Darwin field
+//                                              energy and momentum (O(N²), rows strided)
 //   statsField:  (1,1,1) @workgroup_size(64) — Pass 4: Scalar field energy + momentum
 //   statsPFISel: (1,1,1) @workgroup_size(1)  — Passes 5+6: PFI + selected particle
 //
@@ -242,11 +242,21 @@ fn statsKEMom(@builtin(local_invocation_id) lid: vec3u) {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Entry 2: statsPE — O(N²) pairwise PE, the velocity-dependent energies, Darwin momentum
-// Dispatch (1,1,1) with workgroup_size(1).
+// Dispatch (1,1,1) with workgroup_size(256): each thread takes the rows i ≡ tid (mod 256),
+// pairs j > i, and a tree reduction sums the five accumulators.
 // ═══════════════════════════════════════════════════════════════════════════
 
-@compute @workgroup_size(1)
-fn statsPE() {
+const PE_WG: u32 = 256u;
+
+var<workgroup> sh_pe: array<f32, PE_WG>;
+var<workgroup> sh_peScale: array<f32, PE_WG>;
+var<workgroup> sh_darwinE: array<f32, PE_WG>;
+var<workgroup> sh_darwinPx: array<f32, PE_WG>;
+var<workgroup> sh_darwinPy: array<f32, PE_WG>;
+
+@compute @workgroup_size(PE_WG)
+fn statsPE(@builtin(local_invocation_id) lid: vec3u) {
+    let tid = lid.x;
     let n = params.aliveCount;
     let gravOn = toggle(GRAVITY_BIT);
     let coulOn = toggle(COULOMB_BIT);
@@ -273,7 +283,7 @@ fn statsPE() {
     var darwinPx: f32 = 0.0;
     var darwinPy: f32 = 0.0;
 
-    for (var i = 0u; i < n; i++) {
+    for (var i = tid; i < n; i += PE_WG) {
         let pi = particles[i];
         if ((pi.flags & FLAG_ALIVE) == 0u) { continue; }
         let di = derived[i];
@@ -415,11 +425,29 @@ fn statsPE() {
         }
     }
 
-    stats[10] = pe;
-    stats[26] = peScale;
-    stats[11] = darwinE;
-    stats[12] = darwinPx;
-    stats[13] = darwinPy;
+    sh_pe[tid] = pe;
+    sh_peScale[tid] = peScale;
+    sh_darwinE[tid] = darwinE;
+    sh_darwinPx[tid] = darwinPx;
+    sh_darwinPy[tid] = darwinPy;
+    workgroupBarrier();
+    for (var stride = PE_WG >> 1u; stride > 0u; stride >>= 1u) {
+        if (tid < stride) {
+            sh_pe[tid] += sh_pe[tid + stride];
+            sh_peScale[tid] += sh_peScale[tid + stride];
+            sh_darwinE[tid] += sh_darwinE[tid + stride];
+            sh_darwinPx[tid] += sh_darwinPx[tid + stride];
+            sh_darwinPy[tid] += sh_darwinPy[tid + stride];
+        }
+        workgroupBarrier();
+    }
+    if (tid == 0u) {
+        stats[10] = sh_pe[0];
+        stats[26] = sh_peScale[0];
+        stats[11] = sh_darwinE[0];
+        stats[12] = sh_darwinPx[0];
+        stats[13] = sh_darwinPy[0];
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
