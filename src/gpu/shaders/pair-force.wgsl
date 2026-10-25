@@ -15,7 +15,7 @@
 // Uses packed ParticleState + ParticleDerived + ParticleAux structs. Jerk written to AllForces.
 // Requires shared-worldline.wgsl and shared-1pn.wgsl prepended.
 
-const OBSERVERS: u32 = PAIR_FORCE_OBSERVERS;   // observers per workgroup (gpu-constants.js)
+const OBSERVERS: u32 = OBSERVERS_PER_GROUP;   // observers per workgroup (gpu-constants.js)
 const LANES: u32 = 256u / OBSERVERS;           // threads per observer
 const WG_SIZE: u32 = OBSERVERS * LANES;
 const TILE_SIZE: u32 = 64u;            // sources per tile, at most WG_SIZE

@@ -39,8 +39,11 @@ const _PAL = window._PALETTE;
  */
 export const paletteRGB = window._parseHex;
 
-/** Observers per pair-force workgroup; the pass dispatches ceil(N / this) workgroups. */
-export const PAIR_FORCE_OBSERVERS = 8;
+/**
+ * Bodies per workgroup in the O(N²) per-body sums (pair-force.wgsl, clocks.wgsl), each with
+ * 256 / this threads splitting its sources; such a pass dispatches ceil(N / this) workgroups.
+ */
+export const OBSERVERS_PER_GROUP = 8;
 
 /** Format a float for WGSL (always includes decimal point). */
 function wf(v) {
@@ -161,8 +164,8 @@ const WL_STRIDE: u32 = 12u;
 // Meta: writeIdx, count, creationTime (f32 bits), generation, deck flips (bit 0 x, bit 1 y),
 // deck offset x, y (f32 bits), _pad. The deck maps the wrapped position onto the covering plane.
 const WL_META_STRIDE: u32 = 8u;
-// Observers per pair-force workgroup (pair-force.wgsl), 256 / PAIR_FORCE_OBSERVERS threads each
-const PAIR_FORCE_OBSERVERS: u32 = ${PAIR_FORCE_OBSERVERS}u;
+// Bodies per workgroup in the O(N²) per-body sums (pair-force, clocks), 256 / this threads each
+const OBSERVERS_PER_GROUP: u32 = ${OBSERVERS_PER_GROUP}u;
 const CLOCK_PERIOD: f32 = ${wf(CLOCK_PERIOD)};
 
 // Boundary mode enums

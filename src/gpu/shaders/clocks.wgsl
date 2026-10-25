@@ -1,5 +1,7 @@
 // ─── Proper-Time Clocks ───
-// One thread per particle, after the drift. Advances, per particle (clocks[i]):
+// After the drift; OBSERVERS_PER_GROUP bodies per workgroup, each with 256 / OBSERVERS_PER_GROUP
+// threads that split the potential's O(N) sum over the sources (one thread per body left most
+// of the GPU idle). Advances, per particle (clocks[i]):
 //   x  τ, proper time
 //   y  the clock ring's phase, τ mod CLOCK_PERIOD (kept separately so f32 stays exact)
 //   z  θ, the spoke's orientation in the body's rest frame, in [−π, π)
@@ -28,42 +30,65 @@ fn cross2(a: vec2<f32>, b: vec2<f32>) -> f32 {
     return a.x * b.y - a.y * b.x;
 }
 
-@compute @workgroup_size(64)
-fn advanceClocks(@builtin(global_invocation_id) gid: vec3u) {
-    let i = gid.x;
-    if (i >= u.aliveCount) { return; }
-    let p = particles[i];
-    if ((p.flags & FLAG_ALIVE) == 0u) { return; }
+const CLOCK_LANES: u32 = 256u / OBSERVERS_PER_GROUP;
+var<workgroup> shPhi: array<f32, 256>;
+var<workgroup> shLT: array<f32, 256>;
 
-    let dt = u.dt;
-    let d = derived[i];
-    let v = vec2<f32>(d.velX, d.velY);
+@compute @workgroup_size(256)
+fn advanceClocks(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+    let lane = lid.x % CLOCK_LANES;
+    let i = wg.x * OBSERVERS_PER_GROUP + lid.x / CLOCK_LANES;
+    var p: ParticleState;
+    var ok = i < u.aliveCount;
+    if (ok) {
+        p = particles[i];
+        ok = (p.flags & FLAG_ALIVE) != 0u;
+    }
     let relOn = (u.toggles0 & RELATIVITY_BIT) != 0u;
     let gravOn = (u.toggles0 & GRAVITY_BIT) != 0u;
     let bhOn = (u.toggles0 & BLACK_HOLE_BIT) != 0u;
 
+    // Φ_N and the Lense–Thirring sum, each lane taking every CLOCK_LANES-th source
+    var phi = 0.0;
+    var lenseThirring = 0.0;
+    if (ok && relOn && gravOn) {
+        let gmOn = (u.toggles0 & GRAVITOMAG_BIT) != 0u;
+        let soft2 = select(SOFTENING_SQ, BH_SOFTENING_SQ, bhOn);
+        let periodic = u.boundaryMode == BOUND_LOOP;
+        for (var j = lane; j < u.aliveCount; j += CLOCK_LANES) {
+            if (j == i) { continue; }
+            let pj = particles[j];
+            if ((pj.flags & FLAG_ALIVE) == 0u) { continue; }
+            var dr = vec2<f32>(pj.posX - p.posX, pj.posY - p.posY);
+            if (periodic) {
+                dr = fullMinImageP(p.posX, p.posY, pj.posX, pj.posY, u.domainW, u.domainH, u.topologyMode);
+            }
+            let invR = inverseSqrt(dot(dr, dr) + soft2);
+            phi -= pj.mass * invR;
+            if (gmOn) { lenseThirring -= derived[j].angMomentum * invR * invR * invR; }
+        }
+    }
+    shPhi[lid.x] = phi;
+    shLT[lid.x] = lenseThirring;
+    workgroupBarrier();
+    for (var s = CLOCK_LANES / 2u; s > 0u; s >>= 1u) {
+        if (lane < s) {
+            shPhi[lid.x] += shPhi[lid.x + s];
+            shLT[lid.x] += shLT[lid.x + s];
+        }
+        workgroupBarrier();
+    }
+    if (!ok || lane != 0u) { return; }
+    phi = shPhi[lid.x];
+    lenseThirring = shLT[lid.x];
+
+    let dt = u.dt;
+    let d = derived[i];
+    let v = vec2<f32>(d.velX, d.velY);
+
     var lapse = 1.0;
     var precession = 0.0;
     if (relOn) {
-        var phi = 0.0;
-        var lenseThirring = 0.0;
-        if (gravOn) {
-            let gmOn = (u.toggles0 & GRAVITOMAG_BIT) != 0u;
-            let soft2 = select(SOFTENING_SQ, BH_SOFTENING_SQ, bhOn);
-            let periodic = u.boundaryMode == BOUND_LOOP;
-            for (var j = 0u; j < u.aliveCount; j++) {
-                if (j == i) { continue; }
-                let pj = particles[j];
-                if ((pj.flags & FLAG_ALIVE) == 0u) { continue; }
-                var dr = vec2<f32>(pj.posX - p.posX, pj.posY - p.posY);
-                if (periodic) {
-                    dr = fullMinImageP(p.posX, p.posY, pj.posX, pj.posY, u.domainW, u.domainH, u.topologyMode);
-                }
-                let invR = inverseSqrt(dot(dr, dr) + soft2);
-                phi -= pj.mass * invR;
-                if (gmOn) { lenseThirring -= derived[j].angMomentum * invR * invR * invR; }
-            }
-        }
         lapse = sqrt(max(0.0, 1.0 + 2.0 * phi - dot(v, v)));
 
         let m = max(p.mass, EPSILON);
