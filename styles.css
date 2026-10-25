@@ -279,6 +279,8 @@ body.wl:not(.margin-open) .margin { visibility: hidden; }
 }
 
 .tab-panel > .panel-section:first-child { border-top: 0; }
+/* base.css gives .panel-section a display, which beats the hidden attribute */
+.panel-section[hidden] { display: none; }
 
 .group-label {
     display: flex;
