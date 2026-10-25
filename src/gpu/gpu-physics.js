@@ -1398,7 +1398,7 @@ export default class GPUPhysics {
             passCompute.setBindGroup(1, bgs.onePNG1);
             passCompute.setBindGroup(2, bgs.onePNG2);
             passCompute.setBindGroup(3, bgs.onePNG3);
-            passCompute.dispatchWorkgroups(workgroups);
+            passCompute.dispatchWorkgroups(Math.ceil(this.aliveCount / OBSERVERS_PER_GROUP));
             passCompute.end();
         }
 

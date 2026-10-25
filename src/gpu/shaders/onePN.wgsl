@@ -3,7 +3,8 @@
 // at post-drift positions and velocities, then corrects the kick by half their change.
 //
 // Three entry points:
-//   compute1PN     — recomputes 1PN forces at post-drift positions (O(N²) pairwise)
+//   compute1PN     — recomputes 1PN forces at post-drift positions (O(N²) pairwise;
+//                    OBSERVERS_PER_GROUP bodies per workgroup, their sources split over lanes)
 //   compute1PNTree — recomputes 1PN forces via Barnes-Hut tree walk (O(N log N))
 //   vvKick1PN      — applies VV correction kick: w += (f1pn_new - f1pn_old) * dt/(2m)
 //
@@ -94,23 +95,33 @@ fn write1PN(i: u32, f: vec2<f32>) {
     allForces[i] = afOut;
 }
 
-@compute @workgroup_size(64)
-fn compute1PN(@builtin(global_invocation_id) gid: vec3u) {
-    let i = gid.x;
-    if (i >= u.aliveCount) { return; }
-    if ((particles[i].flags & FLAG_ALIVE) == 0u) { return; }
+const PN_LANES: u32 = 256u / OBSERVERS_PER_GROUP;
+var<workgroup> shPN: array<vec2<f32>, 256>;
+
+@compute @workgroup_size(256)
+fn compute1PN(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) lid: vec3u) {
+    let lane = lid.x % PN_LANES;
+    let i = wg.x * OBSERVERS_PER_GROUP + lid.x / PN_LANES;
+    let ok = i < u.aliveCount && (particles[min(i, u.aliveCount - 1u)].flags & FLAG_ALIVE) != 0u;
 
     let relOn = (u.toggles0 & RELATIVITY_BIT) != 0u;
     let periodic = u.boundaryMode == BOUND_LOOP;
-    let o = pnObserver(i, relOn);
-
     var f = vec2(0.0);
-    for (var j = 0u; j < u.aliveCount; j++) {
-        if (j == i) { continue; }
-        if ((particles[j].flags & FLAG_ALIVE) == 0u) { continue; }
-        f += pnFromParticle(o, j, relOn, periodic);
+    if (ok) {
+        let o = pnObserver(i, relOn);
+        for (var j = lane; j < u.aliveCount; j += PN_LANES) {
+            if (j == i) { continue; }
+            if ((particles[j].flags & FLAG_ALIVE) == 0u) { continue; }
+            f += pnFromParticle(o, j, relOn, periodic);
+        }
     }
-    write1PN(i, f);
+    shPN[lid.x] = f;
+    workgroupBarrier();
+    for (var s = PN_LANES / 2u; s > 0u; s >>= 1u) {
+        if (lane < s) { shPN[lid.x] += shPN[lid.x + s]; }
+        workgroupBarrier();
+    }
+    if (ok && lane == 0u) { write1PN(i, shPN[lid.x]); }
 }
 
 @compute @workgroup_size(64)
