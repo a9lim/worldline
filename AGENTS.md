@@ -41,6 +41,20 @@ open decisions, and the model's known boundaries. This file describes the code a
   or run `bench-ab.mjs OUT URL_A URL_B`, which alternates the two trees scenario by scenario.
   A frozen tree to compare against is a worktree at the base commit, served with its own
   port (any static server that maps `/worldline/` to it and `/shared/` to the root's).
+- Plate screenshots and colour-vision checks (`docs/second-pass/tools/`; same Playwright and
+  server as `tour.mjs`): `WL_URL=http://localhost:8000/worldline/ node shots.mjs OUT` freezes each
+  preset into a reproducible frame (frames driven by hand, every readback and lazy pipeline
+  awaited, `Math.random` seeded, one page per theme) and screenshots preset × light/dark × fitted,
+  2× and 0.5× in about 30 s; `node shots-diff.mjs A B OUT` counts the pixels whose channel moved by
+  more than 8/255, with their bounding box, a diff image, a contact sheet and the physics hashes;
+  `node cvd.mjs IMG OUT` renders protan/deutan/tritan/gray sheets (Machado et al. 2009 at severity
+  1.0 in linear RGB) and scores every pair of inks by CIEDE2000. Measured noise on an unchanged
+  tree: five presets reproduce byte for byte, kibbleZurek's Higgs field does not (`higgsHalfKick`
+  reads neighbours' φ̇ while writing it in place) and moves up to 0.13% of its pixels by at most
+  5/255, and one 9 px swatch in the key moved by 5, so changes under 8/255 are noise. A theme is
+  taken by opening the page in it, not by flipping it: `GPUPhysics._isDarkTheme` is read in the
+  constructor and `setToggles()` but not on a theme change, so a flipped page keeps the old theme's
+  body inks until a setting changes.
 
 ## Layout
 
