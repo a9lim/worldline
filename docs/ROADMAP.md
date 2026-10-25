@@ -31,6 +31,7 @@ serial sessions, and parallel lanes (subagents, worktrees) fit a whole version i
 | 2026-10-24 | **Delete the hidden Disintegration toggle** (tidal breakup and Roche transfer); black-hole extremal censorship stays. |
 | 2026-10-24 | **Canvas labels arrive with the instrument** (§6.1), attached to picked events and named bodies. |
 | 2026-10-24 | **Six curated presets** (2.0); the eighteen cut presets stay cut. A preset earns its place as an experiment (§6.5), not as coverage. |
+| 2026-10-24 | **The caps stay** at 512 bodies, 4096 photons and 2048 pions and leptons through 2.5, by 2.1's measurements (§3.1): 2.1's savings go to the archive and the second universe. |
 | 2026-10-23 | **WebGPU only.** No CPU physics or Canvas renderer. |
 | 2026-10-23 | **The planar convention:** the scene is a symmetry plane of a 3+1 world, with named reductions (§1.2). |
 | 2026-10-23 | **Lengths: two knobs.** ℓ, the sheet thickness (physical, comoving under expansion) for fields and grid gravity; ε, numerical softening, for particle forces only. ℓ = 8 for grid gravity. |
@@ -51,12 +52,10 @@ no labels in 2.0, the 1+1 Minkowski panel) are in git history.
 1. **3.0's model** (§7): which of honest gravity, fixed-metric curved spacetime and a
    resolution overhaul, in what order. Decided at a decision point after 2.5, informed by
    what the instrument measures.
-2. **Body and pool caps** after 2.1's measurements (§3.1). The archive's memory scales with
-   them (§4.1), so settle them before 2.5.
-3. **Where Seen lives:** a third choice beside Lab and Observer (recommended), or an inset.
-4. **Where measurements live:** a Measure tab in the margin (recommended) beside the plate's
+2. **Where Seen lives:** a third choice beside Lab and Observer (recommended), or an inset.
+3. **Where measurements live:** a Measure tab in the margin (recommended) beside the plate's
    own marks, or on the canvas only.
-5. **Replay fidelity:** checkpoints are exact on one machine, recipes reproduce
+4. **Replay fidelity:** checkpoints are exact on one machine, recipes reproduce
    statistically; deterministic GPU stepping is not pursued (recommended) (§4.4).
 
 ## 1. Thesis
@@ -126,93 +125,120 @@ use the 3D quadrupole and TT projection.
 |---|---|---|---|
 | **1.5** | WebGPU only; relativity you can see; frames; cosmology; lensing | done 2026-10-23 (§10) | — |
 | **2.0** | The visual overhaul | done 2026-10-24 (§10) | — |
-| **2.1** | Performance and receipts | measure and optimize; settle the caps; fix what 2.0 shipped; honest `about.md` (§3) | M |
+| **2.1** | Performance and receipts | done 2026-10-24 (§3, §10) | — |
 | **2.5** | The laboratory | the record (§4), then sight (§5), then the instrument (§6) | L |
 | **3.0** | The model | a decision point, then honest gravity and/or curved spacetime (§7) | L |
 
 Branches outside the spine are admitted only by an experiment they uniquely enable (§8).
 
-## 3. 2.1: performance and receipts
+## 3. 2.1: performance and receipts (done)
 
-### 3.1 Performance
+Done 2026-10-24 in one session, with parallel lanes in worktrees. Landed work is in §10; this
+section keeps what measurement found, so 2.5 starts from numbers.
 
-Measure first, then cut, then settle the caps, because 2.5's archive and second universes
-(§6.6) spend whatever 2.1 frees.
+### 3.1 What measurement found
 
-**Measure.**
-- GPU timestamp queries per pass where the device offers `timestamp-query`, behind `?perf`;
-  CPU frame time and readback latency beside them.
-- A benchmark mode for the headless harness (`docs/second-pass/tools/tour.mjs`): p50 and
-  p95 frame time per scenario, written as JSON so runs can be compared. Scenarios: each
-  preset in plane and tilted; Fields on; a boosted observer; 512 bodies with gravity,
-  Coulomb and Relativity on a torus; full boson pools in black-hole mode; both fields with
-  grid gravity.
-- Targets: 60 fps on every preset on an M-series base GPU, physics within half the frame;
-  time to first frame.
+The tools: `?perf` (`src/gpu/gpu-profiler.js`) puts a timestamp on every pass and counts
+submits, writes and maps per frame; `docs/second-pass/tools/` runs the standing scenarios
+(`bench-scenarios.json`, each preset in plane and tilted, Fields, an observer, 500 bodies three
+ways, full boson pools, both fields with grid gravity) and compares two trees scenario by
+scenario (`bench-ab.mjs`). Numbers are on an M5 Max (40-core GPU) at 1440 × 900 × 2; a base
+M-series GPU is taken as about 4× slower, which sets the presets' budgets (§11 has the
+caveats about reading these numbers).
 
-**Suspects** (to confirm or clear by measurement):
-- **Ghosts.** The ghost margin is half the domain (`ghost-gen.wgsl`, `max(W, H)·θ`), so on
-  any looped domain every body makes up to three ghosts and the tree holds about 4N
-  entries, rebuilt every substep and again for the 1PN correction. Ghosts weigh nothing in
-  the aggregates since 2026-10-23, so they need only reach as far as collisions and hit
-  tests (in black-hole mode, the largest horizon). The ghost buffer holds 512, so above
-  about 170 bodies seam collisions are lost (the count is clamped since `346564b`, which
-  stopped the overflow from freezing the physics).
-- **Substep submits.** Each substep is its own command buffer so its uniforms land
-  (up to 32 a frame). A per-substep uniform ring read by dynamic offset, the FFT's pattern,
-  would put a frame's substeps in one encoder.
-- **Liénard–Wiechert** runs pairwise, each pair a binary search over up to 1024 samples
-  plus Newton steps. The retarded sample moves little between substeps, so a per-pair
-  bracket hint should cut the search to a step or two.
-- **Readbacks:** fourteen `mapAsync` channels; one consolidated staging copy per frame.
-- **The field atlas** traces field lines and contours on the CPU from a readback every
-  frame, and the lens map recomputes 512² every rendered frame even when nothing moved.
-- **World-line strips** draw 4 vertices for each of 1024 samples per slot at every zoom;
-  level of detail by on-screen length.
-- **Startup:** serial shader fetches, synchronous pipeline creation, and `init()`
-  refetching the shared WGSL. Fetch in parallel and use the async pipeline constructors.
+GPU time per frame, p50 in ms, before (`b27b83c`, the profiler's first commit, which already
+had `statsPE`'s fix) → after (`319d2a9`), each pair run alternately on frozen trees. The span
+runs from a frame's first pass to its last, gaps between submits included, so in the small
+presets it barely moves while the work inside it halves; the step span is the physics alone.
 
-**Caps** (open decision 2): raise the 512-body cap and the pools if the measured budget
-allows; the archive's memory (§4.1) and the second universe (§6.6) are the consumers.
+| Scenario | Span | Step |
+|---|---|---|
+| Cyclotron | 1.12 → 1.03 | 0.94 → 0.49 |
+| Bremsstrahlung | 1.50 → 0.99 | 1.13 → 0.47 |
+| Kibble–Zurek, tilted | 1.69 → 1.45 | 0.38 → 0.19 |
+| Cyclotron with Fields | 1.50 → 1.44 | 0.89 → 0.55 |
+| Microlensing | 1.46 → 1.53 | 0.26 → 0.37 |
+| 500 bodies, Gravity, Coulomb, Relativity | 8.58 → 2.99 | 7.15 → 1.01 |
+| The same with Barnes–Hut, tilted | 6.30 → 3.44 | 5.14 → 1.06 |
+| Full boson pools (200 black holes) | 6.80 → 2.56 | 6.30 → 1.53 |
+| Both fields with grid gravity | 3.79 → 3.79 | 2.13 → 2.36 |
 
-**Structure that blocks consumers** (not line count for its own sake):
-- `GPUPhysics.update()` returns when no body is alive, so field-only scenes need a tracer
-  body (Kibble–Zurek's). Step fields without bodies.
-- Photon passes are gated on the switches that can emit photons, so photons left after
-  Radiation and Merge are turned off freeze. Gate on existence.
-- Presets configure physics through DOM events and keep private mutable state (the beam).
-  Presets become data plus a tick, applied through `sim.settings`.
-- The audit's extractions: the field subsystem and a readback-channel helper out of
-  `gpu-physics.js`; the raw `dt` write at byte 0 of `SimUniforms` as a named offset; the
-  dead `_submitArrowDraw`; the heatmap viewport math duplicated in `gpu-backend.js`.
-- The `torque-render.wgsl` header table swaps the contact and superradiance offsets.
+Every preset is within its budget in plane and tilted. The tilted 500-body row includes the
+depth window (`f9c975d`). The smallest scenes pay about 0.1 ms more physics than before, for
+the wider per-body workgroups and the boson passes that now always run; the black-hole row's
+scene degenerates into one runaway hole (§7.3), so read it as full pools, not as 200 holes.
+Before `statsPE`'s fix, the 500-body scenes also spiked by 27 ms every eighth frame.
 
-**Checks for 2.5's UI work:** screenshot diffs across both themes and three zooms, built on
-the tour harness, and a colour-vision simulation pass. GPU timestamp budgets join them.
+Found, and fixed:
+- **One render pass per layer.** On a tiled GPU each pass loads and stores the canvas, so the
+  grid, bodies, overlays, bosons, clocks, rings, arrows and torques as separate passes cost
+  more than their draws: a pass with no photons in it took 1.3 ms. One pass for the scene.
+- **Occupancy.** The O(N²) per-body passes (Liénard–Wiechert pair forces, the clocks' Φ_N,
+  the 1PN recompute) ran one thread per body, so 500 bodies used eight workgroups and the GPU
+  sat idle while each thread waited on its own world-line reads. Eight bodies a workgroup,
+  32 threads each, cut `pairForce` about tenfold; a per-pair bracket hint (`wlHints`) for the
+  light-cone search saves another 10–20% and leaves forces bit-identical.
+- **`statsPE`** summed every pair on one GPU thread: 27 ms every eighth frame at 500 bodies.
+  A 256-thread workgroup.
+- **Ghosts** reached half the domain, so a torus gave nearly every body three ghosts and the
+  512-slot buffer overflowed at about 170 bodies. They now reach a contact (a body's radius
+  plus the largest radius, reduced on the GPU each substep): about 140 for 500 bodies.
+- **Boson absorption** was one GPU thread looping over the pool, serial against races on the
+  bodies: 2.6 ms with full pools and 65 ms with 4096 photons spread over 200 bodies. Each
+  boson now claims its absorber in parallel and each body gathers its claims (0.16 and 0.28
+  ms). It also works across a torus seam: the tree path wrote absorbed four-momentum into
+  ghost slots, so the energy vanished, and the pairwise path never looked across.
+
+Cleared by measurement:
+- **Substep submits.** With ε = 8, accelerations almost never ask for more than one substep:
+  every scenario ran one. A per-substep uniform ring would buy nothing; not done.
+- **Startup** is about 270 ms to the first frame, the device most of it.
+- **The lens map** costs about 0.1 ms; **the field atlas** under 1 ms of CPU at p95.
+- **World-line strips** are cheap; at 500 bodies tilted the plate's cost is the event scan,
+  which tests every sample of every line each frame for a birth, death, merge or kick. Drawing
+  only the samples within the shown depth took it from 1.2 to 0.8 ms (the whole render span
+  is 2.4 ms there); 2.5's event log (§4.2) lets the plate draw logged events instead.
+
+Carried forward:
+- **Merge events** reach the fields from a frame's last substep only, since each substep's
+  collision pass resets the counter; frames almost never take two. The event log (§4.2) is
+  the place to keep them all.
+- **The tree build** (`insertParticles`, a lock-free CAS insertion that spins while another
+  thread subdivides) costs about 0.65 ms at 500 bodies, as much as the pair forces now. A
+  Morton-ordered build (an LBVH) would be faster and deterministic, which open decision 4
+  (replay) cares about.
+- **Fixed costs in small scenes** (`quadrupoleApply`, `updateColors` near 0.15 ms with eight
+  bodies) may be clock ramp-up rather than work; unexamined.
+
+**Caps** (an open decision until now, decided by these numbers, §0): 512 bodies and the
+pools stay through 2.5. Relativistic pairwise cost grows as N², so 1024 bodies would spend
+about four times `pairForce`, and 2.1's savings are better spent on the archive (§4.1) and
+the second universe (§6.6), which runs a whole second `GPUPhysics`.
 
 ### 3.2 Receipts
 
-Fix what 2.0 shipped, so each figure says only what it shows.
-
-- **An extremal-censorship oracle:** an over-charged hole sheds to its Kerr–Newman limit in
-  whole quanta, with the leptons' momentum as its recoil. The Disintegration deletion
-  (§10) was checked by a one-off script, because the oracle page has no such case.
-- **The twin fits its history.** Its round trip is about 370 time units against a 128-unit
-  ring, so the plate never shows departure and reunion together. Shrink the domain to about
-  [56, 32] (a round trip near 107) until the archive (§4.1) lets it grow again.
-- **Captions follow the state, not the clock.** Tilting the twin replaces its clock
-  comparison with generic spacetime prose; keep the comparison. Kibble–Zurek's caption
-  says "frozen into domains" at t = 8, before any domain is drawn; read the ordered fraction
-  from the scene snapshot instead. Give Kibble–Zurek a quench-time knob and its measured
-  wall density now; the side-by-side comparison comes with §6.6.
-- **`about.md` says what the model is.** It calls the expanding universe's
-  Liénard–Wiechert field exact (it is regularized and interpolated), says the energy drift
-  measures numerical error (several terms aren't booked, §7.3), and leaves out that
-  superradiance runs at α² instead of α⁸. Its Black Hole Physics, Charge Quantization,
-  Forces and Educational Use sections are still in the pre-2.0 register, and the force
-  count lists expansion as a force. Name the surrogates: planar photons, the gravitational
-  signal-delay toy and what it does to binaries, Paczyński–Wiita.
-- **New social-card art** for the 2.0 plate.
+- **Extremal censorship** has its oracles, and they found a bug: the shedding count was
+  fixed up front, so a hole between quanta shed one too many and a light hole overshot past
+  zero, after which the clamp created charge. It now stops at the first whole-quantum charge
+  the lightened hole can hold.
+- **The twin** runs on [40, 32] with the full 127 of history shown, so the tilted plate holds a
+  whole round trip (about 95) for a third of each one.
+- **Captions follow the state.** The twin keeps its clock comparison when tilted;
+  Kibble–Zurek's caption waits for the measured ordered fraction, and the preset has a
+  quench-time slider and its wall density as formed and now.
+- **`about.md`** says what the model is; the info tips stopped calling the field exact.
+- **A new social card** for the 2.0 plate.
+- **Presets are data,** applied with saves through one path (`applyConfig`), and fields and
+  bosons step without bodies, so Kibble–Zurek has no tracer and photons outlive their source's
+  switch.
+- **Checks for 2.5's UI work:** `shots.mjs` freezes every preset into a byte-reproducible
+  frame in both themes at three zooms, `shots-diff.mjs` compares two runs, and `cvd.mjs`
+  simulates protan, deutan, tritan and grayscale vision (Machado et al. 2009). The inks are
+  near-isoluminant, so grayscale collapses every pair (ΔE₀₀ < 3.3) and pattern carries
+  everything; indigo, prussian and violet, and ochre, sienna and sap, collapse for protans and
+  deutans, verdigris and viridian for tritans; and in dark deuteranopia the accent falls to
+  ΔE₀₀ 2.1–2.9 against sap and sienna, so the instrument's red marks (§6.1) need their pattern
+  too. Reproducibility found a race in the field kicks (§10).
 
 ## 4. 2.5, first: the record
 
@@ -281,7 +307,7 @@ sight's emission events, and the instrument's picking.
 - **Embedding:** `?embed` shows the plate and its caption with play and pause only, so a
   blog post can carry a live plate through the markdown `iframe` directive, which emits
   same-origin frames that the root's `frame-ancestors 'self'` already allows.
-- **Fidelity** (open decision 5): atomics in the tree build, collisions and boson appends
+- **Fidelity** (open decision 4): atomics in the tree build, collisions and boson appends
   make GPU stepping nondeterministic. A checkpoint continues exactly from where it was
   taken on the same machine until the first race matters; a recipe reproduces the
   experiment, not the bits.
@@ -320,7 +346,7 @@ signal delay, so point sources are cheap.
   A fast body shows where it was, at its seen speed.
 - **The sky:** around the eye, a ring shows each source's apparent direction, its Doppler
   hue and its flux: the one-dimensional image an eye in the plane records.
-- Seen is a third choice beside Lab and Observer (open decision 3).
+- Seen is a third choice beside Lab and Observer (open decision 2).
 - **Model boundary:** sight uses straight null lines. With gravity on, light bends
   (lensing, boson deflection) and sight doesn't; label it.
 
@@ -398,7 +424,7 @@ For a picked pair:
 - **light cones of any picked event,** future and past, not only the selected body's now;
 - **simultaneity through an event:** the observer's surface, and radar's (§5.2).
 
-A Measure tab holds the picked events and their numbers (open decision 4). The Stats and
+A Measure tab holds the picked events and their numbers (open decision 3). The Stats and
 Particle tabs are redrawn around time and frames: sparklines, and the phase and potential
 plots in the plate's language (2.0's pillar 6).
 
@@ -568,7 +594,21 @@ The input to the decision. Each is current behaviour, documented so experiments 
   rescaled.
 - **Spin:** the spoke ignores the 1PN two-body precession's companion term
   `(2 + 3m₂/2m₁)·L_N/r³`; the lapse ignores field gravity Φ_F.
-- **Pools:** photon and lepton culls are lab-time ages and destroy bound structures.
+- **Pools:** photon and lepton culls are lab-time ages and destroy bound structures. Bosons
+  never wrap: they drift past a periodic domain's edge until culled, are drawn there, and
+  lens off plain displacements (absorption folds them back and takes minimum images, §10).
+- **Black-hole captures make energy.** A capture makes the hole the invariant mass of the
+  pair's four-momentum, keeping the kinetic energy the infall gained without the
+  Paczyński–Wiita potential that paid for it, and the PW force isn't the gradient of the
+  potential the stats book: it ignores `BH_SOFTENING`, stays non-zero on the capped plateau
+  inside the gap, and uses each source's own horizon where the stats average the pair's, so
+  unequal holes don't pull equally and oppositely. Measured 2026-10-24: bodies of mass 1 and
+  8 at rest 10 apart, Black hole switched on (the 1 is at once inside the 8's horizon of 16),
+  become one hole of mass 25.1; 200 small charged holes run away by t ≈ 30 into one of
+  2×10⁵ to 4×10¹⁴. Booking the pair potential at capture is no fix (Codex): it gives
+  negative energy for an engulfed body (−7.5 here) and still misses the third-body and spin
+  terms. Make the force and potential agree and resolve engulfed bodies before forces first;
+  honest gravity (§7.1) replaces PW anyway.
 - **1PN** is far outside its range inside the softening length; a Yukawa well of coupling 14
   drives bodies past 3c with Relativity off.
 - **Frames on Klein and RP²** draw the primary image only.
@@ -672,6 +712,12 @@ and benchmark harnesses (§3.1).
 | 2.0 | 2026-10-24 | `433c8bf` … `8533f6d` | The visual overhaul: the tilted spacetime plate, Lab and Observer coordinates, the glyph grammar, photons as wave packets, the field atlas, the key, scale bar and captions, six presets. Sketches and the screenshot harness in `docs/second-pass/`. |
 | 2.1 | 2026-10-24 | `346564b` | The ghost count clamped to its buffer, so a torus with more than about 170 bodies keeps stepping. |
 | 2.1 | 2026-10-24 | `ef6576f` | Disintegration deleted (tidal breakup, Roche transfer, `inheritClockFrom`); extremal censorship runs alone as `extremal.wgsl`. |
+| 2.1 | 2026-10-24 | `fba2e83`, `b27b83c`, `25cc1ca`, `4f2eb49` | Measurement: `?perf` timestamps on every pass; the benchmark harness, scenarios, budgets and A/B runner; plate screenshots, diffs and colour-vision checks. |
+| 2.1 | 2026-10-24 | `a114ccd`, `480070a`, `ac96055`…`17fa383`, `9e0f2af`, `1692267`, `a43fee0` | Speed: one render pass for the scene; `statsPE` on a workgroup; 32 threads per body in the pair forces, clocks and 1PN, with light-cone hints; parallel boson absorption. |
+| 2.1 | 2026-10-24 | `f950c0a`, `0847f38`, `98b193b`, `dd97a1c` | Structure: radius-sized ghosts and searches; fields and bosons stepping without bodies and on their pools' counts; one readback per frame (fixes from Codex's review in `dd97a1c`). |
+| 2.1 | 2026-10-24 | `937fadc`, `479e3a4`, `4a420a5` | Presets as data through `applyConfig` with saves; the fields in `gpu-fields.js`; the heatmap's own rectangle, the named `dt` offset, the torque table. |
+| 2.1 | 2026-10-24 | `cc857bc`, `f0e9fa5`, `319d2a9`, `93515a3` | Bugs the checks found: extremal shedding overshot and created charge; absorption lost energy at the seam; the field kicks raced on φ̇; a flipped theme kept the old inks; hidden panel sections showed. |
+| 2.1 | 2026-10-24 | `74a8fad`, `ec3fae2`, `9eb8c48`, `08da183`, `432713c` | Receipts: the twin fits its history; Kibble–Zurek measures its walls, with a quench-time knob and no tracer; captions follow the state; `about.md`; the social card. |
 
 ## 11. Gotchas
 
@@ -689,5 +735,16 @@ and benchmark harnesses (§3.1).
   softening at once.
 - The naming rule (`AGENTS.md`) covers every new string: "signal delay", "light-cone" or
   "Liénard–Wiechert" for finite-speed propagation.
+- **Reading GPU timings on Metal:** passes overlap, so per-pass times include waits and their
+  sum overcounts; compare spans (first begin to last end), per phase. Other GPU work (another
+  benchmark, another agent's browser) skews them: A/B by alternating two frozen trees, and
+  never edit a tree that a benchmark is serving.
+- **Occupancy:** a pass of one thread per body over N sources leaves the GPU idle at
+  Worldline's sizes (500 bodies is eight workgroups); give each body a group of threads.
+- **A render pass per layer** costs a full-canvas load and store each on a tiled GPU.
+- **A count read back a frame late** sizes nothing safely: copy the capacity and trim, or keep
+  the count on the GPU.
+- **Data races hide as noise:** a kernel that reads neighbours of the buffer it writes passes
+  every oracle and fails only a bitwise reproducibility check (`shots.mjs`).
 - Citations here are names and years. Verify each against its primary source (DOI resolver,
   Crossref) before it reaches `about.md` or JSON-LD.
