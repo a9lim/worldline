@@ -141,8 +141,6 @@ export default class GPURenderer {
 
         // Arrow rendering (force/velocity vectors)
         this._arrowPipeline = null;
-        this._arrowBindGroup = null;
-        this._arrowUniformBuffer = null;
         // Per-type pre-allocated uniform buffers + bind groups for batched draws (G4).
         // 13 slots: types 0-10 (force components), 11 (total force), 12 (velocity).
         this._arrowUniformBufs = null;   // Array<GPUBuffer>[13]
@@ -158,8 +156,6 @@ export default class GPURenderer {
         // Torque arc rendering (arc + arrowhead pipelines)
         this._torqueArcPipeline = null;
         this._torqueArrowPipeline = null;
-        this._torqueBindGroup = null;
-        this._torqueUniformBuffer = null;
         // Per-type pre-allocated uniform buffers + bind groups for batched draws (G4).
         // 5 slots: types 0-3 (torque components), 11 (total torque).
         this._torqueUniformBufs = null;  // Array<GPUBuffer>[5]
@@ -168,8 +164,6 @@ export default class GPURenderer {
 
         // Ring rendering (the ergosphere's dashed hairline, the selection's solid one)
         this._ringPipeline = null;
-        this._ringBindGroup = null;
-        this._ringUniformBuffer = null;
         // Per-type ring uniform buffers + bind groups for batched draws (G4).
         // Slot 0: ergosphere, slot 1: selection.
         this._ringUniformBufs = null;   // Array<GPUBuffer>[2]
@@ -349,7 +343,7 @@ export default class GPURenderer {
      * plane view's trails. `st` carries the view's state: { tilt, depth, beadStep, tNow,
      * selected, topology, scaleA, obs, pierce, trails } (src/spacetime.js observer()).
      */
-    _renderSpacetime(textureView, st, slots) {
+    _renderSpacetime(pass, st, slots) {
         const sp = this._spacetime;
         if (!sp || !st || (st.tilt < 0.002 && !st.pierce && !st.trails)) return;
         const o = st.obs;
@@ -378,11 +372,6 @@ export default class GPURenderer {
         _spacetimeF32[25] = Math.atanh(Math.min(Math.hypot(o.u[0], o.u[1]), 0.999));
         _spacetimeF32[26] = st.trails ? 1 : 0;
         this.device.queue.writeBuffer(this._spacetimeUniformBuffer, 0, _spacetimeData);
-        const enc = this.device.createCommandEncoder({ label: 'spacetime-render' });
-        const pass = enc.beginRenderPass({
-            label: 'spacetime render',
-            colorAttachments: [{ view: textureView, loadOp: 'load', storeOp: 'store' }],
-        });
         pass.setPipeline(sp.cone);
         pass.setBindGroup(0, sp.coneGroup);
         pass.draw(2 * (72 + 1), 6);   // four rings, two generators
@@ -402,8 +391,6 @@ export default class GPURenderer {
             pass.setBindGroup(0, sp.pierceGroup);
             pass.draw(4, slots);
         }
-        pass.end();
-        this.device.queue.submit([enc.finish()]);
     }
 
     /** The background grid pass (grid-render.wgsl). */
@@ -551,11 +538,6 @@ export default class GPURenderer {
                 }));
             }
 
-            // Keep legacy single buffer/bindGroup for backward compat with _submitArrowDraw
-            // (now unused in the batched path, but retained in case of fallback).
-            this._arrowUniformBuffer = this._arrowUniformBufs[0];
-            this._arrowBindGroup = this._arrowBindGroups[0];
-
             this._arrowReady = true;
         } catch (e) {
             console.warn('[physsim] Arrow render pipeline creation failed, skipping:', e.message);
@@ -635,10 +617,6 @@ export default class GPURenderer {
                 }));
             }
 
-            // Keep legacy single buffer/bindGroup for backward compat.
-            this._torqueUniformBuffer = this._torqueUniformBufs[0];
-            this._torqueBindGroup = this._torqueBindGroups[0];
-
             this._torqueReady = true;
         } catch (e) {
             console.warn('[physsim] Torque render pipeline creation failed, skipping:', e.message);
@@ -690,10 +668,6 @@ export default class GPURenderer {
                     { binding: 4, resource: { buffer: buf } },
                 ],
             }));
-
-            // Keep legacy single buffer/bindGroup for backward compat.
-            this._ringUniformBuffer = this._ringUniformBufs[0];
-            this._ringBindGroup = this._ringBindGroups[0];
 
             this._ringReady = true;
         } catch (e) {
@@ -751,32 +725,41 @@ export default class GPURenderer {
     }
 
     /**
-     * Render one frame.
-     * The caller (main.js loop) only calls render() when _dirty is true,
-     * so no additional dirty-flag gating is needed here.
+     * Render one frame, every layer in order into one render pass: on a tiled GPU each pass
+     * loads and stores the whole canvas, so a pass per layer cost more than the layers did.
+     * Uniforms are written per layer (and per slot for the rings, arrows and torques) before
+     * the submit, so each draw reads its own. The caller (main.js loop) only calls render()
+     * when _dirty is true.
      */
     render(aliveCount, opts = {}) {
         if (!this._ready) return;
 
         const textureView = this.context.getCurrentTexture().createView();
+        const encoder = this.device.createCommandEncoder({ label: 'render' });
+        const pass = encoder.beginRenderPass({
+            label: 'scene',
+            colorAttachments: [{
+                view: textureView,
+                clearValue: this.isLight ? _bgLight : _bgDark,
+                loadOp: 'clear',
+                storeOp: 'store',
+            }],
+        });
+        try { this._drawLayers(pass, aliveCount, opts); }
+        finally {
+            pass.end();
+            this.device.queue.submit([encoder.finish()]);
+        }
+    }
 
+    _drawLayers(pass, aliveCount, opts) {
         // In a non-lab frame the body passes draw the view buffers, frameImages per slot;
         // vectors, torques and the field and potential overlays are lab-only
         const frame = this.frameOn && !!this._bindGroupView;
         const instances = frame ? aliveCount * this.frameImages : aliveCount;
 
-        // Pass 0: clear, then the background grid (lab rulers and the domain edge)
+        // The background grid (lab rulers and the domain edge) on the cleared canvas
         {
-            const gridEncoder = this.device.createCommandEncoder({ label: 'grid-render' });
-            const gridPass = gridEncoder.beginRenderPass({
-                label: 'grid render',
-                colorAttachments: [{
-                    view: textureView,
-                    clearValue: this.isLight ? _bgLight : _bgDark,
-                    loadOp: 'clear',
-                    storeOp: 'store',
-                }],
-            });
             if (this._gridReady) {
                 _gridF32[0] = this._domainW || 1;
                 _gridF32[1] = this._domainH || 1;
@@ -799,133 +782,61 @@ export default class GPURenderer {
                 _gridF32[16] = opts.boxOrigin ? opts.boxOrigin[0] : 0;
                 _gridF32[17] = opts.boxOrigin ? opts.boxOrigin[1] : 0;
                 this.device.queue.writeBuffer(this._gridUniformBuffer, 0, _gridData);
-                gridPass.setPipeline(this._gridPipeline);
-                gridPass.setBindGroup(0, this._gridBindGroup);
-                gridPass.draw(3);
+                pass.setPipeline(this._gridPipeline);
+                pass.setBindGroup(0, this._gridBindGroup);
+                pass.draw(3);
             }
-            gridPass.end();
-            this.device.queue.submit([gridEncoder.finish()]);
         }
 
-        // Pass 0a: the world lines, hanging below the present plane, or seen from straight
-        // above as the plane view's trails
-        if (opts.spacetime) this._renderSpacetime(textureView, opts.spacetime, aliveCount);
+        // The world lines, hanging below the present plane, or seen from straight above as
+        // the plane view's trails
+        if (opts.spacetime) this._renderSpacetime(pass, opts.spacetime, aliveCount);
         // While the lab boosts toward an observer, the bodies show where their world lines
         // pierce its present (vs_pierce) instead of where they are now
         const boosting = opts.spacetime && opts.spacetime.pierce === 2;
 
-        // Pass 1: Particle rendering
-        const encoder = this.device.createCommandEncoder({ label: 'render' });
-        const pass = encoder.beginRenderPass({
-            label: 'particle render',
-            colorAttachments: [{ view: textureView, loadOp: 'load', storeOp: 'store' }],
-        });
-
+        // The bodies
         if (aliveCount > 0 && !boosting) {
             pass.setPipeline(this._pipeline);
             pass.setBindGroup(0, frame ? this._bindGroupView : this._bindGroup);
             // 6 vertices per quad (2 triangles), one instance per body (and image)
             pass.draw(6, instances);
         }
-        pass.end();
 
-        // Submit particle render immediately (isolate from optional passes that may fail)
-        this.device.queue.submit([encoder.finish()]);
-
-        // Pass 2: Field + heatmap overlays (load to preserve particles)
-        const hasOverlays = !frame && ((this._fieldRenderReady && (opts.higgsField || opts.axionField)) ||
-            (this._heatmapRenderReady && opts.heatmapBuffers));
-        if (hasOverlays) {
-            const overlayEncoder = this.device.createCommandEncoder({ label: 'overlay' });
-            const overlayPass = overlayEncoder.beginRenderPass({
-                label: 'overlay render',
-                colorAttachments: [{
-                    view: textureView,
-                    loadOp: 'load',
-                    storeOp: 'store',
-                }],
-            });
-
+        // The scalar fields' hatching and the Fields overlay's Bz glyphs (lab only)
+        if (!frame) {
             if (this._fieldRenderReady) {
-                if (opts.higgsField) {
-                    this.drawFieldOverlay(overlayPass, 'higgs', opts.higgsField);
-                }
-                if (opts.axionField) {
-                    this.drawFieldOverlay(overlayPass, 'axion', opts.axionField);
-                }
+                if (opts.higgsField) this.drawFieldOverlay(pass, 'higgs', opts.higgsField);
+                if (opts.axionField) this.drawFieldOverlay(pass, 'axion', opts.axionField);
             }
-
             if (this._heatmapRenderReady && opts.heatmapBuffers) {
-                this.drawHeatmapOverlay(overlayPass, opts.heatmapBuffers, opts.heatmapOpts || {});
+                this.drawHeatmapOverlay(pass, opts.heatmapBuffers, opts.heatmapOpts || {});
             }
-
-            overlayPass.end();
-            this.device.queue.submit([overlayEncoder.finish()]);
         }
 
-        // Pass 3: Boson rendering — isolated encoder so failures don't affect particles
+        // Photons, pions and leptons
         if (this._bosonReady) {
-            try {
-                const bosonEncoder = this.device.createCommandEncoder({ label: 'boson-render' });
-                const bosonPass = bosonEncoder.beginRenderPass({
-                    label: 'boson render',
-                    colorAttachments: [{
-                        view: textureView,
-                        loadOp: 'load',
-                        storeOp: 'store',
-                    }],
-                });
-
-                const bgs = this._bosonBindGroups;
-
-                bosonPass.setPipeline(this._photonPipeline);
-                bosonPass.setBindGroup(0, bgs[0]);
-                bosonPass.setBindGroup(1, bgs[1]);
-                bosonPass.setBindGroup(2, bgs[2]);
-                bosonPass.draw(4, GPU_MAX_PHOTONS);
-
-                bosonPass.setPipeline(this._pionPipeline);
-                bosonPass.setBindGroup(0, bgs[0]);
-                bosonPass.setBindGroup(1, bgs[1]);
-                bosonPass.setBindGroup(2, bgs[2]);
-                bosonPass.draw(4, GPU_MAX_PIONS + GPU_MAX_LEPTONS);
-
-                bosonPass.end();
-                this.device.queue.submit([bosonEncoder.finish()]);
-            } catch (e) {
-                console.warn('[physsim] Boson render failed, disabling:', e.message);
-                this._bosonReady = false;
-            }
+            const bgs = this._bosonBindGroups;
+            pass.setPipeline(this._photonPipeline);
+            pass.setBindGroup(0, bgs[0]);
+            pass.setBindGroup(1, bgs[1]);
+            pass.setBindGroup(2, bgs[2]);
+            pass.draw(4, GPU_MAX_PHOTONS);
+            pass.setPipeline(this._pionPipeline);
+            pass.draw(4, GPU_MAX_PIONS + GPU_MAX_LEPTONS);
         }
 
-        // Pass 3b: Clock rings (the Clocks overlay)
+        // Clock rings (the Clocks overlay): triangle-strip ribbons, 48 segments × 2 vertices
         if (this._clockReady && this.showClocks && aliveCount > 0 && !boosting) {
-            try {
-                const clockEncoder = this.device.createCommandEncoder({ label: 'clock-render' });
-                const clockPass = clockEncoder.beginRenderPass({
-                    label: 'clock render',
-                    colorAttachments: [{
-                        view: textureView,
-                        loadOp: 'load',
-                        storeOp: 'store',
-                    }],
-                });
-                // Triangle-strip ribbons: 48 segments × 2 vertices
-                clockPass.setBindGroup(0, frame ? this._clockBindGroupView : this._clockBindGroup);
-                clockPass.setPipeline(this._clockTrackPipeline);
-                clockPass.draw(96, instances);
-                clockPass.setPipeline(this._clockArcPipeline);
-                clockPass.draw(96, instances);
-                clockPass.end();
-                this.device.queue.submit([clockEncoder.finish()]);
-            } catch (e) {
-                console.warn('[worldline] Clock render failed, disabling:', e.message);
-                this._clockReady = false;
-            }
+            pass.setBindGroup(0, frame ? this._clockBindGroupView : this._clockBindGroup);
+            pass.setPipeline(this._clockTrackPipeline);
+            pass.draw(96, instances);
+            pass.setPipeline(this._clockArcPipeline);
+            pass.draw(96, instances);
         }
 
-        // Pass 3c: Ring overlays (the ergosphere, the selection), batched into ONE encoder +
-        // ONE submit with per-slot uniform buffers (slot 0 = ergosphere, slot 1 = selection)
+        // Ring overlays (the ergosphere, the selection), each slot its own uniform buffer
+        // (slot 0 = ergosphere, slot 1 = selection)
         if (this._ringReady && aliveCount > 0 && !boosting) {
             try {
                 const ringDrawSlots = [];
@@ -948,20 +859,10 @@ export default class GPURenderer {
                     ringDrawSlots.push(1);
                 }
 
-                // One encoder, one render pass per ring type, one submit
-                if (ringDrawSlots.length > 0) {
-                    const ringEnc = this.device.createCommandEncoder({ label: 'rings-batch' });
-                    for (const slot of ringDrawSlots) {
-                        const ringPass = ringEnc.beginRenderPass({
-                            label: `ring-slot-${slot}`,
-                            colorAttachments: [{ view: textureView, loadOp: 'load', storeOp: 'store' }],
-                        });
-                        ringPass.setPipeline(this._ringPipeline);
-                        ringPass.setBindGroup(0, frame ? this._ringBindGroupsView[slot] : this._ringBindGroups[slot]);
-                        ringPass.draw(130, instances); // (RING_SEGMENTS + 1) * 2 to close strip
-                        ringPass.end();
-                    }
-                    this.device.queue.submit([ringEnc.finish()]);
+                for (const slot of ringDrawSlots) {
+                    pass.setPipeline(this._ringPipeline);
+                    pass.setBindGroup(0, frame ? this._ringBindGroupsView[slot] : this._ringBindGroups[slot]);
+                    pass.draw(130, instances); // (RING_SEGMENTS + 1) * 2 to close strip
                 }
             } catch (e) {
                 console.warn('[physsim] Ring render failed, disabling:', e.message);
@@ -969,10 +870,8 @@ export default class GPURenderer {
             }
         }
 
-        // Pass 4: Force/velocity arrows — batched into ONE encoder + ONE submit.
-        // Each arrow type uses its own pre-allocated uniform buffer (slot = draw index)
-        // so all writeBuffers execute before the encoder, yet each render pass reads
-        // from its own buffer. Reduces up to 12 submits down to 1.
+        // Force and velocity arrows: each type its own pre-allocated uniform buffer (slot =
+        // draw index), so the writes all land before the submit yet each draw reads its own
         const wantsArrows = !frame && !boosting && this._arrowReady && aliveCount > 0 &&
             (this.showForce || this.showForceComponents || this.showVelocity);
         if (wantsArrows) {
@@ -1029,19 +928,11 @@ export default class GPURenderer {
                         _arrowF32[7] = 0;
                         this.device.queue.writeBuffer(buf, 0, _arrowData);
                     }
-                    // One encoder, one render pass per draw type, one submit
-                    const arrowEnc = this.device.createCommandEncoder({ label: 'arrows-batch' });
                     for (const { slot } of arrowDraws) {
-                        const pass = arrowEnc.beginRenderPass({
-                            label: `arrow-slot-${slot}`,
-                            colorAttachments: [{ view: textureView, loadOp: 'load', storeOp: 'store' }],
-                        });
                         pass.setPipeline(this._arrowPipeline);
                         pass.setBindGroup(0, this._arrowBindGroups[slot]);
                         pass.draw(9, aliveCount);
-                        pass.end();
                     }
-                    this.device.queue.submit([arrowEnc.finish()]);
                 }
             } catch (e) {
                 console.warn('[physsim] Arrow render failed, disabling:', e.message);
@@ -1049,9 +940,7 @@ export default class GPURenderer {
             }
         }
 
-        // Pass 5: Torque arcs — batched into ONE encoder + ONE submit.
-        // Each torque type uses its own pre-allocated uniform buffer. Arc + arrowhead
-        // for all types share the same encoder; reduces up to 8 submits to 1.
+        // Torque arcs and their arrowheads, each type its own pre-allocated uniform buffer
         const wantsTorques = !frame && !boosting && this._torqueReady && aliveCount > 0 &&
             (this.showForce || this.showForceComponents);
         if (wantsTorques) {
@@ -1090,30 +979,16 @@ export default class GPURenderer {
                         _torqueF32[7] = 0;
                         this.device.queue.writeBuffer(buf, 0, _torqueData);
                     }
-                    // One encoder: arc + arrowhead per type, one submit
-                    const torqueEnc = this.device.createCommandEncoder({ label: 'torques-batch' });
                     for (const { slot } of torqueDraws) {
                         const bg = this._torqueBindGroups[slot];
-                        // Arc ribbon (triangle-strip, ARC_SEGMENTS * 2 = 64 vertices)
-                        const arcPass = torqueEnc.beginRenderPass({
-                            label: `torque-arc-${slot}`,
-                            colorAttachments: [{ view: textureView, loadOp: 'load', storeOp: 'store' }],
-                        });
-                        arcPass.setPipeline(this._torqueArcPipeline);
-                        arcPass.setBindGroup(0, bg);
-                        arcPass.draw(64, aliveCount);
-                        arcPass.end();
-                        // Arrowhead (triangle-list, 3 vertices)
-                        const arrPass = torqueEnc.beginRenderPass({
-                            label: `torque-arrow-${slot}`,
-                            colorAttachments: [{ view: textureView, loadOp: 'load', storeOp: 'store' }],
-                        });
-                        arrPass.setPipeline(this._torqueArrowPipeline);
-                        arrPass.setBindGroup(0, bg);
-                        arrPass.draw(3, aliveCount);
-                        arrPass.end();
+                        // Arc ribbon (triangle-strip, ARC_SEGMENTS * 2 = 64 vertices), then
+                        // the arrowhead (triangle-list, 3 vertices)
+                        pass.setPipeline(this._torqueArcPipeline);
+                        pass.setBindGroup(0, bg);
+                        pass.draw(64, aliveCount);
+                        pass.setPipeline(this._torqueArrowPipeline);
+                        pass.draw(3, aliveCount);
                     }
-                    this.device.queue.submit([torqueEnc.finish()]);
                 }
             } catch (e) {
                 console.warn('[physsim] Torque render failed, disabling:', e.message);
@@ -1146,40 +1021,6 @@ export default class GPURenderer {
     }
 
     /**
-     * Submit a single arrow draw with its own encoder + render pass.
-     * Each arrow type needs a separate submit so that the uniform writeBuffer
-     * takes effect before the draw executes on the GPU.
-     */
-    _submitArrowDraw(textureView, aliveCount, forceType, color, arrowScale, minMag) {
-        if (!this._arrowReady || aliveCount <= 0) return;
-
-        _arrowU32[0] = forceType;
-        _arrowF32[1] = color[0];
-        _arrowF32[2] = color[1];
-        _arrowF32[3] = color[2];
-        _arrowF32[4] = arrowScale;
-        _arrowF32[5] = minMag;
-        _arrowF32[6] = 0;  // _pad0 (unused by shader)
-        _arrowF32[7] = 0;
-        this.device.queue.writeBuffer(this._arrowUniformBuffer, 0, _arrowData);
-
-        const enc = this.device.createCommandEncoder({ label: `arrow-${forceType}` });
-        const pass = enc.beginRenderPass({
-            label: `arrow ${forceType}`,
-            colorAttachments: [{
-                view: textureView,
-                loadOp: 'load',
-                storeOp: 'store',
-            }],
-        });
-        pass.setPipeline(this._arrowPipeline);
-        pass.setBindGroup(0, this._arrowBindGroup);
-        pass.draw(9, aliveCount);
-        pass.end();
-        this.device.queue.submit([enc.finish()]);
-    }
-
-    /**
      * Torque type colors matching CPU renderer.
      * 0: spinOrbit (violet), 1: frameDrag (madder), 2: tidal (umber), 3: contact (graphite).
      */
@@ -1194,56 +1035,6 @@ export default class GPURenderer {
             k.graphite,    // 3: contact
             k.indigo,      // 4: superradiance
         ];
-    }
-
-    /**
-     * Submit a single torque arc + arrowhead draw.
-     * Each torque type needs its own submit for correct uniforms.
-     */
-    _submitTorqueDraw(textureView, aliveCount, torqueType, color, torqueScale) {
-        if (!this._torqueReady || aliveCount <= 0) return;
-
-        _torqueU32[0] = torqueType;
-        _torqueF32[1] = color[0];
-        _torqueF32[2] = color[1];
-        _torqueF32[3] = color[2];
-        _torqueF32[4] = torqueScale;
-        _torqueF32[5] = 0;
-        _torqueF32[6] = 0;
-        _torqueF32[7] = 0;
-        this.device.queue.writeBuffer(this._torqueUniformBuffer, 0, _torqueData);
-
-        // Arc ribbon
-        const enc1 = this.device.createCommandEncoder({ label: `torque-arc-${torqueType}` });
-        const pass1 = enc1.beginRenderPass({
-            label: `torque arc ${torqueType}`,
-            colorAttachments: [{
-                view: textureView,
-                loadOp: 'load',
-                storeOp: 'store',
-            }],
-        });
-        pass1.setPipeline(this._torqueArcPipeline);
-        pass1.setBindGroup(0, this._torqueBindGroup);
-        pass1.draw(64, aliveCount);  // ARC_SEGMENTS * 2 = 64 vertices
-        pass1.end();
-        this.device.queue.submit([enc1.finish()]);
-
-        // Arrowhead triangles
-        const enc2 = this.device.createCommandEncoder({ label: `torque-arrow-${torqueType}` });
-        const pass2 = enc2.beginRenderPass({
-            label: `torque arrow ${torqueType}`,
-            colorAttachments: [{
-                view: textureView,
-                loadOp: 'load',
-                storeOp: 'store',
-            }],
-        });
-        pass2.setPipeline(this._torqueArrowPipeline);
-        pass2.setBindGroup(0, this._torqueBindGroup);
-        pass2.draw(3, aliveCount);
-        pass2.end();
-        this.device.queue.submit([enc2.finish()]);
     }
 
     /** Initialize field overlay render pipeline. Call after GPUPhysics has field buffers. */
@@ -1456,17 +1247,15 @@ export default class GPURenderer {
     destroy() {
         const _d = b => { if (b) b.destroy(); };
         this.cameraBuffer.destroy();
-        _d(this._arrowUniformBuffer);
-        _d(this._torqueUniformBuffer);
-        _d(this._ringUniformBuffer);
+        for (const b of this._arrowUniformBufs || []) b.destroy();
+        for (const b of this._torqueUniformBufs || []) b.destroy();
+        for (const b of this._ringUniformBufs || []) b.destroy();
         if (this._fieldRenderUniformBuffers) {
             this._fieldRenderUniformBuffers.higgs.destroy();
             this._fieldRenderUniformBuffers.axion.destroy();
         }
         _d(this._heatmapRenderUniformBuffer);
-        this._arrowUniformBuffer = null;
-        this._torqueUniformBuffer = null;
-        this._ringUniformBuffer = null;
+        this._arrowUniformBufs = this._torqueUniformBufs = this._ringUniformBufs = null;
         this._heatmapRenderUniformBuffer = null;
     }
 }
