@@ -925,6 +925,109 @@ cases.push({
     },
 });
 
+// Absorption across a torus seam. A body on the domain's corner takes a fan of photons and
+// charged pions from both sides, half of them crossing a seam on the way (bosons never wrap,
+// so absorption folds them into the domain). Absorption once took plain displacements, so the
+// pairwise search never saw across a seam, and the tree's walk handed the four-momentum to
+// a ghost copy's slot, which the next substep overwrote, so the energy vanished.
+/** Bosons straight into both pools, old enough to be absorbed at once. */
+function addAbsorbable(gp, photons, pions) {
+    const ph = new ArrayBuffer(photons.length * 32);
+    const pf = new Float32Array(ph), pu = new Uint32Array(ph);
+    photons.forEach((p, i) => {
+        const b = i * 8;
+        pf[b] = p.x; pf[b + 1] = p.y; pf[b + 2] = p.vx; pf[b + 3] = p.vy; pf[b + 4] = p.energy;
+        pu[b + 5] = 0xFFFFFFFF; pf[b + 6] = 1; pu[b + 7] = 1;
+    });
+    gp.device.queue.writeBuffer(gp.buffers.photonPool, 0, ph);
+    gp.device.queue.writeBuffer(gp.buffers.phCount, 0, new Uint32Array([photons.length]));
+    addPions(gp, pions);
+}
+
+/** Alive bosons and their totals: E, px, py, charge. */
+async function poolTotals(gp, nPh, nPi) {
+    const ph = new Float32Array(await readBuffer(gp, gp.buffers.photonPool, nPh * 32));
+    const phu = new Uint32Array(ph.buffer);
+    const pi = new Float32Array(await readBuffer(gp, gp.buffers.pionPool, nPi * PION_SIZE));
+    const piu = new Uint32Array(pi.buffer);
+    const t = { E: 0, px: 0, py: 0, q: 0, alive: 0 };
+    for (let i = 0; i < nPh; i++) {
+        const b = i * 8;
+        if (!(phu[b + 7] & 1)) continue;
+        t.alive++; t.E += ph[b + 4]; t.px += ph[b + 4] * ph[b + 2]; t.py += ph[b + 4] * ph[b + 3];
+    }
+    for (let i = 0; i < nPi; i++) {
+        const b = i * 12;
+        if (!(piu[b + 9] & 1)) continue;
+        const m = pi[b + 4], wx = pi[b + 2], wy = pi[b + 3];
+        t.alive++; t.E += m * Math.hypot(1, wx, wy); t.px += m * wx; t.py += m * wy; t.q += pi[b + 5];
+    }
+    return t;
+}
+
+cases.push({
+    name: 'Absorption on a torus seam: every boson absorbed from both sides, E, p and q conserved, tree = pairwise',
+    async run() {
+        const W = 64, cx = 0.4, cy = 0.5, m = 8;   // radius ∛8 = 2, straddling both seams
+        const wrap = v => ((v % W) + W) % W;
+        const photons = [], pions = [];
+        for (let s = 0; s < 2; s++) {
+            for (let k = 0; k < 12; k++) {
+                const th = (s ? Math.PI : 0) + (k / 11 - 0.5) * (2 * Math.PI / 3);   // ±60° about ±x
+                const dx = Math.cos(th), dy = Math.sin(th);
+                photons.push({ x: wrap(cx - 6 * dx), y: wrap(cy - 6 * dy), vx: dx, vy: dy, energy: s ? 0.04 : 0.07 });
+            }
+            for (let k = 0; k < 2; k++) {
+                const th = (s ? Math.PI : 0) + (k ? 0.35 : -0.35);
+                const dx = Math.cos(th), dy = Math.sin(th);
+                pions.push({ x: wrap(cx - 3.5 * dx), y: wrap(cy - 3.5 * dy), wx: 2 * dx, wy: 2 * dy,
+                             mass: 0.1, charge: (s && k) ? -BOSON_CHARGE : BOSON_CHARGE });
+            }
+        }
+        // Before: the body at rest plus both pools
+        const before = { E: m, px: 0, py: 0, q: 0 };
+        for (const p of photons) { before.E += p.energy; before.px += p.energy * p.vx; before.py += p.energy * p.vy; }
+        for (const p of pions) {
+            before.E += p.mass * Math.hypot(1, p.wx, p.wy); before.px += p.mass * p.wx; before.py += p.mass * p.wy;
+            before.q += p.charge;
+        }
+        const variant = async (bh) => {
+            const gp = await makeSim({ on: bh ? ['barnesHutEnabled'] : [], domainW: W, domainH: W, boundary: BOUND_LOOP });
+            gp.addParticle({ x: cx, y: cy, mass: m, bornAt: -Infinity });
+            addAbsorbable(gp, photons, pions);
+            await run(gp, 8, 0.25);
+            await statsNow(gp);   // collects the ledger's escaped radiation
+            const [body] = await readParticles(gp);
+            const pools = await poolTotals(gp, photons.length, GPU_MAX_PIONS + GPU_MAX_LEPTONS);
+            const L = gp.ledger;
+            gp.destroy();
+            const after = {
+                E: body.mass * Math.hypot(1, body.wx, body.wy) + pools.E + L.escapedE,
+                px: body.mass * body.wx + pools.px + L.escapedPx,
+                py: body.mass * body.wy + pools.py + L.escapedPy,
+                q: body.charge + pools.q,
+            };
+            return { body, alive: pools.alive, after };
+        };
+        const pair = await variant(false), tree = await variant(true);
+        const scale = before.E;
+        const drift = (v) => Math.max(Math.abs(v.after.E - before.E), Math.abs(v.after.px - before.px),
+                                      Math.abs(v.after.py - before.py)) / scale;
+        const dq = (v) => Math.abs(v.after.q - before.q);
+        const agree = Math.max(...['mass', 'wx', 'wy', 'charge'].map(k => Math.abs(pair.body[k] - tree.body[k]))) / scale;
+        const worst = Math.max(drift(pair), drift(tree), agree);
+        return {
+            expected: `0 left of ${photons.length + pions.length}; E = ${fmt(before.E, 6)}, p = (${fmt(before.px, 4)}, ${fmt(before.py, 4)}), q = ${fmt(before.q, 2)}`,
+            measured: ['pairwise', 'tree'].map((n, i) => {
+                const v = [pair, tree][i];
+                return `${n}: ${v.alive} left, E = ${fmt(v.after.E, 6)}, p = (${fmt(v.after.px, 4)}, ${fmt(v.after.py, 4)}), q = ${fmt(v.after.q, 2)}`;
+            }).join('; '),
+            metric: `max rel ${fmt(worst, 2)}; tree − pairwise ${fmt(agree, 2)}`,
+            pass: pair.alive === 0 && tree.alive === 0 && worst < 2e-5 && dq(pair) < 1e-5 && dq(tree) < 1e-5,
+        };
+    },
+});
+
 // Schwarzschild Hawking power P = 1/(15360π M²) on the hole's clock:
 // M³ = M₀³ − 3C·t/γ, C = 1/(15360π).
 const HAWKING_C = 1 / (15360 * Math.PI);
