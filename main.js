@@ -16,6 +16,7 @@ import CosmologyPanel from './src/cosmology-panel.js';
 import LensPanel from './src/lens-panel.js';
 import SpacetimeView, { EL_SPACETIME, AZ_SPACETIME } from './src/spacetime.js';
 import Caption from './src/caption.js';
+import QuenchPanel from './src/quench.js';
 import SceneKey, { decorateMargin } from './src/scene-key.js';
 import GPUProfiler, { PERF } from './src/gpu/gpu-profiler.js';
 
@@ -353,6 +354,7 @@ class Simulation {
         this.framePanel = new FramePanel(this);
         this.cosmologyPanel = new CosmologyPanel(this);
         this.lensPanel = new LensPanel(this);
+        this.quench = new QuenchPanel(this);
         this.caption = new Caption(this);
         this.sceneKey = new SceneKey(this);
         decorateMargin();
@@ -546,6 +548,7 @@ class Simulation {
     /** Clear the simulation: particles, bosons, fields, selection. */
     reset() {
         this.presetTick = null;
+        this.spacetime.minDepth = 0;
         this.select(-1);
         if (this.gpu) this.gpu.reset(this);
         this.camera.minZoom = ZOOM_MIN;
@@ -609,6 +612,7 @@ class Simulation {
         this.input.pollGPUHitResult();
         this.spacetime.step(rawDt);
         this.spacetime.stepCoords(rawDt);
+        this.quench?.update();
         this.caption?.update();
         this.sceneKey?.update();
 

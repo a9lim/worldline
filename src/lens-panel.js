@@ -26,18 +26,35 @@ export default class LensPanel {
         this._lastSeq = null;
         _forms.bindToggle(this.el.toggle, v => this.setLensing(v));
         _forms.bindToggle(this.el.probe, v => this.setProbe(v));
-        _forms.bindSlider(this.el.distance, $('lensDistanceValue'), v => {
+        this.el.distanceValue = $('lensDistanceValue');
+        _forms.bindSlider(this.el.distance, this.el.distanceValue, v => {
             sim.lens.distance = 10 ** v;
             this._restartCurve();
             sim._dirty = true;
-        }, v => (10 ** v).toPrecision(2));
+        }, LensPanel.fmtDistance);
     }
+
+    static fmtDistance(v) { return (10 ** v).toPrecision(2); }
 
     setLensing(on) {
         this.sim.lens.on = on;
-        if (this.el.toggle.checked !== on) this.el.toggle.checked = on;
-        this.el.distanceGroup.style.display = on ? '' : 'none';
-        this.el.probeGroup.style.display = on ? '' : 'none';
+        this.sync();
+    }
+
+    /** Show sim.lens (on, distance) in the controls, without their handlers; off drops the probe. */
+    sync() {
+        const lens = this.sim.lens, el = this.el, on = lens.on;
+        if (el.toggle.checked !== on) el.toggle.checked = on;
+        el.distanceGroup.style.display = on ? '' : 'none';
+        el.probeGroup.style.display = on ? '' : 'none';
+        const v = Math.log10(lens.distance);
+        if (+el.distance.value !== v) {
+            el.distance.value = v;
+            _forms.updateSliderFill(el.distance);
+            el.distance.setAttribute('aria-valuenow', el.distance.value);
+            el.distanceValue.textContent = LensPanel.fmtDistance(+el.distance.value);
+            this._restartCurve();
+        }
         if (!on) this.setProbe(false);
         this.sim._dirty = true;
     }

@@ -38,6 +38,7 @@ export default class SpacetimeView {
         this.s = 0;
         this._sTo = 0;
         this.onCoords = null;     // called with true/false when the observer's frame starts/stops
+        this.minDepth = 0;        // the least time shown, set by a preset (the twin's round trip)
         this._obs = { s: 0, psi: 0, n: [1, 0], u: [0, 0], gamma: 1, tA: 0, xA: [0, 0], aNow: [0, 0],
                       lag: 0, offset: [0, 0], frameOn: false, lorentz: true, active: false };
     }
@@ -48,10 +49,14 @@ export default class SpacetimeView {
     /** True while any part of the time axis shows. */
     get tilted() { return this.el < EL_PLANE - 1e-4; }
 
-    /** Time shown below the plane, in time units (light runs one unit of space per unit). */
+    /**
+     * Time shown below the plane, in time units (light runs one unit of space per unit):
+     * DEPTH_FRACTION of the visible plane's height, or a preset's minDepth if that is more,
+     * up to the world lines' reach. frame() fits the plane and that past to the screen.
+     */
     depth() {
         const cam = this.sim.camera;
-        return Math.min(DEPTH_FRACTION * cam.viewportH / cam.zoom, HISTORY);
+        return Math.min(Math.max(DEPTH_FRACTION * cam.viewportH / cam.zoom, this.minDepth), HISTORY);
     }
 
     /** The current projection: everything toScreen and the GPU matrix need. */

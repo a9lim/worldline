@@ -1,83 +1,6 @@
-import { DEFAULT_SPEED_SCALE, SPEED_OPTIONS, DEFAULT_SPEED_INDEX, WORLD_SCALE, colFromString, boundFromString, topoFromString } from './config.js';
-import { PARAMETER_KEYS } from './physics-contract.js';
-
-// Maps physics flag names to UI toggle element IDs (same order as presets.js TOGGLE_ORDER)
-const TOGGLE_SYNC = [
-    ['gravityEnabled', 'gravity-toggle'],
-    ['bosonInterEnabled', 'bosoninter-toggle'],
-    ['coulombEnabled', 'coulomb-toggle'],
-    ['relativityEnabled', 'relativity-toggle'],
-    ['gravitomagEnabled', 'gravitomag-toggle'],
-    ['magneticEnabled', 'magnetic-toggle'],
-    ['onePNEnabled', 'onepn-toggle'],
-    ['blackHoleEnabled', 'blackhole-toggle'],
-    ['spinOrbitEnabled', 'spinorbit-toggle'],
-    ['radiationEnabled', 'radiation-toggle'],
-    ['barnesHutEnabled', 'barneshut-toggle'],
-    ['yukawaEnabled', 'yukawa-toggle'],
-    ['axionEnabled', 'axion-toggle'],
-    ['expansionEnabled', 'expansion-toggle'],
-    ['higgsEnabled', 'higgs-toggle'],
-];
-
-const MODE_SYNC = [
-    ['collisionMode', 'collision-toggles', 'collision'],
-    ['boundaryMode', 'boundary-toggles', 'boundary'],
-    ['topology', 'topology-toggles', 'topology'],
-];
-
-function syncUI(sim) {
-    const ph = sim.settings;
-    // Sync toggle checkboxes (parent-first order triggers dependency cascades)
-    for (const [prop, elId] of TOGGLE_SYNC) {
-        const el = document.getElementById(elId);
-        if (!el) continue;
-        const want = ph[prop];
-        if (el.checked !== want) {
-            el.checked = want;
-            el.setAttribute('aria-checked', String(want));
-            el.dispatchEvent(new Event('change'));
-        }
-    }
-    // Sync mode button groups
-    for (const [prop, groupId, attr] of MODE_SYNC) {
-        const group = document.getElementById(groupId);
-        if (!group) continue;
-        const target = group.querySelector(`[data-${attr}="${sim[prop]}"]`);
-        if (target) target.click();
-    }
-    sim.syncSpeed?.();
-    const frictionEl = document.getElementById('frictionInput');
-    if (frictionEl) { frictionEl.value = ph.bounceFriction; frictionEl.dispatchEvent(new Event('input')); }
-    const hubbleEl = document.getElementById('hubbleInput');
-    if (hubbleEl) { hubbleEl.value = Math.log10(Math.max(ph.hubbleParam, 1e-4)); hubbleEl.dispatchEvent(new Event('input')); }
-    const scheduleEl = document.getElementById('cosmo-schedule');
-    if (scheduleEl && scheduleEl.value !== String(ph.cosmoSchedule)) {
-        scheduleEl.value = String(ph.cosmoSchedule);
-        scheduleEl.dispatchEvent(new Event('change'));
-    }
-    const dampingEl = document.getElementById('fieldDampingToggle');
-    if (dampingEl && dampingEl.checked !== !!ph.fieldDamping) {
-        dampingEl.checked = !!ph.fieldDamping;
-        dampingEl.dispatchEvent(new Event('change'));
-    }
-    const yukawaMuEl = document.getElementById('yukawaMuInput');
-    if (yukawaMuEl) { yukawaMuEl.value = ph.yukawaMu; yukawaMuEl.dispatchEvent(new Event('input')); }
-    const axionMassEl = document.getElementById('axionMassInput');
-    if (axionMassEl) { axionMassEl.value = ph.axionMass; axionMassEl.dispatchEvent(new Event('input')); }
-    const higgsMassEl = document.getElementById('higgsMassInput');
-    if (higgsMassEl) { higgsMassEl.value = ph.higgsMass; higgsMassEl.dispatchEvent(new Event('input')); }
-    const extGravEl = document.getElementById('extGravityInput');
-    if (extGravEl) { extGravEl.value = ph.extGravity; extGravEl.dispatchEvent(new Event('input')); }
-    const extGravAngleEl = document.getElementById('extGravityAngleInput');
-    if (extGravAngleEl) { extGravAngleEl.value = (ph.extGravityAngle || 0) * 180 / Math.PI; extGravAngleEl.dispatchEvent(new Event('input')); }
-    const extElecEl = document.getElementById('extElectricInput');
-    if (extElecEl) { extElecEl.value = ph.extElectric; extElecEl.dispatchEvent(new Event('input')); }
-    const extElecAngleEl = document.getElementById('extElectricAngleInput');
-    if (extElecAngleEl) { extElecAngleEl.value = (ph.extElectricAngle || 0) * 180 / Math.PI; extElecAngleEl.dispatchEvent(new Event('input')); }
-    const extBzEl = document.getElementById('extBzInput');
-    if (extBzEl) { extBzEl.value = ph.extBz; extBzEl.dispatchEvent(new Event('input')); }
-}
+import { DEFAULT_SPEED_SCALE, WORLD_SCALE } from './config.js';
+import { TOGGLE_KEYS, PARAMETER_KEYS } from './physics-contract.js';
+import { createPhysicsSettings, applyConfig } from './physics-settings.js';
 
 /**
  * Save simulation state (async: reads particle buffers back from the GPU).
@@ -117,47 +40,35 @@ export function loadState(stored, sim) {
     if (!ok) return false;
     sim.select(-1);
 
-    // Restore toggles and parameters to the settings store (UI sync reads it)
-    const ph = sim.settings;
-    if (state.toggles) {
-        for (const [key, val] of Object.entries(state.toggles)) {
-            if (key in ph) ph[key] = val;
-        }
-    }
-    for (const key of PARAMETER_KEYS) {
-        if (state[key] !== undefined && state[key] !== null) ph[key] = state[key];
-    }
-    if (state.settings && state.settings.friction != null) ph.bounceFriction = state.settings.friction;
-
-    _restoreSettings(state, sim);
-    sim.gpu.applySettings(sim);
-    sim.stats.resetBaseline();
-    syncUI(sim);
-    return true;
-}
-
-function _restoreSettings(state, sim) {
-    if (state.settings) {
-        // Legacy compat: 'repel' was renamed to 'bounce' in an earlier version
-        const col = state.settings.collision === 'repel' ? 'bounce' : (state.settings.collision || 'pass');
-        sim.collisionMode = colFromString(col);
-        sim.boundaryMode = boundFromString(state.settings.boundary);
-        sim.topology = topoFromString(state.settings.topology);
-        const loadedSpeed = state.settings.speed ?? DEFAULT_SPEED_SCALE;
-        let bestIdx = DEFAULT_SPEED_INDEX;
-        let bestDist = Infinity;
-        for (let i = 0; i < SPEED_OPTIONS.length; i++) {
-            const d = Math.abs(SPEED_OPTIONS[i] - loadedSpeed);
-            if (d < bestDist) { bestDist = d; bestIdx = i; }
-        }
-        sim.speedIndex = bestIdx;
-        sim.speedScale = SPEED_OPTIONS[bestIdx];
-    }
+    // The settings, modes and speed through the presets' path, then the camera
+    applyConfig(sim, stateConfig(state));
     if (state.camera) {
         sim.camera.x = state.camera.x;
         sim.camera.y = state.camera.y;
         sim.camera.zoom = state.camera.zoom;
     }
+    sim.stats.resetBaseline();
+    return true;
+}
+
+/** A save's configuration for applyConfig(): what it carries, and the defaults for the rest. */
+function stateConfig(state) {
+    const settings = createPhysicsSettings();
+    for (const key of TOGGLE_KEYS) {
+        if (state.toggles && state.toggles[key] != null) settings[key] = !!state.toggles[key];
+    }
+    for (const key of PARAMETER_KEYS) {
+        if (state[key] != null) settings[key] = state[key];
+    }
+    const s = state.settings;
+    if (!s) return { settings };
+    if (s.friction != null) settings.bounceFriction = s.friction;
+    return {
+        settings,
+        // 'repel' was renamed to 'bounce' in an earlier version
+        modes: { collision: s.collision === 'repel' ? 'bounce' : s.collision, boundary: s.boundary, topology: s.topology },
+        speed: s.speed ?? DEFAULT_SPEED_SCALE,
+    };
 }
 
 export async function downloadState(sim) {

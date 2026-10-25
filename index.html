@@ -420,6 +420,10 @@
                                 <label><span><span data-i18n="force.higgsMass">Higgs mass</span> <button class="info-trigger" data-info="fieldExcitation" aria-label="Higgs boson info" data-i18n-aria="force.higgsBosonAria">?</button></span> <span class="slider-value" id="higgsMassValue">0.50</span></label>
                                 <input type="range" id="higgsMassInput" min="0.25" max="0.75" step="0.01" value="0.50">
                             </div>
+                            <div class="control-group" id="quench-group" style="display:none">
+                                <label><span data-i18n="force.quenchTime">Quench time</span> <span class="slider-value" id="quenchTimeValue">120</span></label>
+                                <input type="range" id="quenchTimeInput" min="1" max="3" step="0.01" value="2.08" aria-label="Quench time" data-i18n-aria="force.quenchTime">
+                            </div>
                         </div>
                         <div class="ctrl-sub" id="field-damping-group" style="display:none">
                             <div class="control-group">
@@ -560,6 +564,14 @@
                         <div class="stat-row" id="cosmo-rho-row" style="display:none"><span class="stat-label" data-i18n="cosmo.density">Mean density ρ̄</span><span class="stat-value" id="cosmo-rho">0</span></div>
                         <canvas id="cosmo-plot" class="cosmo-plot" role="img" aria-label="Scale factor and Hubble rate over time" data-i18n-aria="cosmo.plotAria"></canvas>
                         <p class="panel-hint" data-i18n="cosmo.hint">Beyond the Hubble radius, comoving bodies recede faster than light; nothing moves through space that fast.</p>
+                    </div>
+                    <div class="panel-section" id="quench-section" aria-live="polite" hidden>
+                        <h2 class="group-label"><span data-i18n="group.quench">Quench</span> <button class="info-trigger" data-info="higgs" aria-label="Higgs field info" data-i18n-aria="force.higgsAria">?</button></h2>
+                        <div class="stat-row"><span class="stat-label" data-i18n="quench.epsilon">Quench parameter ε</span><span class="stat-value" id="quench-eps">−1.00</span></div>
+                        <div class="stat-row"><span class="stat-label" data-i18n="quench.ordered">Ordered</span><span class="stat-value" id="quench-ordered">0%</span></div>
+                        <div class="stat-row"><span class="stat-label" data-i18n="quench.formed">Wall per area, as formed</span><span class="stat-value" id="quench-formed">—</span></div>
+                        <div class="stat-row"><span class="stat-label" data-i18n="quench.walls">Wall per area, now</span><span class="stat-value" id="quench-walls">—</span></div>
+                        <p class="panel-hint" data-i18n="quench.hint">A cell counts as ordered within v/2 of +v or −v, the vacuum √ε. Walls are where φ changes sign between neighbouring cells, counted once the field first orders: a slower quench forms fewer, and then they shrink.</p>
                     </div>
                 </div>
                 <!-- ── Particle ── -->

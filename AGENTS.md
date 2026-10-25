@@ -34,7 +34,7 @@ main.js                  Simulation: state, device lifecycle, fixed-timestep loo
 colors.js                freezes the shared tokens (Worldline reads the inks directly)
 i18n/strings.js          UI strings (en, ja); merges strings-reference.js (reference overlay)
 src/config.js            constants, mode enums, Kerr–Newman and Paczyński–Wiita helpers
-src/physics-settings.js  the toggle and parameter store (sim.settings)
+src/physics-settings.js  the toggle and parameter store (sim.settings); applyConfig(), for presets and saves
 src/physics-contract.js  toggle/parameter keys shared by save/load and the GPU slot map
 src/ui.js                colophon, margin, view and boost controls, toggle dependencies, shortcuts, about
 src/input.js             spawn, select, delete through GPU hit tests; Alt/Shift-drag orbits the view
@@ -44,7 +44,8 @@ src/scene-key.js         the key at the stage's bottom right, and the margin's l
 src/overlay.js           the 2D canvas above the GPU canvas: the field atlas, spawn-drag line, scale bar,
                          the spacetime box with its dimension line and presents
 src/field-atlas.js       the Fields overlay's contours and field lines, from the heatmap readback
-src/presets.js           six curated presets (PRESET_ORDER); each may set its domain and keep a tick
+src/presets.js           six curated presets (PRESET_ORDER): data, a spawn, and an optional tick
+src/quench.js            the Higgs quench: startQuench(), measureHiggs(), the Stats tab's Quench section
 src/cosmology.js         the scale factor a(t): schedules, the Friedmann closure, horizons
 src/cosmology-panel.js   the Stats tab's expansion readouts and the overlay's horizons
 src/frames.js            the observer the view is drawn for (sim.frames), FrameParams
@@ -73,8 +74,22 @@ tests/physics-validation.html   analytic oracles against a headless GPUPhysics
 store `sim.settings` (`physics-settings.js`), which `ui.js` writes and
 `GPUBackend.applySettings()` copies into `GPUPhysics.setToggles()`. View flags (trails,
 clocks, vectors, `grid` for the rulers and key) live in `sim.view`, the Fields overlay's
-state in `sim.heatmap`. A preset with a `tick(sim)` (the bremsstrahlung beam) sets
-`sim.presetTick`, which runs after each stepped frame until `reset()` clears it.
+state in `sim.heatmap`.
+
+Presets and saves reach that state by one path, `applyConfig(sim, { settings, modes,
+speed, view })` (`physics-settings.js`): it writes the store, the modes (by name), the
+speed and the view (`sim.view`, the Fields overlay, the lens, and `depth`, the spacetime
+view's least depth), then calls `sim.syncControls()` (`ui.js`), which has every control
+show the store without firing its handler (the parameter sliders are one table,
+`storeSliders`, with each control's transform), runs the dependency cascade and the mode
+locks once, which may turn more off in the store, and pushes the result to the GPU. A
+preset (`presets.js`) is data: the toggles it turns on (every other is off), the
+parameters it sets (the rest default), modes, speed, view (what it doesn't turn on is
+off, except the rulers and key) and domain; `presetConfig()` makes its configuration,
+and `stateConfig()` in `save-load.js` a save's. Then `spawn(sim, run)` places the bodies,
+and a preset with a `tick(sim, run)` (the bremsstrahlung beam) sets `sim.presetTick`,
+which runs after each stepped frame until `reset()` clears it; `run` is that load's own
+state, so nothing outlives the run.
 
 The domain is state, not the window: `sim.domainW`/`domainH` in world units, square
 `DEFAULT_DOMAIN` (64) unless a preset sets `domain: [w, h]` or a save carries one.
@@ -323,8 +338,9 @@ panning, zoom about the cursor) through the tilt. Alt- or Shift-drag orbits; W, 
 and Spacetime buttons, ease between the two (`EL_SPACETIME` ≈ 30°).
 
 - **Depth.** The time shown below the plane is `DEPTH_FRACTION` (1.2) of the visible plane's
-  height, capped by the world lines' reach (127); the fit `k` shrinks the scene so the plane
-  and its past share the screen.
+  height, or a preset's `minDepth` if that is more (the twin asks for the whole reach, so
+  its round trip of about 109 shows whole as it ends), capped by the world lines' reach
+  (127); the fit `k` shrinks the scene so the plane and its past share the screen.
 - **World lines** (`vs_line`): one triangle strip per slot straight from the history ring
   (4 vertices a sample, an incoming and an outgoing pair, so a seam or merge break zeroes a
   segment without bridging it), mapped from the cover through the slot's deck and on a
@@ -545,6 +561,18 @@ Langevin bath on the Higgs damping, its own pass (`higgsLangevin`) once per subs
 the bath do work the ledger doesn't book. The Higgs overlay measures
 from the current vacuum √ε and colours φ < 0 with the enhanced hue.
 
+**The quench's readouts** (`quench.js`). `startQuench()` sets φ ≈ 0 and starts the quench
+at the store's `quenchTime` (the Higgs section's Quench time slider, logarithmic from 10 to
+1000, shown while a quench runs; changing it re-runs the quench; saves leave it out with
+the field). `QuenchPanel` reads the 128² Higgs grid back about four times a second while a
+quench runs (`GPUPhysics.readHiggsField()`) and `measureHiggs()` measures it: the ordered
+fraction, the cells within v/2 of ±v (v = √ε), and the walls by the Kibble–Zurek oracle's
+count, sign changes between neighbouring cells per unit length of grid line, shown as wall
+length per area (π/2 times the count, Cauchy–Crofton for walls at every angle), as formed
+(the first readback that passes the oracle's ordering test: mean |φ| at least v/2 and 0.2)
+and now. The Stats tab's Quench section shows them, and the caption calls the field frozen
+into domains only once at least half the plane is ordered and the walls are counted.
+
 **Under expansion** the grid is comoving (its cells grow with a, so the Laplacian is
 physical), `hubbleFriction` applies `φ̇ ← φ̇·e^{−3H dt/2}` before and after each substep's
 KDK (Strang; each half metered by the ledger), particle sources
@@ -633,7 +661,9 @@ Worldline was the overhaul's pilot (`../../docs/sim-overhaul/PLAN.md`) and loads
 over a hairline figure bar) and the margin. The shared colophon (`_colophon.mount`, with
 translated labels) carries play, step, theme and help; the figure bar carries the caption
 (`caption.js`: "Fig. 1.", the preset's name, then what it shows with its live values, or the
-view, the observer and the selected body, rebuilt a few times a second) and the
+view, the observer and the selected body, rebuilt a few times a second; tilted, the twin
+and Kibble–Zurek keep their own text, the twin's read off the beads, and the other presets
+give way to the plate's) and the
 Plane/Spacetime, Lab/Observer and Boost controls; the stage's top right has speed, language,
 the touch-only antimatter mode and the Controls toggle (at 600 px and below `ui.js` moves
 speed and language to the sheet's foot and antimatter into the figure bar, so the top keeps
@@ -706,9 +736,11 @@ canvas text needs no font-load redraw.
   readback layout is listed at the top of `compute-stats.wgsl`.
 - **Shader cache.** Bump `SHADER_VERSION` after any WGSL edit; the query string is the
   only cache key.
-- **New toggle or parameter.** Update `physics-contract.js`, `physics-settings.js`,
-  `ui.js` (`toggleDefs`, deps), `presets.js` `TOGGLE_MAP`, `save-load.js` `TOGGLE_SYNC`,
-  and `GPUPhysics.setToggles()` with its bit, then check that saves round-trip it.
+- **New toggle or parameter.** Update `physics-contract.js` (`TOGGLE_KEYS`, or
+  `PARAMETER_KEYS` and `GPU_PARAMETER_SLOTS`), the default in `physics-settings.js`,
+  `ui.js` (`toggleDefs` and deps, or `storeSliders`), and `GPUPhysics.setToggles()` with
+  its bit, then check that saves round-trip it. Presets and saves need nothing more:
+  `applyConfig()` carries every store key.
 - **Saves.** `version: 2` holds the domain, particles with τ and θ, toggles,
   parameters, modes, speed, friction, and camera; fields, bosons, and world lines are
   not saved. `migrateState()` lifts a version 1 save (domain = this window / 16, clocks
@@ -743,7 +775,8 @@ canvas text needs no font-load redraw.
   a click of the particle's own kind selects, the other kind deletes; black-hole mode
   never spawns antimatter.
 - **CSS.** The shared `.mode-toggles` sets `display: flex`, which beats the `hidden`
-  attribute, so those rows are shown and hidden with `style.display`.
+  attribute, so those rows are shown and hidden with `style.display`. `base.css` does the
+  same for `.panel-section`; `styles.css` restores `.panel-section[hidden]`.
 - **URLs.** Worldline's own files load by relative URL (`styles.css`, `colors.js`, `main.js`,
   the shaders), which resolves only under `/worldline/` with its trailing slash.
 - **Storage keys keep earlier names.** Worldline was Geon until 2026-10-23
