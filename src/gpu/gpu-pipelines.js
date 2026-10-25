@@ -9,7 +9,7 @@
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 155;
+const SHADER_VERSION = 156;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -1058,13 +1058,14 @@ export async function createGhostGenPipeline(device, wgslConstants = '') {
         ],
     });
 
-    // Group 2: ghostCounter + uniforms + ghostOriginalIdx
+    // Group 2: ghostCounter + uniforms + ghostOriginalIdx + radiusMax
     const group2Layout = device.createBindGroupLayout({
         label: 'ghostGen_group2',
         entries: [
             { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
             { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
             { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
         ],
     });
 
@@ -1075,8 +1076,16 @@ export async function createGhostGenPipeline(device, wgslConstants = '') {
         }),
         compute: { module, entryPoint: 'main' },
     });
+    const sibling = (entryPoint) => device.createComputePipeline({
+        label: entryPoint,
+        layout: device.createPipelineLayout({ bindGroupLayouts: [group0Layout, group1Layout, group2Layout] }),
+        compute: { module, entryPoint },
+    });
 
-    return { pipeline, bindGroupLayouts: [group0Layout, group1Layout, group2Layout] };
+    return {
+        pipeline, maxRadius: sibling('maxRadius'), trim: sibling('trimGhosts'),
+        bindGroupLayouts: [group0Layout, group1Layout, group2Layout],
+    };
 }
 
 /**

@@ -37,7 +37,7 @@
  *  Under expansion the domain is a × the comoving domain and the world-line clock is
  *  conformal time (cosmology.js, expansion.wgsl).
  */
-import { createParticleBuffers, createUniformBuffer, writeFrameUniforms, writeSubstepUniforms, createFieldBuffers, createGravityGridBuffers, createAtomicGridBuffer, createHeatmapBuffers, createExcitationBuffers, createKugelblitzBuffers, createFrameBuffers, FRAME_PARAMS_SIZE, FRAME_STATE_SIZE, FIELD_GRID_RES, PARTICLE_STATE_SIZE, PARTICLE_AUX_SIZE, RADIATION_STATE_SIZE, PHOTON_SIZE, PION_SIZE, DERIVED_SIZE } from './gpu-buffers.js';
+import { createParticleBuffers, createUniformBuffer, writeFrameUniforms, writeSubstepUniforms, UNIFORM_RADIUS_MAX_OFFSET, createFieldBuffers, createGravityGridBuffers, createAtomicGridBuffer, createHeatmapBuffers, createExcitationBuffers, createKugelblitzBuffers, createFrameBuffers, FRAME_PARAMS_SIZE, FRAME_STATE_SIZE, FIELD_GRID_RES, PARTICLE_STATE_SIZE, PARTICLE_AUX_SIZE, RADIATION_STATE_SIZE, PHOTON_SIZE, PION_SIZE, DERIVED_SIZE } from './gpu-buffers.js';
 import { fetchShader, createLensPipeline, createPhase2Pipelines, createGhostGenPipeline, createTreeBuildPipelines, createTreeForcePipeline, createCollisionPipelines, createMergePhotonPipeline, createDeadGCPipeline, createPhase4Pipelines, createFieldDepositPipelines, createFieldEvolvePipelines, createFieldForcesPipelines, createFieldParticleGravPipeline, createFieldGravityPipelines, createFFTPipelines, createFieldExcitationPipeline, createHeatmapPipelines, createExpansionPipeline, createExtremalPipeline, createBosonDispatchArgsPipeline, createUpdateColorsPipeline, createHitTestPipeline, createComputeStatsPipeline, createFrameSlicePipelines } from './gpu-pipelines.js';
 import { buildWGSLConstants, GRAVITY_BIT, COULOMB_BIT, MAGNETIC_BIT, GRAVITOMAG_BIT, ONE_PN_BIT, RELATIVITY_BIT, SPIN_ORBIT_BIT, RADIATION_BIT, BLACK_HOLE_BIT, EXPANSION_BIT, YUKAWA_BIT, HIGGS_BIT, AXION_BIT, BARNES_HUT_BIT, BOSON_INTER_BIT, FIELD_GRAV_BIT_T1, HERTZ_BOUNCE_BIT_T1, EM_PAIRWISE_BIT_T1, WL_STRIDE, WL_META_STRIDE } from './gpu-constants.js';
 import { createGPUDispatchPlan, updateGPUDispatchPlan } from './pass-graph.js';
@@ -528,6 +528,8 @@ export default class GPUPhysics {
 
         // --- Ghost gen ---
         this._ghostGenPipeline = ghostGen.pipeline;
+        this._maxRadiusPipeline = ghostGen.maxRadius;
+        this._trimGhostsPipeline = ghostGen.trim;
         this._createGhostGenBindGroups(ghostGen.bindGroupLayouts);
 
         // --- Tree build ---
@@ -938,40 +940,55 @@ export default class GPUPhysics {
         const group1 = bg('ghostGen_g1', layouts[1],
             [b.ghostState, b.ghostAux, b.derived, b.ghostDerived, b.particleAux]);
 
-        // Group 2: ghostCounter + uniforms + ghostOriginalIdx
+        // Group 2: ghostCounter + uniforms + ghostOriginalIdx + radiusMax
         const group2 = bg('ghostGen_g2', layouts[2],
-            [b.ghostCounter, this.uniformBuffer, b.ghostOriginalIdx]);
+            [b.ghostCounter, this.uniformBuffer, b.ghostOriginalIdx, b.radiusMax]);
 
         this._ghostGenBindGroups = [group0, group1, group2];
     }
 
     /**
-     * Dispatch ghost generation before tree build (Phase 3).
-     * Only runs when boundary is LOOP (periodic).
-     * Resets ghost counter, dispatches shader, then copies ghost data into main SoA arrays.
+     * Ghost slots copied in after the alive slots each substep: the last read-back count with
+     * headroom, since the count arrives a frame late; trimGhosts clears the ones past this
+     * substep's count. 0 off a periodic boundary.
+     */
+    _ghostSlots() {
+        if (this.boundaryMode !== BOUND_LOOP) return 0;
+        return Math.min(MAX_PARTICLES, Math.max(32, Math.ceil(this._ghostCount * 1.25) + 8));
+    }
+
+    /**
+     * Before the tree build: the largest body radius (into SimUniforms.radiusMax for the
+     * collision search), then on a periodic boundary the ghosts, copied into the main arrays
+     * after the alive slots.
      */
     _dispatchGhostGen(encoder) {
-        if (this.boundaryMode !== BOUND_LOOP) {
-            this._ghostCount = 0;
-            return;
-        }
+        const b = this.buffers;
+        const loop = this.boundaryMode === BOUND_LOOP;
+        if (!loop) this._ghostCount = 0;
+        const ghostSlots = this._ghostSlots();
 
-        // Reset ghost counter to 0
-        encoder.clearBuffer(this.buffers.ghostCounter, 0, 4);
+        encoder.clearBuffer(b.radiusMax, 0, 4);
+        if (loop) encoder.clearBuffer(b.ghostCounter, 0, 4);
 
         const pass = encoder.beginComputePass({ label: 'ghostGen' });
-        pass.setPipeline(this._ghostGenPipeline);
         pass.setBindGroup(0, this._ghostGenBindGroups[0]);
         pass.setBindGroup(1, this._ghostGenBindGroups[1]);
         pass.setBindGroup(2, this._ghostGenBindGroups[2]);
+        pass.setPipeline(this._maxRadiusPipeline);
         pass.dispatchWorkgroups(Math.ceil(this.aliveCount / 64));
+        if (loop) {
+            pass.setPipeline(this._ghostGenPipeline);
+            pass.dispatchWorkgroups(Math.ceil(this.aliveCount / 64));
+            pass.setPipeline(this._trimGhostsPipeline);
+            pass.dispatchWorkgroups(Math.ceil(ghostSlots / 64));
+        }
         pass.end();
+        encoder.copyBufferToBuffer(b.radiusMax, 0, this.uniformBuffer, UNIFORM_RADIUS_MAX_OFFSET, 4);
 
-        // Copy ghost data from dedicated buffers into main arrays at offset aliveCount.
-        // Uses previous frame's ghost count for copy size (1-frame latency, safe for tree build).
-        const ghostCount = this._ghostCount;
+        // Copy ghost data from dedicated buffers into main arrays at offset aliveCount
+        const ghostCount = ghostSlots;
         if (ghostCount > 0) {
-            const b = this.buffers;
             // Copy packed ParticleState structs (36 bytes per element)
             const stateOffset = this.aliveCount * PARTICLE_STATE_SIZE;
             const stateBytes = ghostCount * PARTICLE_STATE_SIZE;
@@ -1915,7 +1932,7 @@ export default class GPUPhysics {
      */
     _dispatchTreeBuild(encoder) {
 
-        const totalCount = this.aliveCount + this._ghostCount;
+        const totalCount = this.aliveCount + this._ghostSlots();
         if (totalCount === 0) return;
 
         const b = this.buffers;
@@ -3581,7 +3598,7 @@ export default class GPUPhysics {
             extEy: this._cachedExtEy,
             axionCoupling: this._axionCoupling,
             higgsCoupling: this._higgsCoupling,
-            particleCount: this.aliveCount + this._ghostCount,
+            particleCount: this.aliveCount + this._ghostSlots(),
             bhTheta: 0.5,
             frameCount: this._frameCount,
         });
@@ -3683,7 +3700,7 @@ export default class GPUPhysics {
         // Write only the 5 substep-varying fields (dt, simTime, aliveCount, particleCount, frameCount)
         writeSubstepUniforms(this.device, this.uniformBuffer,
             dtSub, this.gpuTime, this.aliveCount,
-            this.aliveCount + this._ghostCount, this._frameCount);
+            this.aliveCount + this._ghostSlots(), this._frameCount);
 
         const workgroups = Math.ceil(this.aliveCount / 64);
         if (workgroups === 0) return; // no particles, skip dispatch
@@ -4287,7 +4304,7 @@ export default class GPUPhysics {
             extEx: this._cachedExtEx,
             extEy: this._cachedExtEy,
             maxParticles: this.buffers.maxParticles,
-            particleCount: this.aliveCount + this._ghostCount,
+            particleCount: this.aliveCount + this._ghostSlots(),
             bhTheta: 0.5,
             frameCount: this._frameCount,
         });
@@ -4349,8 +4366,9 @@ export default class GPUPhysics {
         _hitUniformU32[3] = 0;
         this.device.queue.writeBuffer(this._hitUniformBuffer, 0, _hitUniformData);
 
-        // Dispatch single-thread compute
+        // Dispatch single-thread compute, the search widened by the last substep's largest radius
         const encoder = this.device.createCommandEncoder({ label: 'hitTest' });
+        encoder.copyBufferToBuffer(this.buffers.radiusMax, 0, this._hitUniformBuffer, 12, 4);
         const pass = encoder.beginComputePass({ label: 'hitTest' });
         pass.setPipeline(this._hitTestPipeline);
         pass.setBindGroup(0, this._hitTestBindGroup);

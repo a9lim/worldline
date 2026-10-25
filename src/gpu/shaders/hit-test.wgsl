@@ -11,7 +11,7 @@ struct HitUniforms {
     clickX: f32,
     clickY: f32,
     aliveCount: u32,
-    _pad: u32,
+    radiusMax: f32,     // the largest body radius, copied from ghost-gen's reduction
 };
 
 // Struct definitions (ParticleState, ParticleAux, ParticleDerived) provided by shared-structs.wgsl.
@@ -68,8 +68,8 @@ fn main() {
         let nodeIdx = stack[top];
         top -= 1;
 
-        // Expand search box by max particle radius (conservative: ∛(max_mass))
-        let expand = 4.0;
+        // Expand the search box by the largest radius present
+        let expand = hit.radiusMax;
         if (cx < getMinX(nodeIdx) - expand || cx > getMaxX(nodeIdx) + expand ||
             cy < getMinY(nodeIdx) - expand || cy > getMaxY(nodeIdx) + expand) {
             continue;
@@ -81,7 +81,8 @@ fn main() {
         if (isLeaf && pi >= 0) {
             let pIdx = u32(pi);
             let p = particles[pIdx];
-            if ((p.flags & FLAG_ALIVE) != 0u) {
+            // Ghosts are tree leaves for seam collisions; nothing is drawn where they are
+            if ((p.flags & FLAG_ALIVE) != 0u && (p.flags & FLAG_GHOST) == 0u) {
                 let dx = cx - p.posX;
                 let dy = cy - p.posY;
                 let distSq = dx * dx + dy * dy;

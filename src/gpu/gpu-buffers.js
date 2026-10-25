@@ -106,6 +106,14 @@ export function createParticleBuffers(device, maxParticles) {
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     });
 
+    // The largest body radius this substep, as f32 bits (ghost-gen's maxRadius; positive
+    // floats order like their bits): sizes the ghost margin, the collision search and hit tests
+    const radiusMax = device.createBuffer({
+        label: 'radiusMax',
+        size: 4,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+    });
+
     // Ghost output struct buffers (separate from particle buffers to avoid aliasing)
     // After dispatch, ghost data is copied into the main arrays at offset aliveCount.
     const ghostState = storageBuffer('ghostState', PARTICLE_STATE_SIZE, maxParticles);
@@ -318,7 +326,7 @@ export function createParticleBuffers(device, maxParticles) {
         // Adaptive substepping
         maxAccelBuffer, maxAccelStaging,
         // Ghost generation
-        ghostCounter, ghostOriginalIdx, ghostCountStaging,
+        ghostCounter, ghostOriginalIdx, ghostCountStaging, radiusMax,
         ghostState, ghostAux, ghostDerived,
         // Quadtree (Phase 3)
         qtNodeBuffer, qtNodeCounter, qtBoundsBuffer, qtVisitorFlags,
@@ -582,6 +590,7 @@ const UNIFORM_SIMTIME_OFFSET = 4;      // f[1]
 const UNIFORM_ALIVE_OFFSET = 68;       // u[17]
 const UNIFORM_PCOUNT_OFFSET = 120;     // u[30]
 const UNIFORM_FRAME_OFFSET = 128;      // u[32]
+export const UNIFORM_RADIUS_MAX_OFFSET = 140;   // f[35], filled on the GPU (copyBufferToBuffer)
 
 /**
  * Write only the 5 substep-varying fields at their byte offsets within the

@@ -118,4 +118,6 @@ struct SimUniforms {
     frameCount: u32,
     scaleA: f32,        // cosmological scale factor a (1 without expansion); the domain is a × comoving
     hubble: f32,        // the frame's Hubble rate (0 without expansion)
+    radiusMax: f32,     // the largest body radius (horizon in black-hole mode), copied in each
+                        // substep from ghost-gen's maxRadius reduction
 };

@@ -65,8 +65,9 @@ fn detectCollisions(@builtin(global_invocation_id) gid: vec3<u32>) {
     let py = ps.posY;
     let pAux = particleAux[pIdx];
     let p1Radius = pAux.radius;
-    let bhOnDetect = (uniforms.toggles0 & BLACK_HOLE_BIT) != 0u;
-    let searchR = select(p1Radius * 2.0, max(uniforms.domainW, uniforms.domainH), bhOnDetect);
+    // Far enough to meet any partner's radius (a horizon in black-hole mode, which also
+    // finds a small body deep inside a large hole)
+    let searchR = p1Radius + uniforms.radiusMax;
     let p1Id = pAux.particleId;
 
     // Stack-based tree query (overlap search)

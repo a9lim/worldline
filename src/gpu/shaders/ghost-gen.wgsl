@@ -1,6 +1,12 @@
 // ─── Ghost Particle Generation ───
-// One thread per alive particle. Checks proximity to domain edges.
-// Appends ghost copies at positions beyond the boundary edge.
+// Three entry points, dispatched in order in one pass each substep:
+//   maxRadius   the largest body radius (every boundary mode: collisions and hit tests read it)
+//   main        one thread per alive particle; a body within its own radius + the largest
+//               radius + GHOST_SLOP of an edge appends ghost copies beyond it (loop mode).
+//               Ghosts weigh nothing in the tree's aggregates (every walk takes minimum
+//               images), so they need reach only as far as a collision, a capture or a hit.
+//   trimGhosts  clears the flags of the slots past this substep's count that the host copies
+//               anyway (it copies a count read back a frame late, with headroom)
 // Ghost flag (bit 4 in flags) marks them for tree insertion but skips self-accumulation.
 
 // Constants provided by generated wgslConstants block.
@@ -17,10 +23,30 @@
 @group(1) @binding(3) var<storage, read_write> ghostDerived: array<ParticleDerived>;
 @group(1) @binding(4) var<storage, read_write> particleAux_in: array<ParticleAux>;
 
-// Group 2: ghostCounter + uniforms + ghostOriginalIdx
+// Group 2: ghostCounter + uniforms + ghostOriginalIdx + radiusMax (f32 bits)
 @group(2) @binding(0) var<storage, read_write> ghostCounter: atomic<u32>;
 @group(2) @binding(1) var<uniform> uniforms: SimUniforms;
 @group(2) @binding(2) var<storage, read_write> ghostOriginalIdx: array<u32>;
+@group(2) @binding(3) var<storage, read_write> radiusMax: atomic<u32>;
+
+// Motion within a substep (at most c·dt, dt ≤ 0.5) and rounding, in world units
+const GHOST_SLOP: f32 = 2.0;
+
+@compute @workgroup_size(64)
+fn maxRadius(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let idx = gid.x;
+    if (idx >= uniforms.aliveCount) { return; }
+    if ((particleState[idx].flags & FLAG_ALIVE) == 0u) { return; }
+    // Non-negative floats order like their bit patterns
+    atomicMax(&radiusMax, bitcast<u32>(max(particleAux_in[idx].radius, 0.0)));
+}
+
+@compute @workgroup_size(64)
+fn trimGhosts(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let slot = gid.x;
+    if (slot >= uniforms.particleCount - uniforms.aliveCount) { return; }
+    if (slot >= atomicLoad(&ghostCounter)) { ghostState[slot].flags = 0u; }
+}
 
 fn appendGhost(
     gs: ParticleState, ga: ParticleAux, dd: ParticleDerived,
@@ -64,7 +90,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let W = uniforms.domainW;
     let H = uniforms.domainH;
-    let margin = max(W, H) * uniforms.bhTheta;
+    let margin = particleAux_in[idx].radius + bitcast<f32>(atomicLoad(&radiusMax)) + GHOST_SLOP;
     let topo = uniforms.topologyMode;
 
     let x = ps.posX;
