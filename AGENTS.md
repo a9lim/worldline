@@ -380,13 +380,27 @@ and Spacetime buttons, ease between the two (`EL_SPACETIME` ≈ 30°).
   height, or a preset's `minDepth` if that is more (the twin asks for the whole reach, so
   its round trip of about 109 shows whole as it ends), capped by the world lines' reach
   (127); the fit `k` shrinks the scene so the plane and its past share the screen.
-- **World lines** (`vs_line`): one triangle strip per slot straight from the history ring
-  (4 vertices a sample, an incoming and an outgoing pair, so a seam or merge break zeroes a
-  segment without bridging it; in the lab's coordinates only the newest depth / `WORLDLINE_DT`
-  samples, `SpacetimeParams.lineWindow`, since older ones have faded out), mapped from the cover through the slot's deck and on a
-  periodic domain to the image nearest the body (or the observer). The fragment draws a
-  hairline and a bead every `beadStep` of the body's proper time (a power of 2 near depth/14),
-  fading beads closer than ~8 px. Opacity falls with age; the selected body is the accent.
+- **World lines** (`vs_line`): the history ring's samples (in the lab's coordinates only the
+  newest depth / `WORLDLINE_DT`, `SpacetimeParams.lineWindow`, since older ones have faded
+  out), mapped from the cover through the slot's deck and on a periodic domain to the image
+  nearest the body (or the observer). The fragment draws a hairline and a bead every
+  `beadStep` of the body's proper time (a power of 2 near depth/14), fading beads closer than
+  ~8 px. Opacity falls with age; the selected body is the accent.
+- **Decimation.** On screen most samples are a fraction of a pixel apart, so three compute
+  passes before the scene's render pass (`lineKeep`, `lineScan`, `lineWrite`, recorded by
+  `GPURenderer._encodeSpacetime`) keep only the points the drawing needs. `lineKeep` (32
+  threads a slot, each deciding 32 points in order) drops the segments that are breaks,
+  transparent at both ends or off screen, and stretches a chord from each kept point until
+  it would miss a skipped sample by 0.03 device px, its opacity by 0.01, or near a bead its
+  proper time or bead scale, or the point's state changes; where the old 4 px ribbon folds
+  (`skewed()`: cusps, kinks, a direction taken across a seam or merge) it keeps every sample.
+  `lineScan` lays the slots' lists end to end in slot order (blending makes draw order pixel
+  order, so no atomic-append order), and `lineWrite` writes each kept point's vertex as the
+  undecimated strip had it there. `vs_line` draws one strip over every list, 4 vertices a
+  point, a run's end bridged by degenerate vertices; each point's ribbon is as wide as what
+  its fragments can colour (the hairline's 1.75 px, a bead's 3 px near one, 4 px where
+  folded). Every `shots.mjs` frame, and the boosted ones, match the undecimated strips within
+  8/255 (largest step 7).
 - **Trails** are the same world lines seen from above: with Trails on, `vs_line` draws in the
   plane view too (`SpacetimeParams.trails`; the flat camera zeroes the matrix's h column so
   the past doesn't clip). There is no separate trail pass or buffer.
@@ -397,9 +411,10 @@ and Spacetime buttons, ease between the two (`EL_SPACETIME` ≈ 30°).
   pions and leptons on timelike lines beaded by their own clocks.
 - **Events** (`vs_event`, `fs_event`, tilted): open circles, the ground inside a hairline, where
   a world line begins during the run, ends, merges, or takes a kick (a jump in proper
-  velocity above `KICK_DW` (0.15) between samples, at its local maximum). Found by scanning
-  every sample in the window each frame, the plate's costliest draw at 500 bodies (0.8 ms on an
-  M5 Max); 2.5's event log (`docs/ROADMAP.md` §4.2) would draw logged events instead.
+  velocity above `KICK_DW` (0.15) between samples, at its local maximum). `lineKeep` scans
+  every sample in the window for them each frame and `lineWrite` lists them (up to 64 a slot
+  on average) for one instanced draw; 2.5's event log (`docs/ROADMAP.md` §4.2) would draw
+  logged events instead.
 - **The sheet of the present.** In the lab's coordinates, world lines and light that pass
   under the tilted plane's fill are drawn at `SEEN` (0.45) (`underSheet()`).
 - **The plane and box.** `grid-render.wgsl` keeps the rulers to the domain and gives it a faint
@@ -766,7 +781,8 @@ their force's ink; velocity arrows are graphite; clock arcs take the body's ink.
 `GPURenderer` draws on `#gpuCanvas`, behind the 2D `#simCanvas` that `Overlay` uses for
 the field atlas, the spawn-drag line and the plate's lines. Every layer draws in order into
 one render pass and one submit (`render()` → `_drawLayers()`): on a tiled GPU each pass loads
-and stores the whole canvas, which cost more than the layers did. Uniforms are written per
+and stores the whole canvas, which cost more than the layers did. The world lines' compute
+passes (Decimation, above) go in the same encoder ahead of it. Uniforms are written per
 layer, and per slot for the rings, arrows and torques, so each draw reads its own. The pass
 clears and starts with the background grid (`grid-render.wgsl`), a full-screen triangle
 that draws the lab rulers and the domain edge: hairlines at
