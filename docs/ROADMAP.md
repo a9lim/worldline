@@ -271,6 +271,13 @@ Bugs the new oracles found, all older than 2.2:
   against pairwise on a uniform torus, now 0.3% (the group walk's box criterion counts too).
 - The tree walk's stack bound read 128 against an array of 48.
 
+Codex (astra) reviewed the trees, the walk, the store and annihilation and found five more,
+in 2.2's own code, fixed in `f89688c`: collision searches read the pre-drift tree as now (a
+pair closing during the drift was missed); the walk's breadth-first frontier could overflow
+and took nodes whole, a body meeting its own mass (205% off on spins, 4000 bodies at a
+point); the bosons' root, no longer the domain, could be a strip that width-only opening tests
+misread; ghosts were capped at the store's tier; annihilation read pions others were clearing.
+
 What changed (§10 has the commits):
 - **Trees from sorted keys** (`tree-build.wgsl`): Morton codes, a bitonic sort sized on the GPU
   by the live count, the radix tree (Karras 2012), and a compressed quadtree in the old node
@@ -310,6 +317,13 @@ Open:
   `expansion.wgsl`), so those readback words aren't bitwise reproducible.
 - **Kugelblitz's rate in Hawking gas** (one a frame, the limit) is the model's, untested until
   now: whether it is the experiment or a tuning question is open.
+- **The trees' bottom-up sum** publishes a child's fields and then its arrival through relaxed
+  atomics, which WGSL doesn't order across locations (Codex). No run has shown a stale read
+  (the oracles check the root and bitwise reruns), and the CAS trees had the same protocol;
+  a pass per tree level would be strictly safe.
+- **Barnes–Hut's tidal torque** from a far node squares the node's total coupling where the
+  pairwise sum adds squares, an approximation that grows with the bodies a node holds and
+  matters where softening flattens distances (r ≪ ε).
 
 ## 4. 2.5, first: the record
 

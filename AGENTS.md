@@ -281,9 +281,12 @@ There is no Darwin term: Liénard–Wiechert carries EM to all orders in v.
 
 Barnes–Hut picks the tree walk over pairwise forces, without Relativity. The walk
 (`forces-tree.wgsl`) is a group walk: 32 bodies consecutive in the tree's Morton order walk
-it once against their bounding box, breadth first, into a list in workgroup memory, which
-eight threads a body then sum a tile at a time; lists and frontiers fill by prefix sums, so
-the sums are the same every run. A node is taken whole when its size is under θ = 0.5 times
+it once against their bounding box into a list in workgroup memory, which eight threads a
+body then sum a tile at a time. Each round pops a batch of nodes off a stack, the batch
+shrinking as the stack fills so a reserve always holds a depth-first descent, so no tree
+overflows it; the list and the stack fill by prefix sums, so the sums are the same every run.
+A far node's tidal torque squares its total coupling where pairwise sums the squares: a
+far-field approximation of Barnes–Hut's, large only where softening flattens the distances. A node is taken whole when its size is under θ = 0.5 times
 its distance from the box, and on a periodic domain only when its cell and the box lie
 within half a domain of each other, so every body sees all of it in one image (without that
 rule the torus error against pairwise was 31%). With Relativity every force runs pairwise
@@ -296,13 +299,14 @@ as far as a contact: each substep `ghost-gen.wgsl` first reduces the largest bod
 (`maxRadius`, the horizon in black-hole mode, into the `radiusMax` buffer and, by an
 in-encoder copy, `SimUniforms.radiusMax`), then ghosts each body within its radius + that
 largest radius + `GHOST_SLOP` (2) of an edge, about 140 ghosts for 500 bodies. The host
-learns a substep's ghost count only a frame later, so it copies the store's capacity of ghost
-slots (`_ghostSlots()`) and `trimGhosts` clears the slots past the substep's own count;
+learns a substep's ghost count only a frame later, so it copies the whole ghost buffer
+(`_ghostSlots()`) and `trimGhosts` clears the slots past the substep's own count;
 `cacheDerived` runs first, so the reduced radius is this substep's. Collision detection and
 absorption prune by each tree node's largest radius (node word 19) instead: a collision pair
 is written by its smaller body (the lower slot of two alike), which looks only under nodes
 whose largest radius reaches its own, so a small body deep inside a large horizon is found
-and a grown body's own walk stays short. The largest radius widens the hit test, which
+and a grown body's own walk stays short. The tree is from before the substep's drift, so the
+collision search reaches c·dt further and tests the bodies where they are. The largest radius widens the hit test, which
 ignores ghosts. With Higgs on, the Yukawa range is `yukawaMu·√(higgsMod_i·higgsMod_j)`,
 `higgsMod = max(|φ|, HIGGS_MASS_FLOOR)` cached per particle in `axYukMod.z`.
 
@@ -601,8 +605,9 @@ backdrop seen through the bodies as a thin lens, viewed along z, in the lab fram
 - **Pion annihilation** (Boson interaction): an opposite-charge pair of the same kind within
   2 annihilates into two photons. It pairs in two passes (`boson-tree.wgsl`): each pion
   proposes to its partner, the lowest-index one above it in reach (found through the
-  bosons' tree), each keeps its lowest proposer, and a pion nobody proposed to annihilates
-  with its partner if its proposal was kept, so no pion is in two pairs.
+  bosons' tree), and records it; each keeps its lowest proposer; and a pion nobody proposed
+  to annihilates with its partner if its proposal was kept, so no pion is in two pairs and
+  only a pair's proposer touches either pion.
 - **Annihilation** (Merge mode, matter meets antimatter) emits two photons conserving
   lab-frame energy and momentum: the 32-byte `MergeResult`
   (`p0 = x, y, energy, type`, `p1 = px, py, _, _`) → `merge-photons.wgsl` on-device.
@@ -706,7 +711,8 @@ per stage would land before the whole encoder ran (that bug left Φ ≡ 0 until
   velocity-Verlet correction under Barnes–Hut, and one for the bosons with Boson interaction;
   the items come from `tree-items-bodies.wgsl` or `tree-items-bosons.wgsl`): the bounds, the
   padded root box, a key per active item (a 30-bit Morton code and the slot) packed to the
-  front, `treePlan` (one thread: the sort's size from the live count and every sort step's
+  front (about a square root box, so every cell is square), `treePlan` (one thread: the sort's
+  size from the live count and every sort step's
   workgroups, for indirect dispatch from its own buffer, since a dispatch can't read its size
   from a buffer it writes), a bitonic sort (blocks of 1024 in workgroup memory, then the wider
   steps by dynamic offset into a step table), the binary radix tree (Karras 2012), and a
