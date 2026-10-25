@@ -5,95 +5,183 @@ description: Explore relativistic many-body dynamics, electromagnetism, light an
 updated: 2026-10-24
 ---
 
-# Worldline — Interactive Particle Physics Simulator
+# Worldline
 
-Worldline is a real-time N-body simulator that models how particles move under gravity, electromagnetism, and relativistic effects. It runs in the browser on WebGPU compute shaders.
+Worldline is a relativistic many-body sandbox. Up to 512 charged, spinning bodies move in a plane under gravity, electromagnetism, gravitomagnetism, a Yukawa force and two scalar fields, with black holes, radiation and pools of photons, pions and leptons. Units are c = G = ħ = 1, and the physics runs as WebGPU compute shaders.
 
-## Forces
+The scene is a slice of a 3+1-dimensional world. Bodies are 3D point masses confined to a symmetry plane, spinning about its normal and interacting through their 3D force laws. The scalar fields live in a slab of thickness 8, and the expanding universe is a slab of a flat 3D Friedmann–Robertson–Walker universe. Each effect below is either a stated law or a named approximation.
 
-Worldline exposes 11 force and correction families: Newtonian gravity, gravitomagnetism (frame-dragging), Coulomb electrostatics, magnetic (Lorentz) force, Yukawa interaction, Higgs field coupling, axion field coupling, cosmological expansion, first post-Newtonian correction, spin-orbit coupling, and radiation reaction. Applicable particle and boson interactions can use Barnes-Hut tree acceleration; scalar fields evolve on grids, and external or correction terms run in their own passes.
+## Interactions
 
-## Integration
+Fifteen toggles set the model. Seven of them are interactions:
 
-Particle trajectories are advanced with a phase-space-volume-preserving Boris rotation and adaptive substeps. Relativistic corrections use the first post-Newtonian (Einstein–Infeld–Hoffmann) equations of motion rather than a full general-relativistic geodesic solve; a slightly eccentric orbit's perihelion advances by 6πM/p per revolution, Schwarzschild's value at this order.
+- **Gravity** is Newtonian with Plummer softening, F ∝ r/(r² + ε²)^{3/2} with ε = 8, and carries a tidal-locking torque.
+- **Gravitomagnetic** adds the field of moving and spinning masses, F = 4m v × B_g. Parallel mass currents repel, and a spinning mass slows prograde orbits. With Relativity on it also adds a frame-dragging torque.
+- **Coulomb** is electrostatics, softened in the same way.
+- **Magnetic** adds the Lorentz force from moving charges (Biot–Savart) and the dipole–dipole force between spinning charges.
+- **Yukawa** is a screened attraction e^(−μr)/r, whose quanta are massive pions.
+- **Higgs** and **Axion** are scalar fields (see below).
 
-## Proper Time
+**Relativity** gives bodies proper velocity w = γv and turns on signal delay. **1PN** adds the O(v²) two-body terms the other sectors leave out: Einstein–Infeld–Hoffmann (with Gravitomagnetic), Bažański's gravity–charge term and the scalar Breit term. Electromagnetism needs no Darwin term, because under Relativity it already acts through each charge's full field. **Spin-orbit** kicks spinning bodies along field gradients (Stern–Gerlach F = μ∇B_z, Mathisson–Papapetrou F = 2L∇B_g). **Radiation** and **Black hole** are described below. **Boson interaction** lets photons, pions and leptons gravitate, and lets charged pions interact electrically. A boson cluster whose energy exceeds half its extent collapses into a body (a kugelblitz, by the hoop conjecture). **Barnes–Hut** and **Expansion** are not forces: one swaps pairwise sums for a tree (opening angle 0.5), the other makes the domain an expanding universe. Uniform external gravity, electric field and B_z can be added on top.
 
-Internal processes run on each body's own clock rather than on lab time. Pion decay, Hawking evaporation, Schwinger discharge, and superradiance advance by the body's proper time, so a neutral pion beam at Lorentz factor 5 travels five times farther before half of it decays, and a black hole moving at γ = 2 takes twice as long to evaporate. Emission happens in the emitter's rest frame and is boosted into the lab with the matching recoil. Photons and leptons are removed from their pools after a fixed age; that cull bounds memory and is not a physical lifetime.
+Collisions pass through, merge or bounce. A merge adds rest masses and conserves momentum and angular momentum. The kinetic energy it loses goes into the scalar fields if one is on, and otherwise leaves the books. Matter meeting antimatter in Merge mode annihilates into two photons.
 
-Every body also carries a clock. Its proper time advances at dτ/dt = √(1 + 2Φ − v²), the weak-field rate that is exact for a free particle, for a clock held at rest near a Schwarzschild mass, and on a circular Schwarzschild orbit, where it runs at √(1 − 3M/r). The particle panel shows τ and dτ/dt, and the Clocks overlay (K) draws a ring around each body that fills once per 16 units of its proper time, so a moving body or one deep in a well visibly lags.
+## Integration and resolution
 
-## The Spoke
+The integrator is a staggered Boris pusher: magnetic and gravitomagnetic forces rotate the velocity, and velocities sit half a kick from positions. Each frame takes at most 32 substeps of dt ≈ √(ε/a_max), from the previous frame's largest acceleration, and 1PN's velocity-dependent forces get a velocity-Verlet correction. With Relativity off the dynamics are Newtonian and nothing caps the speed; a strong Yukawa well drives bodies past 3c.
 
-Each body is drawn as its rest-frame disk pushed through the Lorentz transformation of its velocity, with one spoke marking its orientation. A moving body contracts by 1/γ along its motion, and a spinning, moving body's spoke bends: points across the disk are seen at different moments of the body's own time (relativity of simultaneity), so the spoke twists by 2·v·v_rim radians across the diameter, about 93° for a wheel spinning at 0.9c and moving at 0.9c. The spoke turns at the body's rest-frame rate on its proper time, so the moving wheel also turns slower in the lab. Black holes turn at their horizon angular velocity Ω_H.
+The softening length ε = 8 is large against the default 64 × 64 domain, so close encounters are soft. Behaviour at separations near ε belongs to the softening, not to the force law (black-hole mode uses ε = 4). The analytic checks hold well outside it. With 1PN and Gravitomagnetic on, a weak-field orbit at r ≈ 200 advances its perihelion by Schwarzschild's 6πM/p per revolution, of which special relativity alone supplies πM/p. Inside the softening length the 1PN terms are far outside their range.
 
-The spoke's orientation is a transported axis, and it precesses even when the body does not spin. Thomas precession turns it backward by 2π(γ − 1) per circular orbit under non-gravitational forces; geodetic precession turns it forward by 3πM/r per orbit around a mass, as measured by Gravity Probe B; and with gravitomagnetism on, a spinning mass drags it (Lense–Thirring). Gravity enters only through the geodetic and Lense–Thirring terms, never through Thomas precession.
+## Signal delay
 
-## Reading the Figure
+Every body records its world line: 1024 samples, one every 1/8 time unit, of position, velocity, acceleration, proper time, spin, mass and charge. With Relativity on, every force acts from where its source was when the signal left it, found on that record.
 
-Each body is drawn in the ink of its charge's sign: sienna for positive, prussian for negative, graphite for neutral, with the sign marked on bodies large enough to carry it. Antimatter is drawn hollow, and a black hole is a void ringed by its dashed ergosphere. The one red marks the selected body, its world line and its past light cone. A photon is a short wave packet whose wavelength reads its energy, shorter for more.
+Charges act through their Liénard–Wiechert fields. A fast charge's field flattens toward its present position, and an accelerating charge radiates a field that falls off as 1/r. The field is regularized and interpolated:
 
-Trails are world lines seen from above. Alt-drag, W or the Spacetime button tilts the plane into time. Each body's world line then climbs to the plane of the present, with time and space at one scale so that light runs at 45°. It is beaded at a fixed interval of the body's own proper time, so a moving or deeply bound clock beads more sparsely. Open circles mark events: a birth, a death, a merger, a sudden kick. The selected body's past light cone opens below it. Lab and Observer switch the drawing between the lab's coordinates and those of an observer moving at the Boost speed, in which the plane of the present becomes that observer's surface of simultaneity.
+- It is softened by σ³, σ = R/√(R² + ε²), so a charge at rest gives the softened Coulomb field.
+- The beaming factor κ = 1 − n̂·β is floored at 1/κ³ ≤ 100, which suppresses the forward field of a source approaching faster than about 0.785c.
+- Positions are cubic Hermite curves and accelerations are linear, so the two do not describe one trajectory, and spin-orbit kicks are missing from the acceleration.
+- Magnetic dipoles keep static fields.
+- The field carries no energy or momentum in transit, so particle momentum is not conserved, and two charges' mutual radiation leaves without photons.
 
-The Fields overlay draws fields the way a physics text prints them:
+Gravity, Yukawa and the dipole forces have no field solution. They use a toy instead: the static law at the delayed position, times the aberration factor (1 − n̂·v)⁻³, capped at 100. It is not conservative. At first order in v the pull points to where the source was, so a binary gains energy each orbit (Laplace's argument). In general relativity, velocity-dependent terms cancel this aberration (Carlip, 2000). Measured: an equal-mass binary at v = 0.16 loses 80% of its binding energy in one orbit. Barnes–Hut aggregates use present positions, so the tree and pairwise paths disagree here.
 
-- gravity's potential as contours, ticked downhill;
-- the charges' electric field as field lines, traced through the Liénard–Wiechert field, so an accelerating charge's lines kink where news of its acceleration has reached;
-- the magnetic field, which points out of the plane, as ⊙ and ⊗ on a lattice whose density doubles with each tenfold rise in strength;
-- Yukawa's potential as dotted contours.
+A body spawned by hand acts on nothing until its light arrives. A removed body keeps acting until its last light has passed. Bodies from a preset or a save count as having always existed.
 
-A Higgs or axion field is hatched one way where it sits above zero and the other way below, with the walls between domains drawn in. A key in the corner names each mark in the current scene. A scale bar gives lengths in units where c = 1, and the caption under the figure states what it shows, with its current values.
+## Proper time and the spoke
 
-## Frames
+Every body carries a clock running at dτ/dt = √(1 + 2Φ − v²), with Φ the other bodies' softened Newtonian potential. Field gravity is excluded, and near a hole Φ stays Newtonian. It is the weak-field rate, exact for a free clock, a static clock outside a Schwarzschild mass and a circular Schwarzschild orbit, √(1 − 3M/r). The particle panel shows τ and dτ/dt, and the Clocks overlay (K) fills a ring once per 16 units of each body's proper time.
 
-The view can be drawn for observers other than the lab: the zero-momentum frame, the selected particle's rest frame, a boost at a chosen speed and direction, or a frame rotating at a chosen rate. Worldline records every body's world line and redraws the scene on the observer's surface of simultaneity, so in a boosted frame moving rulers contract, clocks synchronized in the lab disagree across the view, and a fast wheel can be followed in its own rest frame, where it is round. The observer's present is set far enough into the lab's past that everything shown has already been computed, and the Frame tab reports how far behind the lab it is. A background grid of rulers at rest in the lab contracts and shears with the observer, and tilted into spacetime the same world lines are drawn in the observer's coordinates.
+Pion decay, Hawking evaporation, Schwinger discharge and superradiance run on dt/γ: kinematic dilation only, without the gravitational lapse. So a neutral pion beam at γ = 5 travels five times as far before half of it decays, and a hole at γ = 2 takes twice the lab time to evaporate. Emission happens in the emitter's rest frame and is boosted into the lab with its recoil.
 
-On a torus the lab is a preferred frame: opposite edges are identified at equal lab time, so a traveller circling a torus of length L at speed v sees its own images, in its own frame, spaced γL apart with clocks γvL apart. A twin who circles the torus at 0.8c meets the stay-at-home twin every lap, younger each time, without ever turning around (Barrow and Levin, 2001). In the twin-paradox preset the traveller bounces off a wall instead, and at the turn the home clock's reading on the traveller's slice jumps ahead by 2vd.
+Each body is its rest-frame disk pushed through the Lorentz transformation of its velocity, so a moving body contracts by 1/γ along its motion. One spoke marks the body's orientation, turning at its rest-frame rate on its proper time; black holes turn at Ω_H. On a spinning, moving body, points across the disk are seen at different moments of its own time, so the spoke bends by 2·v·v_rim radians. For a rim at 0.9c on a wheel moving at 0.9c, that is about 93°.
+
+The spoke is a transported axis, so it precesses even without spin:
+
+- Thomas precession, from non-gravitational forces only, turns it back by 2π(γ − 1) per circular orbit.
+- Geodetic precession turns it forward by 3πM/r per orbit, the effect Gravity Probe B measured.
+- With Gravitomagnetic on, a spinning mass drags it (Lense–Thirring).
+
+1PN spin precession's two-body companion term is not modelled.
+
+## Radiation
+
+With Radiation on, three kinds of radiation carry energy away:
+
+- Accelerating charges radiate by Larmor's formula, with its Landau–Lifshitz reaction force.
+- Orbiting masses and charges radiate by the gravitational and electric quadrupole formulas.
+- Bodies under Yukawa emit pions by the scalar analogue of Larmor's formula.
+
+The energy leaves in quanta of 0.02. Photons are a surrogate. The rates are the 3D formulas, and each quantum then travels in the plane at c, in a direction drawn from the in-plane slice of the angular pattern (sin²θ about the acceleration, beamed forward at high γ). They carry the energy and beaming of 3D emission, but they are not planar electrodynamics. Gravitational quanta are drawn in madder, electromagnetic ones in ochre.
+
+Reaction is strong at these charges. An electron of mass 0.1 and charge −1 has τ = 2q²/3m = 6.7, comparable to a pass, and can radiate more than its kinetic energy. The bremsstrahlung preset's electrons have mass 0.3 for that reason.
+
+Neutral pions decay into two photons (rest-frame half-life 32), and charged ones into a lepton and a photon (64). Bodies absorb photons and pions with their full four-momentum. Photons bend by twice the Newtonian deflection, pions by (1 + v²), and photons never convert into pairs. The pools hold 4096 photons and 2048 pions and leptons. Photons are culled at lab age 256 and leptons at 512. The cull bounds memory, is not a lifetime, and can destroy a bound structure. Culled energy is booked as escaped radiation.
+
+## Black holes
+
+Black-hole mode makes every body a Kerr–Newman hole, with horizon r₊ = M + √(M² − a² − Q²) and a = J/M. Super-extremal inputs clamp to r₊ = M, an effective radius rather than a naked singularity. In Merge mode, which black-hole mode forces, a body whose centre crosses a horizon is swallowed. Holes carry no antimatter flag (no hair), and the equatorial ergosphere, at M + √(M² − Q²), is drawn dashed.
+
+Gravity near a hole is the Paczyński–Wiita pseudo-potential Φ = −M/(r − r₊), floored at a small gap. It is phenomenological: it steepens the well so that near-horizon orbits plunge, but it is not a geodesic solve, and its orbital radii are not Kerr–Newman's.
+
+- **Hawking radiation** uses the Kerr–Newman temperature T = κ/2π and the Stefan–Boltzmann power σT⁴A (σ = π²/60), with none at extremality. Photons leave isotropically in the hole's rest frame, with recoil. Below mass 0.05 a hole sheds its charge as leptons and ends in two back-to-back photons carrying its four-momentum.
+- **Schwinger discharge** runs at a rate ∝ exp(−πE_c/E), with E = |Q|/(r₊² + a²) the horizon field. Each event emits one same-sign lepton and costs the hole one charge quantum and the lepton's rest mass, 0.01. The lepton's kinetic energy is not charged to the hole, since charging it makes the discharge run away, so each event creates that energy.
+- **Extremal shedding**: a hole charged past √(M² − a²) sheds same-sign leptons, one quantum each, at a rest-frame speed of 1/√3, with recoil. Their kinetic energy is also unpaid. If the lepton pool is full, the charge is clamped as a backstop.
+- **Superradiance** (with Axion): while Ω_H exceeds the axion mass μ_a, the hole pumps energy into the field at a rate ∝ α²(Ω_H − μ_a)(1 + φ²), with α = Mμ_a. It loses dM = dE and dJ = dE/μ_a, spinning down to Ω_H = μ_a. The real rate scales as α⁸, too slow to watch, so α² is a deliberate speed-up. It runs on dt/γ, valid only for slow holes.
+
+## Charge
+
+Charge comes in quanta of 0.1. Charges are rounded on creation, and emission, absorption, decay, discharge and shedding each move whole quanta. Charge leaves the system only with a removed body, a culled lepton, or the extremal backstop.
+
+## Scalar fields
+
+The Higgs and axion fields live on 128 × 128 grids with cubic B-spline deposition and interpolation, clamped to ±2. They step together, one Störmer–Verlet kick–drift–kick per substep, and their sources couple through proper time.
+
+- **Higgs**: a Mexican-hat potential. A body's mass is its base mass times max(|φ|, 0.05), and the field scales the Yukawa range. Its Z₂ symmetry is biased toward the positive vacuum: the field resets there, and its source is positive.
+- **Axion**: a quadratic potential. It scales the electromagnetic couplings by 1 + g·a, is sourced by g·q², and modulates the Yukawa coupling with a sign that flips for antimatter.
+
+Both fields carry an ether damping, on by default (2m_H and g·m_a). It is a friction relative to a preferred frame, and it dissolves self-bound lumps. A numerical viscosity damps modes near the grid scale.
+
+With Gravity on, the fields evolve in the metric ds² = −e^(2Φ)dt² + e^(−2Φ)dx², whose Klein–Gordon equation is φ̈ = e^(4Φ)∇²φ − e^(2Φ)V′ + 4Φ̇φ̇. Φ comes from the fields' energy and the bodies' rest mass, convolved by FFT with −1/√(r² + ℓ²), ℓ = 8: a Plummer kernel standing in for a slab, with periodic boundaries. The fields' share of Φ also pulls on the bodies, and oscillations near a mass slow by e^Φ.
+
+The Kibble–Zurek preset ramps the Higgs mass term through the transition, crossing it at τ_Q = 120, with a Langevin heat bath. The field freezes into ±v domains. A slower quench leaves fewer walls, as a power of τ_Q (Kibble, 1976; Zurek, 1985), though the preset runs a single quench time.
 
 ## Expansion
 
-With expansion on, the periodic domain becomes a slice of an expanding Friedmann–Robertson–Walker universe. Bodies at rest keep their comoving positions while the space between them grows; peculiar momenta and photon energies fall as 1/a; scalar fields feel Hubble friction; and bound systems keep their size. The history can be imposed (de Sitter, matter, radiation, ΛCDM) or follow from the universe's own contents through the Friedmann equation, with matter, radiation and field energy each diluting at its own rate. Signals travel on light cones that are straight in comoving coordinates and conformal time, and because Maxwell's equations are conformally invariant a charge's Liénard–Wiechert field stays exact, its radiation dimmed by the redshift. The Stats tab shows the scale factor, the Hubble rate, the Hubble radius and the event horizon, and books the energy the expansion takes or gives as its own line, so the energy drift still measures numerical error. An axion field frozen by Hubble friction starts oscillating once the Hubble rate falls below its mass and then dilutes like cold matter (misalignment), and a Higgs field quenched through its symmetry-breaking transition freezes into domains, and a slower quench leaves fewer walls between them: the Kibble–Zurek mechanism (Kibble, 1976; Zurek, 1985).
+Expansion requires the torus: the periodic domain is the whole universe, a slab of comoving thickness 8 cut from flat 3D FRW. The Klein bottle and RP² aren't homogeneous, so a uniform background would pull on bodies there.
+
+- **History.** a(t) follows de Sitter, matter, radiation, ΛCDM (Ω_m = 0.3), or the Friedmann equation H² = (8π/3)ρ̄ + H_Λ². In the Friedmann case, ρ̄ is measured from bodies, bosons, radiation and the fields' slab energy, scaled as a⁻³ or a⁻⁴ between measurements. a stops at 1000.
+- **Dynamics.** Positions stretch and peculiar momenta and photon energies fall as 1/a. The stretch is split symmetrically around substeps that run at the midpoint a, a Strang split at frame cadence (H·dt ≤ 0.02). Bodies at rest keep their comoving places, and a bound pair feels only the tidal term (ä/a)d.
+- **Signals.** World lines are recorded in comoving coordinates and conformal time, where light cones are straight. Maxwell's equations are conformally invariant, so the flat-space field there gives the physical field over a², with radiation dimmed by 1/(1 + z). That field keeps every regularization listed under Signal delay and sees one image of each source. The other laws use the delayed physical position, without FRW corrections.
+- **Fields** feel Hubble friction, and their sources thin as 1/a. An axion field frozen while H exceeds its mass starts oscillating once H drops below it, then dilutes like cold matter (misalignment).
+- **Frames.** An expanding universe has no global inertial frames, so the non-lab frames turn off once a ≠ 1, and the spacetime view becomes a conformal diagram.
+- **Ledger.** The Stats tab shows a, H, c/H, the event horizon and the Friedmann density, and it books the energy expansion takes as W. The booking is exact for kinetic and photon redshift and for Hubble friction. For the potentials it is first order and lags a readback, and pending radiation isn't redshifted.
+
+## Frames
+
+The view can be drawn for other observers: zero momentum, the selected particle, a boost at a chosen speed and direction, a frame co-rotating at a chosen rate, or free fall (the selected particle followed without a Lorentz transformation, so uniform gravity vanishes and tides remain). Worldline cuts every recorded world line with the observer's surface of simultaneity. In a boosted frame, moving rulers contract, lab-synchronized clocks disagree across the view, and a fast wheel seen in its own rest frame is round. The observer's present lags the lab's so that everything drawn has already been computed, and the Frame tab reports the lag. Frames are only a view: spawning and selection act in the lab, and trails, arrows and the field overlays stay lab-only.
+
+On a torus the lab is a preferred frame: opposite edges are identified at equal lab time. A traveller circling a torus of length L at speed v sees its own images γL apart in its own frame, with clocks γvL apart. A twin circling at 0.8c meets the stay-at-home twin every lap, younger each time, without turning around (Barrow and Levin, 2001). On the Klein bottle and RP², frames draw only the primary image.
 
 ## Lensing
 
-With lensing on, the grid becomes a backdrop far behind the plane, seen through the bodies' masses as a thin gravitational lens. Each pixel shows the backdrop where its ray came from, β = θ − α(θ), with the deflection α summed from every body's two-dimensional logarithmic potential; a lone mass bends the rulers into an Einstein ring of radius √(4MD), where D sets how far behind the plane the backdrop lies. A backdrop star can be placed in the sheet: its images appear as arcs and rings, and its magnification, measured by shooting a ray through every cell of the view, traces a microlensing light curve as a mass drifts past it, (u² + 2)/(u√(u² + 4)) for a single lens (Paczyński, 1986). The thin-lens approximation has no black-hole shadow, so the photon-capture disk around a black hole is drawn as an imposed overlay.
+With lensing on, the grid becomes a backdrop behind the plane, seen through the bodies as a thin lens along the plane's normal. Each pixel shows the backdrop at β = θ − α(θ), with α summed over the bodies as point lenses, 4M𝒟/b. The distance factor 𝒟 = D_L·D_LS/D_S is set by a slider, and a lone mass makes an Einstein ring of radius √(4M𝒟).
 
-## Scalar Fields
+A backdrop star's images appear as arcs and rings. Its magnification, counted by inverse ray shooting, traces a microlensing light curve. For a single lens the curve follows (u² + 2)/(u√(u² + 4)) (Paczyński, 1986), averaged over the star's disk.
 
-The Higgs and axion fields evolve on a 128 × 128 grid. With gravity on, they evolve in the metric ds² = −e^{2Φ}dt² + e^{−2Φ}dx², whose Klein–Gordon equation reduces to the weak-field form at small Φ and stays well behaved in deep wells. The potential Φ comes from the fields' own energy and the particles' mass, solved by FFT convolution over a sheet of thickness 8, so field oscillations near a massive body slow by the gravitational redshift factor e^Φ.
+The lens is instantaneous and weak-field: no time delays, no moving-lens corrections, no strong-field images, and lab frame only. On a periodic domain each lens sits at its image nearest the view's centre. A thin lens casts no shadow, so each black hole gets an imposed capture disk of Schwarzschild's 3√3·M, ignoring spin and charge.
+
+## Reading the figure
+
+Each body is drawn in the ink of its charge's sign: sienna for positive, prussian for negative, graphite for neutral, with + or − on bodies large enough to carry it. Antimatter is hollow, and a black hole is a void inside its dashed ergosphere. The one red marks the selected body, its world line and past light cone, and the lens probe's star. A photon is a short wave packet whose wavelength shortens as its energy rises. Colour always comes paired with a pattern, so the figure survives grayscale.
+
+Trails are world lines seen from above. Alt- or Shift-drag, W or the Spacetime button tilts the plane into time, at one scale for time and space so that light runs at 45°. World lines are beaded at a fixed interval of proper time, so a fast or deeply bound clock beads sparsely. Open circles mark births, deaths, mergers and kicks, and the selected body's past light cone opens below it. Lab and Observer switch between the lab's coordinates and those of an observer at the Boost speed.
+
+The Fields overlay prints fields the way a textbook figure does:
+
+- gravity's potential as contours, ticked downhill;
+- the electric field as field lines, through the delayed field when Relativity is on, so an accelerating charge's lines kink where news of the acceleration has reached;
+- the out-of-plane magnetic field as ⊙ and ⊗ on a lattice whose spacing halves with each tenfold rise in strength;
+- Yukawa's potential as dotted contours.
+
+Higgs and axion fields are hatched one way above zero and the other below, with domain walls drawn in. A key names each mark in the scene, a scale bar gives lengths in units of c = 1, and the caption states what the figure shows, with live values.
 
 ## Presets
 
-Six curated presets each make one figure: cyclotron drift, where charges of both signs trace helices in spacetime; the twin paradox; a relativistic wheel; bremsstrahlung, where a beam of fast electrons bent by a nucleus sheds light beamed forward; Kibble–Zurek walls in a quenched Higgs field; and microlensing of a backdrop star. Each sets its initial conditions and forces and opens on its own frame; everything else Worldline models stays a toggle away.
+Six presets each set their own domain, forces and view:
 
-## Black Hole Physics
+- **Cyclotron drift**: charges of both signs at about 0.5c gyrate in B_z = 0.8 and drift across an electric field at 0.15c. In spacetime they trace helices of opposite hand, leaning the same way. Their synchrotron light is weak, a few photons a run.
+- **Twin paradox**: one twin flies to a wall at 0.8c and back, ageing 0.6 of the home twin's time. On the traveller's slice, the home clock jumps ahead by 2vd at the turn.
+- **Relativistic wheel**: a wheel with rim speed 0.9c, shown at rest and moving at 0.9c.
+- **Bremsstrahlung**: electrons at 0.95c swing past a nucleus of charge 6 and shed forward-beamed light.
+- **Kibble–Zurek walls**: the Higgs quench. A tracer body of mass 10⁻³ is drawn as a dot, because the simulation steps only while a body is alive.
+- **Microlensing**: a mass passes 0.3 Einstein radii from a backdrop star, which splits in two and brightens to a peak magnification of about 3.4.
 
-In black hole mode, particles use a Kerr-Newman-inspired effective radius determined by mass, charge, and spin. Sub-extremal parameters use the usual outer-horizon formula; super-extremal toy inputs are clamped to an effective radius rather than modeled as physical naked singularities. Gravity switches to a Paczynski-Wiita-style pseudo-potential, so the effective potential steepens near the horizon and infalling particles are swallowed once their centers cross it. Hawking radiation follows Stefan-Boltzmann scaling from the Kerr-Newman temperature — smaller black holes are hotter and evaporate faster, ending in a burst of two photons that carries off the hole's remaining energy and momentum. Charged black holes also undergo Schwinger discharge: the electric field near the effective horizon exceeds the critical threshold and tears electron-positron pairs from the vacuum. The same-sign lepton escapes while the opposite-sign partner falls back in, reducing the black hole's charge by one quantized unit per event. If a toy input is over the Kerr-Newman charge bound, the black hole sheds same-sign leptons in quantized steps and clamps to the nearest allowed charge as a numerical backstop. Spinning black holes with the axion field enabled exhibit superradiance: when the horizon angular velocity exceeds the axion mass, the field extracts rotational energy and grows a scalar cloud around the black hole. The black hole spins down until the superradiance condition fails, providing a natural saturation mechanism.
+## Energy and what the drift means
 
-## Charge Quantization
+The Stats tab sums rest mass and kinetic, spin, potential, field and radiated energy. Each potential term takes its two-body form: T + V without Relativity or 1PN, the Darwin energy for charges under Relativity, and the EIH, Bažański and scalar Breit energies with 1PN. Radiated energy counts the pools, energy not yet emitted, and escaped radiation.
 
-All charges are quantized in units of the boson charge (default 0.1). Particle charges are rounded to the nearest multiple on creation, and all transfer processes — pion emission, Schwinger discharge, extremal black hole charge shedding — conserve charge in discrete steps. This ensures exact charge conservation and prevents continuous drift.
+So the drift is not just numerical error. Only Newtonian gravity and Coulomb, summed pairwise, conserve energy to integrator error, apart from tidal dissipation. Otherwise the drift also carries terms that aren't booked:
 
-## Educational Use
+- the work done by the gravitational signal-delay toy;
+- electric-field energy in transit, and mutual radiation without photons;
+- missing three-body EIH terms, and σ³ softening's mismatch with the Darwin energy;
+- spin energy lost to tidal torques;
+- merger losses with no scalar field on;
+- the kinetic energy of Schwinger and shedding leptons;
+- field damping, grid viscosity, and the work of the quench and heat bath;
+- flat-space field energy, with no field–body gravitational term;
+- the expansion ledger's first-order, lagging terms;
+- the Barnes–Hut approximation.
 
-Designed for undergraduate physics education. Students can toggle individual forces on and off, adjust coupling constants, and observe how changes affect particle trajectories in real time. The simulation makes abstract concepts like frame-dragging and scalar field coupling visible and interactive.
+## Topology, scope and technical details
 
-## Technical Details
+The domain has a fixed size, 64 × 64 unless a preset sets its own, and the window is a camera onto it. Bodies at the edge despawn, bounce, or loop on a torus, Klein bottle or RP²; Klein and RP² crossings mirror velocity, spin and spoke. Forces use minimum-image displacements, and past about 170 bodies some seam collisions go unseen.
 
-WebGPU compute shaders run the whole simulation and WebGPU instanced rendering draws it; there is no CPU fallback, and browsers without WebGPU see a notice instead. The simulation domain has a fixed size, 64 × 64 units unless a preset sets its own, and the window is a camera onto it; a background grid of lab rulers fills it, and a hairline marks its edge. Saves record the domain and every body's proper time and spoke angle. If the GPU device is lost, Worldline recreates it and restores the latest auto-save. Simulation state and stepping stay client-side.
+Worldline is for seeing effects one or a few at a time. Its analytic checks run against the same GPU code, in their own regimes, in the repository's `tests/physics-validation.html`. Several gravities coexist without defining one spacetime: the clocks' lapse, the fields' metric, the holes' pseudo-potential, the thin lens and FRW. Their combinations are not certified, and nothing inside the softening length is.
 
-## Topology Modes
-
-Boundary handling has three modes: open/despawn, reflective bounce, and loop. Loop mode can use three topologies: torus, Klein bottle, and RP2. Cosmological expansion requires a torus: the periodic domain is the whole universe, and only the torus is homogeneous. Toroidal boundaries use minimum-image convention for force calculation to avoid double-counting.
-
-## Signal Delay
-
-With relativity on, every force acts from where its source was when the signal left it, found on each body's recorded world line. Charges interact through their full Liénard–Wiechert fields, the exact electromagnetic field of a moving point charge: a fast charge's field flattens into a pancake around its present position, and an accelerating charge radiates a field that falls off only as 1/r. Gravity, the nuclear force, and the magnetic dipole interactions use their static laws at the delayed position with a scalar aberration factor, a toy model of finite-speed propagation rather than a field solution. Fields are softened at short range and capped for sources moving almost straight at an observer.
+WebGPU runs and draws everything. There is no CPU fallback, and browsers without WebGPU see a notice. Forces are summed pairwise or through a lock-free Barnes–Hut tree built on the GPU. Saves record the domain, each body's proper time and spoke angle, the toggles and the parameters, but not fields, bosons or world lines. A lost GPU device is recreated and restored from the latest auto-save, and all state stays in the browser.
 
 ## Accessibility
 
-Worldline provides keyboard shortcuts, light and dark themes, labeled simulation controls, and numerical readouts for conserved quantities and selected particles. The canvas contains continuous motion and optional world-line trails; under a reduced-motion preference the opening scene starts paused and already tilted, and anyone can pause, single-step, or choose a quieter preset.
-
-## GPU Compute
-
-Forces are summed pairwise or with a lock-free Barnes-Hut tree built on the GPU. The simulation holds up to 512 particles, 4096 photons, and 2048 pions and leptons. Scalar field evolution (Higgs, axion) uses a 128 × 128 grid with cubic B-spline interpolation for C2 continuity.
+Worldline has keyboard shortcuts, light and dark themes, labelled controls, and numerical readouts for conserved quantities and the selected particle. Under a reduced-motion preference the opening scene starts paused and already tilted, and anyone can pause, single-step or choose a quieter preset.
