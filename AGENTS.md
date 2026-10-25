@@ -644,9 +644,14 @@ per stage would land before the whole encoder ran (that bug left Φ ≡ 0 until
   targets' state.
 - **Tree.** `computeBounds`, `initRoot`, `insertParticles` (lock-free CAS, one body per
   leaf), `computeAggregates` (bottom-up via visitor flags).
-- **Events.** Merge and kugelblitz events, hit tests, stats, maxAccel, ghost count,
-  and the free-slot stack come back through async `mapAsync` readbacks a frame late;
-  `GPUBackend` spawns kugelblitz particles from them.
+- **Events.** The frame's readback (`_encodeFrameReadback`) copies the largest
+  acceleration, the ghost count, merge and kugelblitz events and the free-slot stack at the
+  end of the frame's last encoder into a slot of a three-deep ring, clears the GPU free stack
+  in that same encoder (so each freed slot reaches the host once), and maps once; events
+  append until consumed (`consumeMergeEvents`, `consumeKugelblitzEvents`, from which
+  `GPUBackend` spawns kugelblitz particles), and a readback from before a `reset()` is
+  dropped. Hit tests, stats, the scene snapshot, the heatmap, the lens probe and the frame
+  state have their own on-demand channels.
 - `_phase5Ready` holds field dispatches until the async field pipelines exist.
 
 ### The Fields overlay

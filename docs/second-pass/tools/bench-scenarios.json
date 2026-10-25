@@ -256,20 +256,5 @@
    "measure": 4000,
    "shot": true
   }
- },
- {
-  "name": "cluster-substeps",
-  "steps": [
-   {
-    "js": "__t.click('clearBtn'); document.querySelector('[data-boundary=\"loop\"]').click(); document.querySelector('[data-topology=\"torus\"]').click();__t.tog('gravity-toggle', true);__t.tog('coulomb-toggle', false);__t.tog('magnetic-toggle', false);__t.tog('gravitomag-toggle', false);__t.tog('relativity-toggle', false);__t.tog('onepn-toggle', false);__t.tog('blackhole-toggle', false);__t.tog('radiation-toggle', false);__t.tog('spinorbit-toggle', false);__t.tog('barneshut-toggle', true);__t.tog('bosoninter-toggle', false);__t.tog('yukawa-toggle', false);__t.tog('axion-toggle', false);__t.tog('expansion-toggle', false);__t.tog('higgs-toggle', false);sim._spawningPreset = true; for (let i = 0; i < 200; i++) { const r = Math.random, a = r() * 6.283, d = 4 + 10 * r(); sim.addParticle(sim.domainW / 2 + d * Math.cos(a), sim.domainH / 2 + d * Math.sin(a), 0, 0, { mass: 4 + 4 * r(), charge: 0, spin: 0 }); } sim._spawningPreset = false; sim.speedIndex = 5; sim.speedScale = 16;",
-    "wait": 1500,
-    "shot": false
-   }
-  ],
-  "bench": {
-   "warm": 2000,
-   "measure": 4000,
-   "shot": true
-  }
  }
 ]
