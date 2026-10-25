@@ -1,6 +1,9 @@
 // O(N^2) tiled pairwise force computation.
-// Each workgroup loads TILE_SIZE source particles into shared memory,
-// then each thread accumulates forces from all sources onto its particle.
+// Each workgroup serves OBSERVERS observers with LANES threads apiece: it loads TILE_SIZE
+// source particles into shared memory at a time, each lane accumulates the forces from every
+// LANES-th source onto its observer, and the lanes' sums are added at the end. One thread
+// per observer left most of the GPU idle (ceil(N/64) workgroups), with each thread's
+// world-line reads in series. The dispatch is ceil(N / OBSERVERS) workgroups.
 //
 // With Relativity on, every source acts from its retarded state on its world line
 // (shared-worldline.wgsl): charges through their Liénard–Wiechert fields, everything else
@@ -12,7 +15,10 @@
 // Uses packed ParticleState + ParticleDerived + ParticleAux structs. Jerk written to AllForces.
 // Requires shared-worldline.wgsl and shared-1pn.wgsl prepended.
 
-const TILE_SIZE: u32 = 64u;
+const OBSERVERS: u32 = 64u;            // observers per workgroup
+const LANES: u32 = 4u;                 // threads per observer
+const WG_SIZE: u32 = OBSERVERS * LANES;
+const TILE_SIZE: u32 = 64u;            // sources per tile, at most WG_SIZE
 
 // Source particle data loaded into shared memory per tile
 struct TileParticle {
@@ -36,6 +42,8 @@ struct TileParticle {
 };
 
 var<workgroup> tile: array<TileParticle, TILE_SIZE>;
+// The lanes' partial sums, a third of ForceAccum at a time (8 KB)
+var<workgroup> laneSums: array<array<f32, 8>, WG_SIZE>;
 
 // Bind group 0: uniforms
 @group(0) @binding(0) var<uniform> uniforms: SimUniforms;
@@ -367,13 +375,27 @@ fn makeDelayedSource(ret: Retarded, sAxMod: f32, sYukMod: f32, sHiggsMod: f32) -
     return src;
 }
 
-@compute @workgroup_size(TILE_SIZE)
+fn accumToArray(a: ForceAccum) -> array<f32, 24> {
+    return array<f32, 24>(
+        a.gravX, a.gravY, a.coulX, a.coulY, a.magX, a.magY, a.gmX, a.gmY,
+        a.pnX, a.pnY, a.yukX, a.yukY, a.totalX, a.totalY, a.jerkX, a.jerkY,
+        a.bz, a.bgz, a.dbzdx, a.dbzdy, a.dbgzdx, a.dbgzdy, a.frameDrag, a.tidal);
+}
+
+fn accumFromArray(v: array<f32, 24>) -> ForceAccum {
+    return ForceAccum(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7],
+                      v[8], v[9], v[10], v[11], v[12], v[13], v[14], v[15],
+                      v[16], v[17], v[18], v[19], v[20], v[21], v[22], v[23]);
+}
+
+@compute @workgroup_size(WG_SIZE)
 fn main(
-    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(workgroup_id) wid: vec3<u32>,
     @builtin(local_invocation_id) lid: vec3<u32>,
 ) {
-    let idx = gid.x;
-    let localIdx = lid.x;
+    let localIdx = lid.x % OBSERVERS;   // the observer within the workgroup
+    let lane = lid.x / OBSERVERS;
+    let idx = wid.x * OBSERVERS + localIdx;
     let N = uniforms.aliveCount;
 
     // Load this thread's particle (observer)
@@ -467,40 +489,42 @@ fn main(
     let numTiles = (N + TILE_SIZE - 1u) / TILE_SIZE;
 
     for (var t: u32 = 0u; t < numTiles; t++) {
-        // Collaborative tile load: each thread loads one source particle
-        let tileSrcIdx = t * TILE_SIZE + localIdx;
-        if (tileSrcIdx < N && (particles[tileSrcIdx].flags & FLAG_ALIVE) != 0u) {
+        // Collaborative tile load: each of the first TILE_SIZE threads loads one source
+        let tileIdx = lid.x;
+        let tileSrcIdx = t * TILE_SIZE + tileIdx;
+        if (tileIdx >= TILE_SIZE) {
+        } else if (tileSrcIdx < N && (particles[tileSrcIdx].flags & FLAG_ALIVE) != 0u) {
             let sp = particles[tileSrcIdx];
-            tile[localIdx].posX = sp.posX;
-            tile[localIdx].posY = sp.posY;
+            tile[tileIdx].posX = sp.posX;
+            tile[tileIdx].posY = sp.posY;
             let sd = derived[tileSrcIdx];
-            tile[localIdx].velX = sd.velX;
-            tile[localIdx].velY = sd.velY;
-            tile[localIdx].wX = sp.velWX;
-            tile[localIdx].wY = sp.velWY;
-            tile[localIdx].angW = sp.angW;
-            tile[localIdx].mass = sp.mass;
-            tile[localIdx].charge = sp.charge;
-            tile[localIdx].angVel = sd.angVel;
-            tile[localIdx].magMoment = sd.magMoment;
-            tile[localIdx].angMomentum = sd.angMomentum;
+            tile[tileIdx].velX = sd.velX;
+            tile[tileIdx].velY = sd.velY;
+            tile[tileIdx].wX = sp.velWX;
+            tile[tileIdx].wY = sp.velWY;
+            tile[tileIdx].angW = sp.angW;
+            tile[tileIdx].mass = sp.mass;
+            tile[tileIdx].charge = sp.charge;
+            tile[tileIdx].angVel = sd.angVel;
+            tile[tileIdx].magMoment = sd.magMoment;
+            tile[tileIdx].angMomentum = sd.angMomentum;
             let saym = axYukMod[tileSrcIdx];
-            tile[localIdx].axMod = saym.x;
-            tile[localIdx].yukMod = saym.y;
-            tile[localIdx].higgsMod = saym.z;
-            tile[localIdx].bodyRadSq = sd.bodyRSq;
-            tile[localIdx].srcIdx = tileSrcIdx;
+            tile[tileIdx].axMod = saym.x;
+            tile[tileIdx].yukMod = saym.y;
+            tile[tileIdx].higgsMod = saym.z;
+            tile[tileIdx].bodyRadSq = sd.bodyRSq;
+            tile[tileIdx].srcIdx = tileSrcIdx;
         } else {
             // Mark as invalid (zero mass = no force contribution)
-            tile[localIdx].mass = 0.0;
-            tile[localIdx].srcIdx = 0xFFFFFFFFu;
+            tile[tileIdx].mass = 0.0;
+            tile[tileIdx].srcIdx = 0xFFFFFFFFu;
         }
 
         workgroupBarrier();
 
         // Each thread accumulates forces from all sources in this tile
         if (alive) {
-            for (var j: u32 = 0u; j < TILE_SIZE; j++) {
+            for (var j: u32 = lane; j < TILE_SIZE; j += LANES) {
                 let sIdx = t * TILE_SIZE + j;
                 if (sIdx >= N || sIdx == idx) { continue; }
                 let s = tile[j];
@@ -560,7 +584,7 @@ fn main(
     // ── Retired particles keep acting until the light from their world line's end has passed ──
     if (alive && relOn) {
         let totalCount = uniforms.particleCount;
-        for (var ri: u32 = 0u; ri < totalCount; ri++) {
+        for (var ri: u32 = lane; ri < totalCount; ri += LANES) {
             let flags = particles[ri].flags;
             if ((flags & FLAG_RETIRED) == 0u || (flags & FLAG_ALIVE) != 0u) { continue; }
 
@@ -599,8 +623,24 @@ fn main(
         }
     }
 
+    // Add the lanes' sums, in lane order, a third of the accumulator per round
+    var sums = accumToArray(accum);
+    for (var round = 0u; round < 3u; round++) {
+        for (var k = 0u; k < 8u; k++) { laneSums[lid.x][k] = sums[round * 8u + k]; }
+        workgroupBarrier();
+        if (lane == 0u) {
+            for (var k = 0u; k < 8u; k++) {
+                var total = laneSums[localIdx][k];
+                for (var l = 1u; l < LANES; l++) { total += laneSums[l * OBSERVERS + localIdx][k]; }
+                sums[round * 8u + k] = total;
+            }
+        }
+        workgroupBarrier();
+    }
+    accum = accumFromArray(sums);
+
     // Write accumulated forces to packed AllForces struct
-    if (alive) {
+    if (alive && lane == 0u) {
         var af: AllForces;
         af.f0 = vec4(accum.gravX, accum.gravY, accum.coulX, accum.coulY);
         af.f1 = vec4(accum.magX, accum.magY, accum.gmX, accum.gmY);
