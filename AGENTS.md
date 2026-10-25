@@ -37,8 +37,10 @@ open decisions, and the model's known boundaries. This file describes the code a
   per scenario to `OUTDIR/bench.json`; `bench-scenarios.json` beside it is the standing set
   (every preset in plane and tilted, Fields, an observer, 500 bodies, full boson pools, both
   fields with grid gravity), and `bench-compare.mjs A B` diffs two runs. Concurrent GPU work
-  (another benchmark, another agent's browser) skews the numbers: compare runs made alone,
-  or interleave the two trees' scenarios.
+  (another benchmark, another agent's browser) skews the numbers, so compare runs made alone,
+  or run `bench-ab.mjs OUT URL_A URL_B`, which alternates the two trees scenario by scenario.
+  A frozen tree to compare against is a worktree at the base commit, served with its own
+  port (any static server that maps `/worldline/` to it and `/shared/` to the root's).
 
 ## Layout
 
