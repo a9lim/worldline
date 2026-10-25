@@ -104,7 +104,7 @@ Both fields carry an ether damping, on by default (2m_H and g·m_a). It is a fri
 
 With Gravity on, the fields evolve in the metric ds² = −e^(2Φ)dt² + e^(−2Φ)dx², whose Klein–Gordon equation is φ̈ = e^(4Φ)∇²φ − e^(2Φ)V′ + 4Φ̇φ̇. Φ comes from the fields' energy and the bodies' rest mass, convolved by FFT with −1/√(r² + ℓ²), ℓ = 8: a Plummer kernel standing in for a slab, with periodic boundaries. The fields' share of Φ also pulls on the bodies, and oscillations near a mass slow by e^Φ.
 
-The Kibble–Zurek preset ramps the Higgs mass term through the transition, crossing it at τ_Q = 120, with a Langevin heat bath. The field freezes into ±v domains. A slower quench leaves fewer walls, as a power of τ_Q (Kibble, 1976; Zurek, 1985), though the preset runs a single quench time.
+The Kibble–Zurek preset ramps the Higgs mass term through the transition over a quench time τ_Q, crossing it τ_Q after the start, with a Langevin heat bath. τ_Q is 120 by default, and the Quench time slider sets it from 10 to 1000 and re-runs the quench. The field freezes into ±v domains, and a slower quench leaves fewer walls, as a power of τ_Q (Kibble, 1976; Zurek, 1985): mean-field theory predicts a wall density ∝ τ_Q^(−1/4), and the analytic checks measure an exponent near 0.22.
 
 ## Expansion
 
@@ -154,7 +154,7 @@ Six presets each set their own domain, forces and view:
 - **Twin paradox**: one twin flies to a wall at 0.8c and back, ageing 0.6 of the home twin's time. On the traveller's slice, the home clock jumps ahead by 2vd at the turn.
 - **Relativistic wheel**: a wheel with rim speed 0.9c, shown at rest and moving at 0.9c.
 - **Bremsstrahlung**: electrons at 0.95c swing past a nucleus of charge 6 and shed forward-beamed light.
-- **Kibble–Zurek walls**: the Higgs quench. A tracer body of mass 10⁻³ is drawn as a dot, because the simulation steps only while a body is alive.
+- **Kibble–Zurek walls**: the Higgs quench, with no bodies at all. The Stats tab and the caption report the ordered fraction and the wall density, as the walls formed and now.
 - **Microlensing**: a mass passes 0.3 Einstein radii from a backdrop star, which splits in two and brightens to a peak magnification of about 3.4.
 
 ## Energy and what the drift means
@@ -176,7 +176,7 @@ So the drift is not just numerical error. Only Newtonian gravity and Coulomb, su
 
 ## Topology, scope and technical details
 
-The domain has a fixed size, 64 × 64 unless a preset sets its own, and the window is a camera onto it. Bodies at the edge despawn, bounce, or loop on a torus, Klein bottle or RP²; Klein and RP² crossings mirror velocity, spin and spoke. Forces use minimum-image displacements, and past about 170 bodies some seam collisions go unseen.
+The domain has a fixed size, 64 × 64 unless a preset sets its own, and the window is a camera onto it. Bodies at the edge despawn, bounce, or loop on a torus, Klein bottle or RP²; Klein and RP² crossings mirror velocity, spin and spoke. Forces use minimum-image displacements.
 
 Worldline is for seeing effects one or a few at a time. Its analytic checks run against the same GPU code, in their own regimes, in the repository's `tests/physics-validation.html`. Several gravities coexist without defining one spacetime: the clocks' lapse, the fields' metric, the holes' pseudo-potential, the thin lens and FRW. Their combinations are not certified, and nothing inside the softening length is.
 

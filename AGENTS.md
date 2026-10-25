@@ -25,6 +25,20 @@ open decisions, and the model's known boundaries. This file describes the code a
   `runAll()` from the console; `runAll('Liénard')` runs the cases whose names contain the
   string). Every new feature adds its oracle there (`docs/ROADMAP.md` §1.1).
   The stager skips `tests/`, so it never deploys.
+- `?perf` (`src/gpu/gpu-profiler.js`, `sim.perf`) puts GPU timestamps on every compute and
+  render pass by wrapping the encoder's `beginComputePass`/`beginRenderPass` while a frame
+  is open, so no pass site changes; it also times the loop's CPU phases and counts submits,
+  buffer writes and map requests, and shows a digest at the stage's top left. Passes overlap
+  on Metal, so their sum (`gpuBusy`) overcounts; `gpuSpan` (first begin to last end) and the
+  per-phase `stepSpan` and `renderSpan` are the wall times. Startup marks: device, physics,
+  renderer, first frame.
+- Benchmarks: `docs/second-pass/tools/tour.mjs` (Playwright and the WebGPU Chrome; see its
+  header) runs any scenario with `bench: { warm, measure }` under `?perf` and writes p50/p95
+  per scenario to `OUTDIR/bench.json`; `bench-scenarios.json` beside it is the standing set
+  (every preset in plane and tilted, Fields, an observer, 500 bodies, full boson pools, both
+  fields with grid gravity), and `bench-compare.mjs A B` diffs two runs. Concurrent GPU work
+  (another benchmark, another agent's browser) skews the numbers: compare runs made alone,
+  or interleave the two trees' scenarios.
 
 ## Layout
 
@@ -143,7 +157,11 @@ clears itself; each stats readback carries the selection it was requested for
 into at most 32 substeps from the previous frame's `maxAccel` readback,
 `dtSafe = √(softening/a_max)` (no cyclotron limit), and submits each substep as its own
 command buffer so that substep's uniforms (`simTime` above all) are the ones its passes
-read. `_dispatchSubstep()` lists the order in its pass comments: forces, external and
+read. With ε = 8 the accelerations rarely ask for more than one substep (every benchmark
+scenario ran one), so a frame is one command buffer of physics in practice. It steps with
+or without bodies: `_dispatchBodyStep()` (passes 0–14, everything the bodies do up to the
+field step) and the later body passes skip when none is alive, while the fields and bosons
+go on. `_dispatchSubstep()` lists the order in its pass comments: forces, external and
 field forces come before the fused kick–rotate–kick, then spin-orbit and torques,
 radiation, drift, clocks, the 1PN velocity-Verlet correction, the field step,
 collisions, extremal shedding, bosons, the boundary, and the world lines (a sample whenever
@@ -248,12 +266,17 @@ Barnes–Hut picks tree walk over pairwise forces; collisions and hit tests use 
 either way. With Relativity on as well, EM runs pairwise first (`EM_PAIRWISE_BIT`):
 Liénard–Wiechert needs each source's world line, which tree aggregates lack, so the walk
 carries everything else. Periodic modes put ghost copies in the tree for seam collisions
-and hit tests, but ghosts weigh nothing in the aggregates (`tree-build.wgsl`), because
-every walk takes minimum-image displacements and a weighted ghost would count its pair
-twice. `ghost-gen.wgsl` makes a ghost for each edge within `max(W, H)·θ` (half the domain),
-so every body makes up to three and the 512-slot ghost buffer fills at about 170 bodies;
-past that some seam collisions and hit tests go unseen (the read-back count is clamped, so
-stepping continues). With Higgs on, the Yukawa range is `yukawaMu·√(higgsMod_i·higgsMod_j)`,
+and photon absorption, but ghosts weigh nothing in the aggregates (`tree-build.wgsl`),
+because every walk takes minimum-image displacements and a weighted ghost would count its
+pair twice. So a ghost needs to reach only as far as a contact: each substep `ghost-gen.wgsl`
+first reduces the largest body radius (`maxRadius`, the horizon in black-hole mode, into the
+`radiusMax` buffer and, by an in-encoder copy, `SimUniforms.radiusMax`), then ghosts each body
+within its radius + that largest radius + `GHOST_SLOP` (2) of an edge, about 140 ghosts for
+500 bodies. The host copies a ghost count read back a frame late, with headroom
+(`_ghostSlots()`), and `trimGhosts` clears the copied slots past the substep's own count. The
+same largest radius sizes the tree collision search (a body's radius plus it, which also
+finds a small body deep inside a large horizon) and widens the hit test, which ignores
+ghosts. With Higgs on, the Yukawa range is `yukawaMu·√(higgsMod_i·higgsMod_j)`,
 `higgsMod = max(|φ|, HIGGS_MASS_FLOOR)` cached per particle in `axYukMod.z`.
 
 Signal delay finds each source's retarded state, `retardedState()` in
@@ -482,11 +505,15 @@ backdrop seen through the bodies as a thin lens, viewed along z, in the lab fram
   `blackHoleRadialTerms()` in `config.js` for the effective-potential plot.
   Phenomenological, not a geodesic solve.
 - **Capture.** In Merge mode a particle whose centre is inside another's horizon is
-  swallowed with merge bookkeeping in `resolveCollisions`, whose broadphase searches the
-  whole domain in black-hole mode so a small body deep inside a large horizon is found.
+  swallowed with merge bookkeeping in `resolveCollisions`, whose broadphase reaches each
+  body's radius plus the largest radius (a horizon), so a small body deep inside a large
+  horizon is found.
 - **Extremal censorship.** An over-bound hole sheds same-sign leptons one quantum at a
-  time, emitted in its rest frame and boosted, with a clamp to the nearest allowed charge
-  as backstop, in black-hole mode (`extremal.wgsl`).
+  time, emitted in its rest frame at 1/√3 and boosted, with recoil, until the lightened hole
+  (each lepton takes `ELECTRON_MASS`) is under its Kerr–Newman limit, in black-hole mode
+  (`extremal.wgsl`). A clamp to the nearest allowed charge is the backstop when the pool is
+  full, and then charge isn't conserved. The leptons' kinetic energy is unpaid, as with
+  Schwinger.
 - **Hawking** (Black hole + Radiation): Kerr–Newman temperature, Stefan–Boltzmann
   power, none at extremality, on the hole's clock (`dM = P·dt/γ`). Mass leaves at fixed
   proper velocity; each photon is drawn isotropically in the rest frame, boosted, and the
@@ -511,7 +538,8 @@ backdrop seen through the bodies as a thin lens, viewed along z, in the lab fram
   leptons. Leptons share the pion buffer, told apart by `Pion.kind` (0 pion, 1 lepton).
 - A body's Larmor and quadrupole radiation accumulates until it reaches `PHOTON_QUANTUM`
   (0.02) and leaves as one photon (`MIN_MASS`, 0.05, stays the Hawking threshold and the
-  evaporation floor). A photon is drawn as a wave packet in ochre (`boson-render.wgsl`
+  evaporation floor); quadrupole gravitational radiation leaves as gravitational quanta
+  (`FLAG_GRAV`), drawn in madder. A photon is drawn as a wave packet in ochre (`boson-render.wgsl`
   `fragmentPhoton`): a sinusoid 2.6 px high under a Gaussian envelope 22 px long, its
   wavelength `clamp(6·√(0.05/E′), 3.5, 12)` px reading the energy E′ it has in the frame
   drawn (Doppler-shifted in a non-lab frame, with the Doppler hue).
@@ -609,8 +637,11 @@ per stage would land before the whole encoder ran (that bug left Φ ≡ 0 until
 - **Buffers.** Packed structs (`shared-structs.wgsl`, sizes in `gpu-buffers.js`) keep
   each stage within the 10 storage buffers `requestDevice()` asks for.
 - **Pass plan.** `pass-graph.js` derives dispatch booleans from toggles only, not alive
-  counts. Pool-sized boson passes use indirect dispatch from `dispatch-args.wgsl`,
-  with a max-capacity fallback.
+  counts. Boson passes are not in it: bosons outlive the switches that emit them, so they
+  step every substep, sized by their pools' counts through indirect dispatch from
+  `dispatch-args.wgsl` (with a max-capacity fallback). Absorption (`absorbPhotons`,
+  `absorbPions`) is one thread looping over the pool, serialized against races on the
+  targets' state.
 - **Tree.** `computeBounds`, `initRoot`, `insertParticles` (lock-free CAS, one body per
   leaf), `computeAggregates` (bottom-up via visitor flags).
 - **Events.** Merge and kugelblitz events, hit tests, stats, maxAccel, ghost count,
@@ -642,7 +673,7 @@ a survey sheet or a physics text prints a field, keeping to the domain:
   has no line to draw. The grid computes Bz (`magField`) as `pair-force.wgsl` has it:
   Biot–Savart from moving charges, or with signal delay B = n̂ × E of the Liénard–Wiechert
   field; the spin dipoles' −μ/r³; and the external Bz. Symbols sit on lattices fixed to the
-  plane, one octave of density per decade: every site of a coarse lattice (a power of 2 in
+  plane, the spacing halving per decade: every site of a coarse lattice (a power of 2 in
   world units near 64 px) once |Bz| passes B0 = 0.1, the sites halfway between once it passes
   10·B0, and halfway again past 100·B0, so a uniform field is an even lattice whose spacing
   reads its strength. World y runs down the screen, so the right-handed z axis points into
@@ -697,8 +728,12 @@ their force's ink; velocity arrows are graphite; clock arcs take the body's ink.
 ### Rendering
 
 `GPURenderer` draws on `#gpuCanvas`, behind the 2D `#simCanvas` that `Overlay` uses for
-the field atlas, the spawn-drag line and the plate's lines. Each frame starts with the background grid (`grid-render.wgsl`), a
-full-screen pass that clears and then draws the lab rulers and the domain edge: hairlines at
+the field atlas, the spawn-drag line and the plate's lines. Every layer draws in order into
+one render pass and one submit (`render()` → `_drawLayers()`): on a tiled GPU each pass loads
+and stores the whole canvas, which cost more than the layers did. Uniforms are written per
+layer, and per slot for the rings, arrows and torques, so each draw reads its own. The pass
+clears and starts with the background grid (`grid-render.wgsl`), a full-screen triangle
+that draws the lab rulers and the domain edge: hairlines at
 spacings 2^k, each level faded in between 12 and 24 px on screen, and the edge (or, in loop
 mode, the seams) in the `--border` mix. The grid is a sheet at rest in the lab, so in a
 non-lab frame each pixel maps back through the observer's slice and the rulers contract by
@@ -796,7 +831,4 @@ follow from them:
 - The bremsstrahlung beam's electrons have m 0.3 because radiation reaction is strong at
   these charges: Larmor's τ = 2q²/3m is 6.7 for m 0.1 and q −1, comparable to a pass, so
   such an electron radiates more than its kinetic energy and is captured.
-- The Kibble–Zurek preset keeps a 10⁻³ tracer body because `GPUPhysics.update()` returns
-  when no body is alive; it draws as a 2 px dot (every body is at least 2 px) and the key
-  lists it as Neutral.
 - The cyclotron's synchrotron light is weak at 0.5c: a few photons a run.
