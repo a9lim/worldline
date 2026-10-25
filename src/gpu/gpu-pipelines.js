@@ -9,7 +9,7 @@
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 193;
+const SHADER_VERSION = 194;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -2143,7 +2143,14 @@ export async function createSpacetimeRenderPipelines(device, format, wgslConstan
         fragment: { module, entryPoint: fragment, targets: [{ format, blend }] },
         primitive: { topology: 'triangle-strip' },
     });
+    // The passes that decimate the world lines into the lists vs_line and vs_event draw
+    const compute = (entryPoint) => device.createComputePipeline({
+        label: entryPoint, layout: 'auto', compute: { module, entryPoint },
+    });
     return {
+        keep: compute('lineKeep'),
+        scan: compute('lineScan'),
+        write: compute('lineWrite'),
         line: make('spacetimeLines', 'vs_line'),
         cone: make('spacetimeCone', 'vs_cone', 'fs_cone'),
         event: make('spacetimeEvents', 'vs_event', 'fs_event'),

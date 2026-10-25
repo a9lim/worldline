@@ -38,6 +38,11 @@ const _spacetimeData = new ArrayBuffer(112);  // SpacetimeParams (spacetime-rend
 const _spacetimeF32 = new Float32Array(_spacetimeData);
 const _spacetimeU32 = new Uint32Array(_spacetimeData);
 const _spacetimeI32 = new Int32Array(_spacetimeData);
+// The decimated world lines' layout (spacetime-render.wgsl LINE_CHUNKS, LINE_WORDS)
+const LINE_CHUNKS = WORLDLINE_LEN / 32;
+const LINE_WORDS = WORLDLINE_LEN / 32 + 1;
+// Seen from above, the world lines are the plane view's trails (vs_line's show)
+const _linesShown = (st) => Math.max(st.tilt, st.trails ? 1 : 0) >= 0.002;
 
 // Palette-derived colors (computed once at module load from _PALETTE)
 const _PAL = window._PALETTE;
@@ -328,34 +333,51 @@ export default class GPURenderer {
         {
             const p = this._spacetimePipelines;
             const b = this.buffers;
-            const group = (pipeline, label, extra) => this.device.createBindGroup({
-                label, layout: pipeline.getBindGroupLayout(0),
-                entries: [
-                    { binding: 0, resource: { buffer: this.cameraBuffer } },
-                    { binding: 1, resource: { buffer: this._spacetimeUniformBuffer } },
-                    ...extra.map(([binding, buffer]) => ({ binding, resource: { buffer } })),
-                ],
-            });
+            const group = (pipeline, label, entries, uniforms = [[0, this.cameraBuffer], [1, this._spacetimeUniformBuffer]]) =>
+                this.device.createBindGroup({
+                    label, layout: pipeline.getBindGroupLayout(0),
+                    entries: [...uniforms, ...entries].map(([binding, buffer]) => ({ binding, resource: { buffer } })),
+                });
+            // The decimated world lines (lineKeep, lineScan, lineWrite): each slot's bits, its count
+            // (cleared every frame) and its offsets, the indirect arguments of the two draws and of
+            // lineWrite, and the lists, sized for every point of every slot's window kept (the
+            // events for 64 a slot), for as many slots as the world-line store holds
+            const cap = b.storeCapacity;
+            const buf = (label, size, usage = GPUBufferUsage.STORAGE) => this.device.createBuffer({ label, size, usage });
+            if (this._lineLists) for (const l of Object.values(this._lineLists)) l.destroy();
+            const lists = this._lineLists = {
+                bits: buf('lineBits', cap * 5 * LINE_WORDS * 4),
+                counts: buf('lineCounts', cap * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST),
+                offsets: buf('lineOffsets', (cap + 1) * 2 * 4),
+                args: buf('lineArgs', 48, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT),
+                verts: buf('lineVerts', cap * (WORLDLINE_LEN + 1) * 32),
+                events: buf('lineEvents', cap * 64 * 16),
+            };
             const fs = this.frameBuffers.frameState;
             const line = [[2, b.wlData], [3, b.wlMeta], [4, b.particleState], [10, fs]];
             this._spacetime = {
                 line: p.line, cone: p.cone, boson: p.boson, pierce: p.pierce, event: p.event,
-                lineGroup: group(p.line, 'spacetimeLines', [...line, [5, b.color]]),
+                keep: p.keep, scan: p.scan, write: p.write, counts: lists.counts, args: lists.args,
+                lineGroup: group(p.line, 'spacetimeLines', [[5, b.color], [18, lists.verts]]),
                 coneGroup: group(p.cone, 'spacetimeCone', line),
                 bosonGroup: group(p.boson, 'spacetimeBosons', [[6, b.photonPool], [7, b.phCount], [8, b.pionPool], [9, b.piCount], [10, fs]]),
                 pierceGroup: group(p.pierce, 'spacetimePierce', [...line, [5, b.color], [11, b.particleAux]]),
-                eventGroup: group(p.event, 'spacetimeEvents', [...line, [5, b.color]]),
+                eventGroup: group(p.event, 'spacetimeEvents', [[5, b.color], [19, lists.events]]),
+                keepGroup: group(p.keep, 'lineKeep', [...line, [12, lists.bits], [13, lists.counts]]),
+                scanGroup: group(p.scan, 'lineScan', [[13, lists.counts], [14, lists.offsets], [15, lists.args], [17, lists.events]], [[1, this._spacetimeUniformBuffer]]),
+                writeGroup: group(p.write, 'lineWrite', [...line, [12, lists.bits], [14, lists.offsets], [16, lists.verts], [17, lists.events]]),
             };
         }
     }
 
     /**
-     * Draw the spacetime view's world lines under the present plane, and the bodies' slice
-     * points on the observer's present. Seen from straight above, the world lines are the
-     * plane view's trails. `st` carries the view's state: { tilt, depth, beadStep, tNow,
-     * selected, topology, scaleA, obs, pierce, trails } (src/spacetime.js observer()).
+     * Write the spacetime view's uniforms and record, ahead of the scene's render pass, the
+     * passes that decimate the world lines into the lists vs_line and vs_event draw: on screen
+     * most samples are a fraction of a pixel apart. `st` carries the view's state: { tilt,
+     * depth, beadStep, tNow, selected, topology, scaleA, obs, pierce, trails }
+     * (src/spacetime.js observer()).
      */
-    _renderSpacetime(pass, st, slots) {
+    _encodeSpacetime(encoder, st, slots) {
         const sp = this._spacetime;
         if (!sp || !st || (st.tilt < 0.002 && !st.pierce && !st.trails)) return;
         const o = st.obs;
@@ -389,19 +411,45 @@ export default class GPURenderer {
         const window = o.active ? 0 : Math.min(WORLDLINE_LEN, Math.ceil(st.depth / WORLDLINE_DT) + 2);
         _spacetimeU32[27] = window;
         this.device.queue.writeBuffer(this._spacetimeUniformBuffer, 0, _spacetimeData);
+        if (slots > 0 && _linesShown(st)) {
+            encoder.clearBuffer(sp.counts, 0, slots * 4);
+            const pass = encoder.beginComputePass({ label: 'spacetimeLines' });
+            pass.setPipeline(sp.keep);
+            pass.setBindGroup(0, sp.keepGroup);
+            pass.dispatchWorkgroups(Math.ceil(slots * LINE_CHUNKS / 64));
+            pass.setPipeline(sp.scan);
+            pass.setBindGroup(0, sp.scanGroup);
+            pass.dispatchWorkgroups(1);
+            pass.setPipeline(sp.write);
+            pass.setBindGroup(0, sp.writeGroup);
+            pass.dispatchWorkgroupsIndirect(sp.args, 32);
+            pass.end();
+        }
+    }
+
+    /**
+     * Draw the spacetime view's world lines under the present plane (the lists
+     * _encodeSpacetime made this frame), and the bodies' slice points on the observer's present.
+     * Seen from straight above, the world lines are the plane view's trails.
+     */
+    _renderSpacetime(pass, st, slots) {
+        const sp = this._spacetime;
+        if (!sp || !st || (st.tilt < 0.002 && !st.pierce && !st.trails)) return;
         pass.setPipeline(sp.cone);
         pass.setBindGroup(0, sp.coneGroup);
         pass.draw(2 * (72 + 1), 6);   // four rings, two generators
         pass.setPipeline(sp.boson);
         pass.setBindGroup(0, sp.bosonGroup);
         pass.draw(4, GPU_MAX_PHOTONS + GPU_MAX_PIONS + GPU_MAX_LEPTONS);
-        pass.setPipeline(sp.line);
-        pass.setBindGroup(0, sp.lineGroup);
-        if (slots > 0) pass.draw(4 * ((window || WORLDLINE_LEN) + 1), slots);
-        if (slots > 0 && st.tilt > 0.05) {
-            pass.setPipeline(sp.event);
-            pass.setBindGroup(0, sp.eventGroup);
-            pass.draw(4, slots * (window || WORLDLINE_LEN));
+        if (slots > 0 && _linesShown(st)) {
+            pass.setPipeline(sp.line);
+            pass.setBindGroup(0, sp.lineGroup);
+            pass.drawIndirect(sp.args, 0);
+            if (st.tilt > 0.05) {
+                pass.setPipeline(sp.event);
+                pass.setBindGroup(0, sp.eventGroup);
+                pass.drawIndirect(sp.args, 16);
+            }
         }
         if (st.pierce && slots > 0) {
             pass.setPipeline(sp.pierce);
@@ -753,6 +801,8 @@ export default class GPURenderer {
 
         const textureView = this.context.getCurrentTexture().createView();
         const encoder = this.device.createCommandEncoder({ label: 'render' });
+        // The world lines are decimated by compute passes before the scene's one render pass
+        if (opts.spacetime) this._encodeSpacetime(encoder, opts.spacetime, aliveCount);
         const pass = encoder.beginRenderPass({
             label: 'scene',
             colorAttachments: [{
@@ -876,10 +926,14 @@ export default class GPURenderer {
                     ringDrawSlots.push(1);
                 }
 
+                // (RING_SEGMENTS + 1) * 2 vertices close the strip; the selection draws only the
+                // selected body's instances (its images in a frame), not one per body
+                const images = frame ? this.frameImages : 1;
                 for (const slot of ringDrawSlots) {
                     pass.setPipeline(this._ringPipeline);
                     pass.setBindGroup(0, frame ? this._ringBindGroupsView[slot] : this._ringBindGroups[slot]);
-                    pass.draw(130, instances); // (RING_SEGMENTS + 1) * 2 to close strip
+                    if (slot === 0) pass.draw(130, instances);
+                    else if (opts.selected < aliveCount) pass.draw(130, images, 0, opts.selected * images);
                 }
             } catch (e) {
                 console.warn('[physsim] Ring render failed, disabling:', e.message);
