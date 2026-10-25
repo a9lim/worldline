@@ -9,7 +9,7 @@
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 155;
+const SHADER_VERSION = 156;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -123,15 +123,15 @@ export async function createPhase2Pipelines(device, wgslConstants = '') {
     // Group 0: uniforms
     // Group 1: particleState (rw) + derived (rw) + axYukMod (rw) + particleAux (rw) = 4 storage
     // Group 2: allForces (rw) + maxAccel (rw) = 2 storage
-    // Group 3: wlData (rw) + wlMeta (rw) = 2 storage
-    // Total: 8 storage buffers per stage
+    // Group 3: wlData (rw) + wlMeta (rw) + wlHints (rw) = 3 storage
+    // Total: 9 storage buffers per stage
     // Prepend the world-line readers (retardedState) and the 1PN pair forces
     const pairForceCode = commonWGSL + '\n' + forceIncludes + '\n'
         + await fetchShader('pair-force.wgsl');
     const pairForce = await (async () => {
         const module = device.createShaderModule({ label: 'pairForce', code: pairForceCode });
         const layouts = [['uniform'], ['storage', 'storage', 'storage', 'storage'],
-            ['storage', 'storage'], ['storage', 'storage']];
+            ['storage', 'storage'], ['storage', 'storage', 'storage']];
         const bindGroupLayouts = layouts.map((entries, groupIdx) =>
             device.createBindGroupLayout({
                 label: `pairForce_group${groupIdx}`,

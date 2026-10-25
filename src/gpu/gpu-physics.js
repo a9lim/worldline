@@ -886,9 +886,9 @@ export default class GPUPhysics {
             [b.particleState, b.derived, b.axYukMod, b.particleAux]);
         this._bg_pairForce2 = bg('pairForce_g2', p2.pairForce.bindGroupLayouts[2],
             [b.allForces, b.maxAccelBuffer]);
-        // Group 3: world lines (signal delay)
+        // Group 3: world lines (signal delay) and the per-pair light-cone hints
         this._bg_pairForce3 = bg('pairForce_g3', p2.pairForce.bindGroupLayouts[3],
-            [b.wlData, b.wlMeta]);
+            [b.wlData, b.wlMeta, b.wlHints]);
 
         // externalFields (packed particleState + allForces)
         this._bg_extFields = bg('extFields', p2.externalFields.bindGroupLayouts[0],

@@ -50,9 +50,11 @@ var<workgroup> tile: array<TileParticle, TILE_SIZE>;
 @group(2) @binding(0) var<storage, read_write> allForces: array<AllForces>;
 @group(2) @binding(1) var<storage, read_write> maxAccel: array<atomic<u32>>;
 
-// Bind group 3: world lines (shared-worldline.wgsl)
+// Bind group 3: world lines (shared-worldline.wgsl) and the per-pair light-cone hints,
+// source-major (wlHints[src * MAX_PARTICLES + observer]) so a workgroup's reads coalesce
 @group(3) @binding(0) var<storage, read_write> wlData: array<f32>;
 @group(3) @binding(1) var<storage, read_write> wlMeta: array<u32>;
+@group(3) @binding(2) var<storage, read_write> wlHints: array<u32>;
 
 // ── Source data struct for force computation (used by both tile loop and dead loop) ──
 struct SourceData {
@@ -506,11 +508,15 @@ fn main(
 
                 var src: SourceData;
                 if (relOn) {
-                    let ret = retardedState(
+                    let hIdx = s.srcIdx * MAX_PARTICLES + idx;
+                    let hintIn = wlHints[hIdx];
+                    var hint = hintIn;
+                    let ret = retardedStateHinted(
                         s.srcIdx, pPosX, pPosY, sdTime,
                         vec2(s.posX, s.posY), vec2(s.wX, s.wY), s.angW, s.mass, s.charge,
-                        true, isPeriodic, domW, domH, topo, uniforms.scaleA,
+                        true, isPeriodic, domW, domH, topo, uniforms.scaleA, &hint,
                     );
+                    if (hint != hintIn) { wlHints[hIdx] = hint; }
                     if (!ret.valid) { continue; }
                     src = makeDelayedSource(ret, s.axMod, s.yukMod, s.higgsMod);
                 } else {
@@ -559,11 +565,15 @@ fn main(
             if ((flags & FLAG_RETIRED) == 0u || (flags & FLAG_ALIVE) != 0u) { continue; }
 
             let rp = particles[ri];
-            let ret = retardedState(
+            let hIdx = ri * MAX_PARTICLES + idx;
+            let hintIn = wlHints[hIdx];
+            var hint = hintIn;
+            let ret = retardedStateHinted(
                 ri, pPosX, pPosY, sdTime,
                 vec2(rp.posX, rp.posY), vec2(0.0), 0.0, 0.0, rp.charge,
-                false, isPeriodic, domW, domH, topo, uniforms.scaleA,
+                false, isPeriodic, domW, domH, topo, uniforms.scaleA, &hint,
             );
+            if (hint != hintIn) { wlHints[hIdx] = hint; }
             if (!ret.valid) { continue; }
 
             let deadAxYuk = axYukMod[ri];
