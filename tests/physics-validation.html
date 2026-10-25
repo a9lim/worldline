@@ -57,7 +57,7 @@ import { PION_SIZE, PARTICLE_STATE_SIZE } from './src/gpu/gpu-buffers.js';
 import {
     PION_HALF_LIFE, CHARGED_PION_HALF_LIFE, MIN_MASS, BOSON_CHARGE,
     SHEET_THICKNESS, SHEET_THICKNESS_SQ, SOFTENING_SQ, BOUND_LOOP, GPU_SCALAR_GRID, PHYSICS_DT,
-    WORLDLINE_LEN, WORLDLINE_DT, INERTIA_K,
+    WORLDLINE_LEN, WORLDLINE_DT, INERTIA_K, ELECTRON_MASS, GPU_MAX_PIONS, GPU_MAX_LEPTONS,
 } from './src/config.js';
 import { WL_STRIDE } from './src/gpu/gpu-constants.js';
 import { TOGGLE_KEYS } from './src/physics-contract.js';
@@ -981,6 +981,135 @@ cases.push({
             measured: `t = ${fmt(t1)}, ${fmt(t2)}`,
             metric: `ratio ${fmt(ratio, 4)}`,
             pass: Math.abs(ratio - 2) < 0.06 && Math.abs(t1 / tauRest - 1) < 0.03,
+        };
+    },
+});
+
+// ── Extremal censorship ──
+// A hole past Q² + a² = M² sheds same-sign leptons, BOSON_CHARGE and ELECTRON_MASS each,
+// isotropic at 1/√3 in its rest frame and boosted, and recoils by their lab momentum
+// (extremal.wgsl). Radiation is off, so neither Hawking nor Schwinger runs, and Gravity and
+// Coulomb are off, so nothing acts on the hole or its leptons after the shed. One substep.
+
+/** The Kerr–Newman charge limit √(M² − a²), a = INERTIA_K·M^{2/3}·ω, ω the rate of proper spin angw. */
+function knLimit(m, angw = 0) {
+    const r2 = Math.cbrt(m * m);
+    const a = INERTIA_K * r2 * Math.abs(angw / Math.sqrt(1 + angw * angw * r2));
+    return Math.sqrt(Math.max(m * m - a * a, 0));
+}
+
+/** The fewest leptons that bring |Q| under the limit, each taking one quantum and ELECTRON_MASS. */
+function fewestQuanta(m, q, angw = 0) {
+    const k = Math.round(Math.abs(q) / BOSON_CHARGE);
+    for (let n = 0; n < k; n++) {
+        if ((k - n) * BOSON_CHARGE <= knLimit(m - n * ELECTRON_MASS, angw) + 1e-9) return n;
+    }
+    return k;
+}
+
+/** Live leptons in the pool: [{wx, wy, mass, charge, emitter}]. */
+async function readLeptons(gp) {
+    const count = Math.min(new Uint32Array(await readBuffer(gp, gp.buffers.piCount, 4))[0], GPU_MAX_PIONS + GPU_MAX_LEPTONS);
+    if (count === 0) return [];
+    const raw = await readBuffer(gp, gp.buffers.pionPool, count * PION_SIZE);
+    const f = new Float32Array(raw), u = new Uint32Array(raw);
+    const out = [];
+    for (let i = 0; i < count; i++) {
+        const b = i * 12;
+        if ((u[b + 9] & 1) && u[b + 10] === 1) out.push({ wx: f[b + 2], wy: f[b + 3], mass: f[b + 4], charge: f[b + 5], emitter: u[b + 7] });
+    }
+    return out;
+}
+
+/**
+ * One substep for holes [{m, q, angw?, w?}], each in its own cell of a torus, then each hole's
+ * state and the leptons it emitted, with the conservation residuals.
+ */
+async function shedHoles(holes, cell = 16) {
+    const cols = Math.ceil(Math.sqrt(holes.length)), rows = Math.ceil(holes.length / cols);
+    const gp = await makeSim({ on: ['blackHoleEnabled', 'relativityEnabled'], domainW: cols * cell, domainH: rows * cell, boundary: BOUND_LOOP });
+    const slots = holes.map((h, i) => gp.addParticle({
+        x: (i % cols + 0.5) * cell, y: (Math.floor(i / cols) + 0.5) * cell,
+        vx: h.w ? h.w[0] : 0, vy: h.w ? h.w[1] : 0, mass: h.m, charge: h.q, angw: h.angw || 0,
+    }));
+    gp.update(PHYSICS_DT);
+    const ps = await readParticles(gp);
+    const leptons = await readLeptons(gp);
+    gp.destroy();
+    return holes.map((h, i) => {
+        const p = ps[slots[i]], mine = leptons.filter(l => l.emitter === slots[i]);
+        const [w0x, w0y] = h.w || [0, 0];
+        const sign = Math.sign(h.q);
+        let qSum = p.charge, px = p.mass * p.wx, py = p.mass * p.wy, rx = 0, ry = 0, dE = Math.hypot(p.mass, p.mass * Math.hypot(p.wx, p.wy)) - Math.hypot(h.m, h.m * Math.hypot(w0x, w0y));
+        let leptonsOk = true, speedErr = 0;
+        // The hole's frame before the shed: β = w/γ
+        const g0 = Math.sqrt(1 + w0x * w0x + w0y * w0y), bx = w0x / g0, by = w0y / g0;
+        for (const l of mine) {
+            leptonsOk &&= Math.abs(l.charge - sign * BOSON_CHARGE) < 1e-6 && Math.abs(l.mass - ELECTRON_MASS) < 1e-7;
+            const lpx = l.mass * l.wx, lpy = l.mass * l.wy, E = Math.hypot(l.mass, lpx, lpy);
+            qSum += l.charge; px += lpx; py += lpy; rx += lpx; ry += lpy; dE += E;
+            // Boost into the hole's frame: E′ = γ(E − β·p), p′ = p + [(γ − 1)(p·β̂) − γβE]β̂
+            const b2 = bx * bx + by * by;
+            let ppx = lpx, ppy = lpy, Ep = E;
+            if (b2 > 0) {
+                const bp = (lpx * bx + lpy * by) / b2;
+                Ep = g0 * (E - (lpx * bx + lpy * by));
+                ppx = lpx + ((g0 - 1) * bp - g0 * E) * bx;
+                ppy = lpy + ((g0 - 1) * bp - g0 * E) * by;
+            }
+            speedErr = Math.max(speedErr, Math.abs(Math.hypot(ppx, ppy) / Ep - 1 / Math.sqrt(3)));
+        }
+        const limit = knLimit(p.mass, h.angw || 0);
+        return {
+            ...h, p, n: mine.length, nStar: fewestQuanta(h.m, h.q, h.angw || 0),
+            dQ: Math.abs(qSum - Math.round(h.q / BOSON_CHARGE) * BOSON_CHARGE),
+            dP: Math.hypot(px - h.m * w0x, py - h.m * w0y), P0: h.m * Math.hypot(w0x, w0y), recoil: Math.hypot(rx, ry),
+            dMass: Math.abs(h.m - p.mass - mine.length * ELECTRON_MASS), dE, speedErr, leptonsOk,
+            whole: Math.abs(p.charge / BOSON_CHARGE - Math.round(p.charge / BOSON_CHARGE)) < 1e-4,
+            under: Math.abs(p.charge) <= limit + 1e-5, limit,
+        };
+    });
+}
+
+cases.push({
+    name: 'Extremal censorship: an over-charged hole sheds whole quanta to under its Kerr–Newman limit, the leptons’ momentum its recoil (at rest, spinning, moving)',
+    async run() {
+        const hs = await shedHoles([
+            { m: 2, q: 3 },
+            { m: 2, q: 3, angw: 4 },
+            { m: 2, q: -3, w: [1.2, -0.9] },
+        ]);
+        const max = (f) => Math.max(...hs.map(f));
+        const okP = hs.every(h => h.dP < 2e-6 * Math.max(1, h.P0));
+        for (const h of hs) logln(`  extremal M ${h.m} Q ${h.q}${h.angw ? ` angw ${h.angw}` : ''}${h.w ? ` w (${h.w})` : ''}: ${h.n} leptons (fewest ${h.nStar}), ΔE ${fmt(h.dE, 3)} (not pinned: the hole pays m_e of rest mass a lepton, which leaves with γ′m_e)`);
+        return {
+            expected: `|Q| ≤ √(M² − a²) in whole quanta, ΔQ = 0, ΔP = 0, v′ = 1/√3`,
+            measured: `Q ${hs.map(h => `${fmt(h.p.charge, 2)} ≤ ${fmt(h.limit, 3)}`).join(', ')}; ${hs.map(h => h.n).join(', ')} leptons`,
+            metric: `ΔQ ${fmt(max(h => h.dQ), 2)}, |ΔP| ${fmt(max(h => h.dP), 2)} (recoil ${fmt(Math.min(...hs.map(h => h.recoil)), 2)}), v′ err ${fmt(max(h => h.speedErr), 2)}`,
+            pass: hs.every(h => h.n > 0 && h.under && h.whole && h.leptonsOk && h.dQ < 1e-5 && h.dMass < 1e-5 && h.speedErr < 1e-4) && okP,
+        };
+    },
+});
+
+cases.push({
+    name: 'Extremal censorship stops at the limit: each hole sheds the fewest quanta that bring it under, conserving charge (M 0.17–2.95)',
+    async run() {
+        const list = [];
+        for (let i = 0; i < 28; i++) {
+            const m = 0.25 + 0.1 * i;
+            list.push({ m, q: (Math.floor(m * 10 + 1e-9) + 1 + i % 8) * BOSON_CHARGE });
+        }
+        list.push({ m: 2, q: 3, angw: 4 }, { m: 0.17, q: 1.1 }, { m: 0.19, q: 1.2 });
+        const hs = await shedHoles(list);
+        const N = hs.length;
+        const over = hs.filter(h => h.n !== h.nStar), broken = hs.filter(h => h.dQ >= 1e-5);
+        const show = (h) => `M ${fmt(h.m, 3)} Q ${fmt(h.q, 2)}: ${h.n} for ${h.nStar}${h.dQ >= 1e-5 ? `, ΔQ ${fmt(h.dQ, 2)}` : ''}`;
+        for (const h of over) logln(`  extremal ${show(h)}`);
+        return {
+            expected: `fewest n in ${N}/${N}, charge conserved in ${N}/${N}`,
+            measured: `${N - over.length}/${N}, ${N - broken.length}/${N}`,
+            metric: [...broken, ...over.filter(h => !broken.includes(h))].slice(0, 3).map(show).join('; ') || 'all fewest',
+            pass: over.length === 0 && broken.length === 0,
         };
     },
 });
