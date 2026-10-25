@@ -1,7 +1,9 @@
 // ─── Physics Settings ───
 // The toggle and parameter store the UI writes and GPUPhysics.setToggles() reads.
-// Defaults match the checked state of the toggles in index.html.
-import { PI, DEFAULT_PION_MASS, DEFAULT_AXION_MASS, DEFAULT_HIGGS_MASS, DEFAULT_HUBBLE } from './config.js';
+// Defaults match the checked state of the toggles in index.html. A configuration (a preset,
+// a save) reaches it through applyConfig(), the one path that writes the store, the modes,
+// the speed and the view, and then has the controls show them.
+import { PI, DEFAULT_PION_MASS, DEFAULT_AXION_MASS, DEFAULT_HIGGS_MASS, DEFAULT_HUBBLE, SPEED_OPTIONS, colFromString, boundFromString, topoFromString } from './config.js';
 
 export function createPhysicsSettings() {
     return {
@@ -36,4 +38,39 @@ export function createPhysicsSettings() {
         extElectricAngle: 0,
         extBz: 0,
     };
+}
+
+/** sim.view's keys a configuration may set, besides `fields` (the Fields overlay) and the lens. */
+const VIEW_KEYS = ['trails', 'showClocks', 'showVelocity', 'showForce', 'showForceComponents'];
+
+/**
+ * Apply a configuration, each part optional:
+ * - `settings`: store keys, written over sim.settings;
+ * - `modes`: { collision, boundary, topology } by name (config.js COL_NAMES …), a missing
+ *   name taking the first;
+ * - `speed`: the speed scale, snapped to the nearest of SPEED_OPTIONS;
+ * - `view`: sim.view keys, `fields` (the Fields overlay), `lensing` and `lensDistance` (sim.lens).
+ * Then sim.syncControls() (ui.js) has every control show the store, runs the dependency
+ * cascade and the mode locks once, which may turn more off, and pushes the result to the GPU.
+ */
+export function applyConfig(sim, { settings, modes, speed, view } = {}) {
+    if (settings) Object.assign(sim.settings, settings);
+    if (modes) {
+        sim.collisionMode = colFromString(modes.collision);
+        sim.boundaryMode = boundFromString(modes.boundary);
+        sim.topology = topoFromString(modes.topology);
+    }
+    if (speed != null) {
+        let best = 0;
+        SPEED_OPTIONS.forEach((s, i) => { if (Math.abs(s - speed) < Math.abs(SPEED_OPTIONS[best] - speed)) best = i; });
+        sim.speedIndex = best;
+        sim.speedScale = SPEED_OPTIONS[best];
+    }
+    if (view) {
+        for (const k of VIEW_KEYS) if (k in view) sim.view[k] = view[k];
+        if ('fields' in view) sim.heatmap.enabled = view.fields;
+        if ('lensing' in view) sim.lens.on = view.lensing;
+        if ('lensDistance' in view) sim.lens.distance = view.lensDistance;
+    }
+    sim.syncControls?.();
 }

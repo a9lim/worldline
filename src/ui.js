@@ -1,7 +1,7 @@
 // ─── UI Setup ───
 // Wires all panel controls, toggles, presets, shortcuts, and info tips to the sim.
 import { loadPreset, PRESETS, PRESET_ORDER } from './presets.js';
-import { WORLD_SCALE, DEFAULT_DOMAIN, COL_BOUNCE, BOUND_BOUNCE, BOUND_LOOP, SPEED_OPTIONS, colFromString, boundFromString, topoFromString } from './config.js';
+import { DEFAULT_DOMAIN, COL_BOUNCE, BOUND_BOUNCE, BOUND_LOOP, SPEED_OPTIONS, COL_NAMES, BOUND_NAMES, TOPO_NAMES, colFromString, boundFromString, topoFromString } from './config.js';
 import { REFERENCE } from './reference.js';
 import { quickSave, quickLoad, downloadState, uploadState } from './save-load.js';
 
@@ -174,7 +174,9 @@ export function setupUI(sim) {
     });
 
     // ─── Declarative dependency graph ───
-    // Evaluated in order: parents before children so cascading disables propagate.
+    // Evaluated in order: parents before children so cascading disables propagate, which
+    // makes one pass enough for sim.syncControls() below (a black hole before the axion it
+    // can enable).
     // enable deps: disabled when fn returns false; checked toggles auto-uncheck.
     // show deps: hidden when fn returns false; animated reveal/collapse.
     const updateDeps = _forms.bindDeps([
@@ -183,8 +185,8 @@ export function setupUI(sim) {
         { target: tEl['bosoninter-toggle'], enable: () => tEl['barneshut-toggle'].checked && (tEl['gravity-toggle'].checked || tEl['coulomb-toggle'].checked) },
         { target: tEl['magnetic-toggle'], enable: () => tEl['coulomb-toggle'].checked },
         { target: tEl['radiation-toggle'], enable: () => tEl['gravity-toggle'].checked || tEl['coulomb-toggle'].checked || tEl['yukawa-toggle'].checked },
-        { target: tEl['axion-toggle'], enable: () => tEl['coulomb-toggle'].checked || tEl['yukawa-toggle'].checked || tEl['blackhole-toggle'].checked },
         { target: tEl['blackhole-toggle'], enable: () => tEl['relativity-toggle'].checked && tEl['gravity-toggle'].checked },
+        { target: tEl['axion-toggle'], enable: () => tEl['coulomb-toggle'].checked || tEl['yukawa-toggle'].checked || tEl['blackhole-toggle'].checked },
         // Children of toggles that may have been disabled above
         { target: tEl['onepn-toggle'], enable: () => tEl['relativity-toggle'].checked && (tEl['magnetic-toggle'].checked || tEl['gravitomag-toggle'].checked || tEl['yukawa-toggle'].checked) },
         { target: tEl['spinorbit-toggle'], enable: () => tEl['magnetic-toggle'].checked || tEl['gravitomag-toggle'].checked },
@@ -247,35 +249,26 @@ export function setupUI(sim) {
     updateAllDeps();
 
     // ─── Visual toggles ─── (bindToggle fires the 'light' haptic itself)
-    _forms.bindToggle(document.getElementById('trailsToggle'), (v) => {
-        sim.view.trails = v;
-        sim._dirty = true;
-    });
-    _forms.bindToggle(document.getElementById('clocksToggle'), (v) => {
-        sim.view.showClocks = v;
-        sim._dirty = true;
-    });
-    _forms.bindToggle(document.getElementById('gridToggle'), (v) => {
-        sim.view.grid = v;
-        sim._dirty = true;
-    });
-    _forms.bindToggle(document.getElementById('velocityToggle'), (v) => {
-        sim.view.showVelocity = v;
-        sim._dirty = true;
-    });
-    _forms.bindToggle(document.getElementById('forceToggle'), (v) => {
-        sim.view.showForce = v;
-        sim._dirty = true;
-    });
-    _forms.bindToggle(document.getElementById('forceComponentsToggle'), (v) => {
-        sim.view.showForceComponents = v;
-        sim._dirty = true;
-    });
+    const VIEW_TOGGLES = [
+        ['trailsToggle', 'trails'], ['clocksToggle', 'showClocks'], ['gridToggle', 'grid'],
+        ['velocityToggle', 'showVelocity'], ['forceToggle', 'showForce'], ['forceComponentsToggle', 'showForceComponents'],
+    ];
+    for (const [id, key] of VIEW_TOGGLES) {
+        _forms.bindToggle(document.getElementById(id), (v) => {
+            sim.view[key] = v;
+            sim._dirty = true;
+        });
+    }
+    // The Fields overlay, with its choice of field shown beneath while it is on
     const potentialToggle = document.getElementById('potentialToggle');
     const potentialModeBar = document.getElementById('potential-mode-toggles');
+    const showFields = () => {
+        potentialToggle.checked = sim.heatmap.enabled;
+        if (potentialModeBar) potentialModeBar.parentElement.style.display = sim.heatmap.enabled ? '' : 'none';
+    };
     potentialToggle?.addEventListener('change', (e) => {
         sim.heatmap.enabled = e.target.checked;
-        if (potentialModeBar) potentialModeBar.parentElement.style.display = e.target.checked ? '' : 'none';
+        showFields();
         _syncGPU(sim);
         sim._dirty = true;
         _haptics.trigger('light');
@@ -294,119 +287,108 @@ export function setupUI(sim) {
         _haptics.trigger('light');
     });
 
-    // ─── Slider value displays ───
-    const massSlider = document.getElementById('massInput');
-    const massLabel = document.getElementById('massValue');
-    const chargeSlider = document.getElementById('chargeInput');
-    const chargeLabel = document.getElementById('chargeValue');
-    const spinSlider = document.getElementById('spinInput');
-    const spinLabel = document.getElementById('spinValue');
-    const frictionSlider = document.getElementById('frictionInput');
-    const frictionLabel = document.getElementById('frictionValue');
-
+    // ─── Spawn sliders (the next body's mass, charge and spin) ───
     const _fmt2 = v => v.toFixed(2);
-    _forms.bindSlider(massSlider, massLabel, () => _haptics.trigger('selection'), _fmt2);
-    _forms.bindSlider(chargeSlider, chargeLabel, () => _haptics.trigger('selection'), _fmt2);
-    _forms.bindSlider(spinSlider, spinLabel, () => _haptics.trigger('selection'), v => v.toFixed(2) + 'c');
-    _forms.bindSlider(frictionSlider, frictionLabel, v => {
-        sim.settings.bounceFriction = v;
-        _syncSlidersToGPU();
-        _haptics.trigger('selection');
-    }, _fmt2);
+    _forms.bindSlider(document.getElementById('massInput'), document.getElementById('massValue'), () => _haptics.trigger('selection'), _fmt2);
+    _forms.bindSlider(document.getElementById('chargeInput'), document.getElementById('chargeValue'), () => _haptics.trigger('selection'), _fmt2);
+    _forms.bindSlider(document.getElementById('spinInput'), document.getElementById('spinValue'), () => _haptics.trigger('selection'), v => v.toFixed(2) + 'c');
 
-    // ─── Physics parameter sliders ───
-    const yukawaMuSlider = document.getElementById('yukawaMuInput');
-    const yukawaMuLabel = document.getElementById('yukawaMuValue');
-    _forms.bindSlider(yukawaMuSlider, yukawaMuLabel, v => {
-        sim.settings.yukawaMu = v;
-        _syncSlidersToGPU();
-        _haptics.trigger('selection');
-    }, _fmt2);
-
-    const axionMassSlider = document.getElementById('axionMassInput');
-    const axionMassLabel = document.getElementById('axionMassValue');
-    _forms.bindSlider(axionMassSlider, axionMassLabel, v => {
-        sim.settings.axionMass = v;
-        _syncSlidersToGPU();
-        _haptics.trigger('selection');
-    }, _fmt2);
-
-    // Logarithmic: the slider holds log₁₀ H, from 10⁻⁴ (effectively none) to 0.5
-    const hubbleSlider = document.getElementById('hubbleInput');
-    const hubbleLabel = document.getElementById('hubbleValue');
-    _forms.bindSlider(hubbleSlider, hubbleLabel, v => {
-        sim.settings.hubbleParam = 10 ** v;
-        _syncSlidersToGPU();
-        _haptics.trigger('selection');
-    }, v => (10 ** v).toPrecision(2));
+    // ─── Parameter sliders over the store ───
+    // `{id}Input` holds to(value) and `{id}Value` shows it; input writes from(control) to the
+    // store, and show() puts the store back in the control without firing its handler.
+    // Hubble is logarithmic (log₁₀ H, from 10⁻⁴, effectively none, to 0.5); the field
+    // angles are degrees on the control and radians in the store
+    const LOG = { to: v => Math.log10(Math.max(v, 1e-4)), from: v => 10 ** v };
+    const DEG = { to: r => Math.round(r * 180 / Math.PI), from: d => d * Math.PI / 180, fmt: d => d + '°' };
+    const angleGroup = (id, prop) => {
+        const g = document.getElementById(id);
+        return () => { g.style.display = sim.settings[prop] !== 0 ? '' : 'none'; };
+    };
+    const storeSliders = [
+        { prop: 'bounceFriction', id: 'friction' },
+        { prop: 'yukawaMu', id: 'yukawaMu' },
+        { prop: 'axionMass', id: 'axionMass' },
+        { prop: 'hubbleParam', id: 'hubble', ...LOG, fmt: v => (10 ** v).toPrecision(2) },
+        { prop: 'higgsMass', id: 'higgsMass' },
+        { prop: 'extGravity', id: 'extGravity', after: angleGroup('extGravityAngleGroup', 'extGravity') },
+        { prop: 'extGravityAngle', id: 'extGravityAngle', ...DEG },
+        { prop: 'extElectric', id: 'extElectric', after: angleGroup('extElectricAngleGroup', 'extElectric') },
+        { prop: 'extElectricAngle', id: 'extElectricAngle', ...DEG },
+        { prop: 'extBz', id: 'extBz' },
+    ].map(({ prop, id, to = v => v, from = v => v, fmt = _fmt2, after }) => {
+        const el = document.getElementById(id + 'Input');
+        const label = document.getElementById(id + 'Value');
+        _forms.bindSlider(el, label, v => {
+            sim.settings[prop] = from(v);
+            after?.();
+            _syncSlidersToGPU();
+            _haptics.trigger('selection');
+        }, fmt);
+        return {
+            show() {
+                el.value = to(sim.settings[prop]);
+                _forms.updateSliderFill(el);
+                el.setAttribute('aria-valuenow', el.value);
+                label.textContent = fmt(parseFloat(el.value));
+                after?.();
+            },
+        };
+    });
 
     // The expansion history; the slider is H₀ for the imposed schedules, the vacuum H_Λ for
     // the Friedmann closure
     const scheduleSelect = document.getElementById('cosmo-schedule');
     const hubbleName = document.getElementById('hubbleLabel');
-    const syncSchedule = () => {
-        sim.settings.cosmoSchedule = parseInt(scheduleSelect.value, 10) || 0;
+    const labelSchedule = () => {
         const key = sim.settings.cosmoSchedule === 0 ? 'sim.hubbleVacuum' : 'sim.hubble';
         hubbleName.setAttribute('data-i18n', key);
         hubbleName.textContent = _T(key);
     };
     scheduleSelect.addEventListener('change', () => {
-        syncSchedule();
+        sim.settings.cosmoSchedule = parseInt(scheduleSelect.value, 10) || 0;
+        labelSchedule();
         _syncSlidersToGPU();
         sim._dirty = true;
     });
-    syncSchedule();
+    labelSchedule();
     _forms.bindToggle(document.getElementById('comovingToggle'), (v) => {
         sim.setComovingView(v);
     });
     // The fields' ether damping (Higgs 2m_H, axion g·m_a); Hubble friction applies regardless
-    _forms.bindToggle(document.getElementById('fieldDampingToggle'), (v) => {
+    const dampingToggle = document.getElementById('fieldDampingToggle');
+    _forms.bindToggle(dampingToggle, (v) => {
         sim.settings.fieldDamping = v ? 1 : 0;
         _syncSlidersToGPU();
     });
 
-    const higgsMassSlider = document.getElementById('higgsMassInput');
-    const higgsMassLabel = document.getElementById('higgsMassValue');
-    if (higgsMassSlider) {
-        _forms.bindSlider(higgsMassSlider, higgsMassLabel, v => {
-            sim.settings.higgsMass = v;
-            _syncSlidersToGPU();
-            _haptics.trigger('selection');
-        }, _fmt2);
-    }
-
-    // ─── External field sliders ───
-    const _fmtDeg = deg => deg + '°';
-    const _extSlider = (prop, slider, label, angleGroup, angleSlider, angleLabel, angleProp) => {
-        _forms.bindSlider(slider, label, v => {
-            sim.settings[prop] = v;
-            if (angleGroup) angleGroup.style.display = v !== 0 ? '' : 'none';
-            _syncSlidersToGPU();
-            _haptics.trigger('selection');
-        }, _fmt2);
-        if (angleSlider) {
-            _forms.bindSlider(angleSlider, angleLabel, deg => {
-                sim.settings[angleProp] = deg * Math.PI / 180;
-                _syncSlidersToGPU();
-                _haptics.trigger('selection');
-            }, _fmtDeg);
+    // ─── Controls from the store ───
+    // A preset or a save writes sim.settings, the modes, the speed and the view
+    // (physics-settings.js applyConfig), then calls this: every control shows its value
+    // without firing its handler, the dependency cascade and the mode locks run once (which
+    // may turn more off, in the store too), and the result goes to the GPU
+    sim.syncControls = () => {
+        for (const { id, prop } of toggleDefs) {
+            tEl[id].checked = !!sim.settings[prop];
+            tEl[id].setAttribute('aria-checked', String(tEl[id].checked));
         }
+        const modeGroups = [
+            [collisionToggles, 'collision', COL_NAMES[sim.collisionMode]],
+            [boundaryToggles, 'boundary', BOUND_NAMES[sim.boundaryMode]],
+            [document.getElementById('topology-toggles'), 'topology', TOPO_NAMES[sim.topology]],
+        ];
+        // A mode group shows its value through its own button (a no-op when already active)
+        for (const [group, attr, name] of modeGroups) group.querySelector(`[data-${attr}="${name}"]`)?.click();
+        for (const s of storeSliders) s.show();
+        scheduleSelect.value = String(sim.settings.cosmoSchedule);
+        labelSchedule();
+        dampingToggle.checked = !!sim.settings.fieldDamping;
+        for (const [id, key] of VIEW_TOGGLES) document.getElementById(id).checked = !!sim.view[key];
+        showFields();
+        sim.lensPanel?.sync();
+        sim.syncSpeed?.();
+        updateAllDeps();
+        sim._dirty = true;
     };
-    _extSlider('extGravity',
-        document.getElementById('extGravityInput'), document.getElementById('extGravityValue'),
-        document.getElementById('extGravityAngleGroup'),
-        document.getElementById('extGravityAngleInput'), document.getElementById('extGravityAngleValue'),
-        'extGravityAngle');
-    _extSlider('extElectric',
-        document.getElementById('extElectricInput'), document.getElementById('extElectricValue'),
-        document.getElementById('extElectricAngleGroup'),
-        document.getElementById('extElectricAngleInput'), document.getElementById('extElectricAngleValue'),
-        'extElectricAngle');
-    _forms.bindSlider(document.getElementById('extBzInput'), document.getElementById('extBzValue'), v => {
-        sim.settings.extBz = v;
-        _syncSlidersToGPU();
-        _haptics.trigger('selection');
-    }, _fmt2);
 
     // Speed is now controlled by the toolbar speed button (cycleSpeed/decycleSpeed above)
 
