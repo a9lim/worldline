@@ -1605,18 +1605,20 @@ export default class GPUPhysics {
             passPiCoulomb.end();
         }
 
-        // annihilatePions: π⁺π⁻ → 2 photons
+        // π⁺π⁻ → 2 photons: proposals, then the pairs whose proposal was kept (boson-tree.wgsl)
         {
-            // Reset pion claim buffer (must use copyBufferToBuffer within encoder, not queue.writeBuffer)
+            // Reset pion claim buffer (must use clearBuffer within encoder, not queue.writeBuffer)
             encoder.clearBuffer(b.pionClaims);
             const passAnnihilate = encoder.beginComputePass({ label: 'annihilatePions' });
-            passAnnihilate.setPipeline(p4.annihilatePions.pipeline);
-            passAnnihilate.setBindGroup(0, bgs.btG0);
-            passAnnihilate.setBindGroup(1, bgs.btG1);
-            passAnnihilate.setBindGroup(2, bgs.btG2);
-            passAnnihilate.setBindGroup(3, bgs.btG3);
-            if (useIndirect) passAnnihilate.dispatchWorkgroupsIndirect(this._bosonDispatchArgs, BOSON_ARGS_PION);
-            else passAnnihilate.dispatchWorkgroups(Math.ceil(PION_POOL_CAP / 64));
+            for (const entry of ['proposePions', 'annihilatePions']) {
+                passAnnihilate.setPipeline(p4[entry].pipeline);
+                passAnnihilate.setBindGroup(0, bgs.btG0);
+                passAnnihilate.setBindGroup(1, bgs.btG1);
+                passAnnihilate.setBindGroup(2, bgs.btG2);
+                passAnnihilate.setBindGroup(3, bgs.btG3);
+                if (useIndirect) passAnnihilate.dispatchWorkgroupsIndirect(this._bosonDispatchArgs, BOSON_ARGS_PION);
+                else passAnnihilate.dispatchWorkgroups(Math.ceil(PION_POOL_CAP / 64));
+            }
             passAnnihilate.end();
         }
 

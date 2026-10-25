@@ -12,6 +12,7 @@
 // Boson tree node: same 20-word layout as particle tree but only mass+CoM used
 const NODE_WORDS: u32 = 20u;
 const NONE: i32 = -1;
+const ANNIHILATE_CANDIDATES: u32 = 16u;
 
 // Node field offsets
 const N_MIN_X: u32 = 0u;
@@ -271,41 +272,84 @@ fn applyPionPionCoulomb(@builtin(global_invocation_id) gid: vec3u) {
 
 // π⁺π⁻ annihilation: opposite-charge pions within softening distance → 2 photons.
 // Pairwise scan over pion pool (pions + leptons, PION_POOL_CAP entries).
+/** A pion or lepton that can annihilate: alive, charged, past the minimum age. */
+fn annihilable(p: Pion) -> bool {
+    return (p.flags & 1u) != 0u && abs(p.charge) >= EPSILON && p.age >= BOSON_MIN_AGE;
+}
+
+/**
+ * Pion i's partner: the lowest-index pion above it of the same kind (pion + pion or lepton
+ * + lepton) and opposite charge within reach, found through the bosons' tree, or NO_PARTNER.
+ * The pool scan this replaces took the same one.
+ */
+const NO_PARTNER: u32 = 0xFFFFFFFFu;
+fn annihilationPartner(i: u32, pi1: Pion, piN: u32) -> u32 {
+    let reach = sqrt(BOSON_SOFTENING_SQ);
+    var best = NO_PARTNER;
+    var stack: array<u32, 48>;
+    stack[0] = 0u;
+    var top: i32 = 1;
+    while (top > 0) {
+        top--;
+        let nIdx = stack[u32(top)];
+        if (pi1.posX + reach < nodeF32(nIdx, N_MIN_X) || pi1.posX - reach > nodeF32(nIdx, N_MAX_X) ||
+            pi1.posY + reach < nodeF32(nIdx, N_MIN_Y) || pi1.posY - reach > nodeF32(nIdx, N_MAX_Y)) { continue; }
+        if (bitcast<i32>(nodeU32(nIdx, N_NW)) == NONE) {
+            let id = nodeU32(nIdx, N_PARTICLE_IDX);
+            if (bitcast<i32>(id) < 0 || (id & BOSON_PION_TAG) == 0u) { continue; }
+            let j = id & ~BOSON_PION_TAG;
+            if (j <= i || j >= piN || j >= best) { continue; }
+            let pi2 = pions[j];
+            if (!annihilable(pi2) || pi2.kind != pi1.kind || pi2.charge * pi1.charge > 0.0) { continue; }
+            let dx = pi1.posX - pi2.posX;
+            let dy = pi1.posY - pi2.posY;
+            if (dx * dx + dy * dy >= BOSON_SOFTENING_SQ) { continue; }
+            best = j;
+        } else if (top + 4 <= 48) {
+            for (var c = 0u; c < 4u; c++) {
+                let ch = nodeU32(nIdx, N_NW + c);
+                if (bitcast<i32>(ch) != NONE) { stack[u32(top)] = ch; top++; }
+            }
+        }
+    }
+    return best;
+}
+
+// Annihilation pairs pions in two passes, deterministically. proposePions: each pion proposes
+// to its partner, and a pion keeps its lowest proposer (pionClaims holds PION_POOL_CAP − i,
+// so atomicMax keeps the lowest i; 0 is none). annihilatePions: a pion that nobody proposed
+// to annihilates with its partner if its own proposal was the one kept, so no pion is in two
+// pairs; a chain's leftovers pair on a later frame. (Each pion used to claim itself first, so
+// a partner's claim on it failed: threads in lockstep left nearly every pair unmatched.)
+
+@compute @workgroup_size(64)
+fn proposePions(@builtin(global_invocation_id) gid: vec3u) {
+    let i = gid.x;
+    let piN = atomicLoad(&piCount);
+    if (i >= piN) { return; }
+    let pi1 = pions[i];
+    if (!annihilable(pi1)) { return; }
+    let j = annihilationPartner(i, pi1, piN);
+    if (j != NO_PARTNER) { atomicMax(&pionClaims[j], PION_POOL_CAP - i); }
+}
+
 @compute @workgroup_size(64)
 fn annihilatePions(@builtin(global_invocation_id) gid: vec3u) {
     let i = gid.x;
     let piN = atomicLoad(&piCount);
     if (i >= piN) { return; }
 
-    var pi1 = pions[i];
-    if ((pi1.flags & 1u) == 0u) { return; }
-    if (abs(pi1.charge) < EPSILON) { return; }
-    if (pi1.age < BOSON_MIN_AGE) { return; }
-
-    // Claim self via CAS — if another thread already claimed us as their target, bail out
-    let claimSelf = atomicCompareExchangeWeak(&pionClaims[i], 0u, i + 1u);
-    if (!claimSelf.exchanged) { return; }
+    let pi1 = pions[i];
+    if (!annihilable(pi1)) { return; }
+    // Proposed to: the proposer annihilates this pion, or it waits
+    if (atomicLoad(&pionClaims[i]) != 0u) { return; }
+    let j = annihilationPartner(i, pi1, piN);
+    if (j == NO_PARTNER || atomicLoad(&pionClaims[j]) != PION_POOL_CAP - i) { return; }
 
     let p1x = pi1.posX;
     let p1y = pi1.posY;
-    let p1c = pi1.charge;
-    let p1k = pi1.kind;
-
-    // Search for nearest opposite-charge pion (lower index wins tie to avoid double-annihilation)
-    for (var j = i + 1u; j < piN; j++) {
+    {
         let pi2 = pions[j];
-        if ((pi2.flags & 1u) == 0u) { continue; }
-        if (pi2.kind != p1k) { continue; } // only same-kind annihilates (pion+pion or lepton+lepton)
-        if (abs(pi2.charge) < EPSILON || pi2.charge * p1c > 0.0) { continue; } // need opposite charge
-        if (pi2.age < BOSON_MIN_AGE) { continue; }
-
-        let dx = p1x - pi2.posX;
-        let dy = p1y - pi2.posY;
-        if (dx * dx + dy * dy >= BOSON_SOFTENING_SQ) { continue; }
-
-        // Claim target via CAS — if another thread already claimed j, try next candidate
-        let claimTarget = atomicCompareExchangeWeak(&pionClaims[j], 0u, i + 1u);
-        if (!claimTarget.exchanged) { continue; }
 
         // Both claims succeeded — safe to annihilate
         pions[i].flags &= ~1u;
@@ -319,7 +363,7 @@ fn annihilatePions(@builtin(global_invocation_id) gid: vec3u) {
         let E = pi1.mass * g1 + pi2.mass * g2;
         let px = w1x * pi1.mass + w2x * pi2.mass;
         let py2 = w1y * pi1.mass + w2y * pi2.mass;
-        if (E < EPSILON) { break; }
+        if (E < EPSILON) { return; }
 
         let vComX = px / E;
         let vComY = py2 / E;
@@ -379,6 +423,5 @@ fn annihilatePions(@builtin(global_invocation_id) gid: vec3u) {
                 atomicSub(&phCount, 1u);
             }
         }
-        break; // each pion annihilates at most once
     }
 }

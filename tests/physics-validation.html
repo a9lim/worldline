@@ -586,6 +586,37 @@ cases.push({
     },
 });
 
+// Pion annihilation pairs pions deterministically, finding partners through the bosons' tree:
+// 300 π⁺π⁻ pairs a unit apart, each far from the others, all annihilate in one frame into two
+// photons each, with their energy. Before, each pion claimed itself before claiming a partner,
+// so in lockstep both halves of a pair claimed themselves and neither annihilated: none did
+// here. (It also scanned the whole pool per pion, O(pool²).)
+cases.push({
+    name: 'π⁺π⁻ annihilation: 300 pairs, 600 photons, energy conserved',
+    async run() {
+        const gp = await makeSim({ on: ['gravityEnabled', 'barnesHutEnabled', 'bosonInterEnabled'], domainW: 512, domainH: 512, boundary: 1 });
+        gp.addParticle({ x: 2, y: 2, mass: 0.01 });
+        const list = [];
+        for (let k = 0; k < 300; k++) {
+            const x = 20 + (k % 20) * 24, y = 20 + Math.floor(k / 20) * 24;
+            list.push({ x, y, wx: 0, wy: 0, mass: 0.15, charge: 0.1 });
+            list.push({ x: x + 1, y, wx: 0, wy: 0, mass: 0.15, charge: -0.1 });
+        }
+        addPions(gp, list);
+        gp.update(1 / 1024);
+        await gp.device.queue.onSubmittedWorkDone();
+        const left = await countAlivePions(gp, list.length);
+        const nph = new Uint32Array(await readBuffer(gp, gp.buffers.phCount, 4))[0];
+        const ph = new Float32Array(await readBuffer(gp, gp.buffers.photonPool, nph * 32));
+        let E = 0;
+        for (let i = 0; i < nph; i++) if (new Uint32Array(ph.buffer)[i * 8 + 7] & 1) E += ph[i * 8 + 4];
+        gp.destroy();
+        const want = 600 * 0.15;
+        return { expected: `0 pions left, 600 photons, E = ${fmt(want, 4)}`, measured: `${left} left, ${nph} photons, E = ${fmt(E, 4)}`,
+                 metric: `${fmt(Math.abs(E / want - 1) * 100, 2)}%`, pass: left === 0 && nph === 600 && Math.abs(E / want - 1) < 1e-4 };
+    },
+});
+
 // Co-moving like charges (relativity off): the magnetic force q v × B, with the Biot–Savart
 // field of the partner, takes w² of the electric repulsion away. The field's sign was once
 // reversed, which made it add w² instead.

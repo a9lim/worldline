@@ -4,7 +4,7 @@
 // bosons, which boson gravity, pion Coulomb and kugelblitz read (node layout below, read-only
 // accessors in shared-tree-nodes.wgsl). The items come from an include prepended to this
 // file, tree-items-bodies.wgsl or tree-items-bosons.wgsl, which binds group 1 and defines
-// itemSlots(), itemActive(i), itemPos(i) and itemLeaf(i). Built from sorted Morton codes, so
+// itemSlots(), itemActive(i), itemPos(i), itemId(i) and itemLeaf(i). Built from sorted Morton codes, so
 // the tree depends only on the positions, never on thread timing:
 //   1. computeBounds    parallel min/max reduction (fixed-point atomics)
 //   2. initRoot         one thread: the padded root box
@@ -57,7 +57,7 @@ const FP_INV_SCALE: f32 = 0.0000152587890625; // 1/65536
 // [10]: totalMomentumX
 // [11]: totalMomentumY
 // [12..15]: children (i32), the first two to four used, the rest NONE
-// [16]: particleIndex (i32, leaves; NONE on internal nodes)
+// [16]: particleIndex (i32, leaves: the item's itemId; NONE on internal nodes)
 // [17]: particleCount: items under the node (during aggregate, the arrival counter)
 // [18]: parentIndex (i32)
 // [19]: maxRadius: the largest body radius under the node (f32), which searches prune by
@@ -433,7 +433,7 @@ fn aggregate(@builtin(global_invocation_id) gid: vec3<u32>) {
     stF(leaf, 10u, d.momentum.x);
     stF(leaf, 11u, d.momentum.y);
     for (var w = 12u; w < 16u; w++) { stI(leaf, w, NONE); }
-    stI(leaf, 16u, i32(pIdx));
+    stI(leaf, 16u, i32(itemId(pIdx)));
     stI(leaf, 17u, 1);
     stF(leaf, 19u, d.radius);
     if (n == 1u) { stI(leaf, 18u, NONE); }

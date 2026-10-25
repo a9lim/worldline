@@ -1,6 +1,8 @@
 // The bosons as tree items (tree-build.wgsl): the photon pool's live entries, then the pion
 // and lepton pool's, item i < phCount the photon i and the rest pion i − phCount. A photon
-// weighs its energy; a pion or lepton m·γ and carries its charge.
+// weighs its energy; a pion or lepton m·γ and carries its charge. A leaf names its boson as
+// the photon's index, or the pion's with BOSON_PION_TAG, since passes after the build add
+// photons (annihilation) and the split moves.
 
 // Group 1: the pools and their counts (read_write for encoder compat)
 @group(1) @binding(0) var<storage, read_write> photons: array<Photon>;
@@ -32,6 +34,11 @@ fn itemPos(i: u32) -> vec2<f32> {
     let phN = photonsLive();
     if (i < phN) { return vec2(photons[i].posX, photons[i].posY); }
     return vec2(pions[i - phN].posX, pions[i - phN].posY);
+}
+
+fn itemId(i: u32) -> u32 {
+    let phN = photonsLive();
+    return select(i, BOSON_PION_TAG | (i - phN), i >= phN);
 }
 
 fn itemLeaf(i: u32) -> Leaf {

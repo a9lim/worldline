@@ -91,7 +91,6 @@ fn checkKugelblitz(@builtin(global_invocation_id) gid: vec3u) {
     let slot = atomicAdd(&kbCounter, 1u);
     if (slot > 0u) { return; } // another node won
 
-    let phN = atomicLoad(&phCount);
     let piN = atomicLoad(&piCount);
 
     // Pass 1: Collect energy, momentum, charge — walk subtree
@@ -129,8 +128,9 @@ fn checkKugelblitz(@builtin(global_invocation_id) gid: vec3u) {
             let pidx = bitcast<i32>(nodeU32(nIdx, N_PARTICLE_IDX));
             if (pidx < 0) { continue; }
             let ui = u32(pidx);
+            let isPion = (ui & BOSON_PION_TAG) != 0u;
 
-            if (ui < phN) {
+            if (!isPion) {
                 if ((photons[ui].flags & 1u) != 0u) {
                     let e = photons[ui].energy;
                     totalEnergy += e;
@@ -144,7 +144,7 @@ fn checkKugelblitz(@builtin(global_invocation_id) gid: vec3u) {
                     bosonCount += 1.0;
                 }
             } else {
-                let pi = ui - phN;
+                let pi = ui & ~BOSON_PION_TAG;
                 if (pi < piN && (pions[pi].flags & 1u) != 0u) {
                     let wx = pions[pi].wX; let wy = pions[pi].wY;
                     let gamma = sqrt(1.0 + wx * wx + wy * wy);
@@ -200,8 +200,9 @@ fn checkKugelblitz(@builtin(global_invocation_id) gid: vec3u) {
             let pidx = bitcast<i32>(nodeU32(nIdx, N_PARTICLE_IDX));
             if (pidx < 0) { continue; }
             let ui = u32(pidx);
+            let isPion = (ui & BOSON_PION_TAG) != 0u;
 
-            if (ui < phN) {
+            if (!isPion) {
                 if ((photons[ui].flags & 1u) != 0u) {
                     let e = photons[ui].energy;
                     let dx = photons[ui].posX - comX;
@@ -211,7 +212,7 @@ fn checkKugelblitz(@builtin(global_invocation_id) gid: vec3u) {
                     photons[ui].flags &= ~1u;
                 }
             } else {
-                let pi = ui - phN;
+                let pi = ui & ~BOSON_PION_TAG;
                 if (pi < piN && (pions[pi].flags & 1u) != 0u) {
                     let dx = pions[pi].posX - comX;
                     let dy = pions[pi].posY - comY;

@@ -27,6 +27,9 @@ fn itemActive(i: u32) -> bool {
 
 fn itemPos(i: u32) -> vec2<f32> { return vec2(particleState[i].posX, particleState[i].posY); }
 
+/** What a leaf names (its particleIndex word): the slot. */
+fn itemId(i: u32) -> u32 { return i; }
+
 fn itemLeaf(i: u32) -> Leaf {
     let ps = particleState[i];
     var l: Leaf;

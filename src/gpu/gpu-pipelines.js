@@ -9,7 +9,7 @@
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 183;
+const SHADER_VERSION = 185;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -894,7 +894,7 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
 
     const bosonTreeEntries = [
         'computeBosonGravity', 'applyBosonBosonGravity',
-        'applyPionPionCoulomb', 'annihilatePions',
+        'applyPionPionCoulomb', 'proposePions', 'annihilatePions',
     ];
     const bosonTreePipelines = {};
     for (const entry of bosonTreeEntries) {

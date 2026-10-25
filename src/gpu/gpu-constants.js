@@ -246,6 +246,8 @@ const DESPAWN_MARGIN: f32 = ${wf(DESPAWN_MARGIN)};
 // Kugelblitz collapse
 const MIN_KUGELBLITZ_ENERGY: f32 = ${wf(MIN_KUGELBLITZ_ENERGY)};
 const MIN_KUGELBLITZ_COUNT: u32 = ${MIN_KUGELBLITZ_COUNT}u;
+// A boson tree leaf names a pion or lepton as its pool index with this bit (tree-items-bosons.wgsl)
+const BOSON_PION_TAG: u32 = 0x40000000u;
 
 // Palette colors
 ${inkConsts}
