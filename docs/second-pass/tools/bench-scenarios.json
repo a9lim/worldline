@@ -1,0 +1,275 @@
+[
+ {
+  "name": "cyclotron",
+  "preset": "cyclotron",
+  "bench": {
+   "warm": 2000,
+   "measure": 4000
+  }
+ },
+ {
+  "name": "cyclotron-tilt",
+  "preset": "cyclotron",
+  "steps": [
+   {
+    "js": "document.getElementById('view-spacetime').click()",
+    "wait": 1500,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000
+  }
+ },
+ {
+  "name": "twinBounce",
+  "preset": "twinBounce",
+  "bench": {
+   "warm": 2000,
+   "measure": 4000
+  }
+ },
+ {
+  "name": "twinBounce-tilt",
+  "preset": "twinBounce",
+  "steps": [
+   {
+    "js": "document.getElementById('view-spacetime').click()",
+    "wait": 1500,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000
+  }
+ },
+ {
+  "name": "wheel",
+  "preset": "wheel",
+  "bench": {
+   "warm": 2000,
+   "measure": 4000
+  }
+ },
+ {
+  "name": "wheel-tilt",
+  "preset": "wheel",
+  "steps": [
+   {
+    "js": "document.getElementById('view-spacetime').click()",
+    "wait": 1500,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000
+  }
+ },
+ {
+  "name": "bremsstrahlung",
+  "preset": "bremsstrahlung",
+  "bench": {
+   "warm": 2000,
+   "measure": 4000
+  }
+ },
+ {
+  "name": "bremsstrahlung-tilt",
+  "preset": "bremsstrahlung",
+  "steps": [
+   {
+    "js": "document.getElementById('view-spacetime').click()",
+    "wait": 1500,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000
+  }
+ },
+ {
+  "name": "kibbleZurek",
+  "preset": "kibbleZurek",
+  "bench": {
+   "warm": 2000,
+   "measure": 4000
+  }
+ },
+ {
+  "name": "kibbleZurek-tilt",
+  "preset": "kibbleZurek",
+  "steps": [
+   {
+    "js": "document.getElementById('view-spacetime').click()",
+    "wait": 1500,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000
+  }
+ },
+ {
+  "name": "microlensing",
+  "preset": "microlensing",
+  "bench": {
+   "warm": 2000,
+   "measure": 4000
+  }
+ },
+ {
+  "name": "microlensing-tilt",
+  "preset": "microlensing",
+  "steps": [
+   {
+    "js": "document.getElementById('view-spacetime').click()",
+    "wait": 1500,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000
+  }
+ },
+ {
+  "name": "cyclotron-fields",
+  "preset": "cyclotron",
+  "steps": [
+   {
+    "js": "__t.tog('potentialToggle', true)",
+    "wait": 800,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000
+  }
+ },
+ {
+  "name": "cyclotron-observer",
+  "preset": "cyclotron",
+  "steps": [
+   {
+    "js": "document.getElementById('view-spacetime').click(); __t.slider('boost-input', 0.6); __t.click('coords-observer')",
+    "wait": 2000,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000
+  }
+ },
+ {
+  "name": "n500-gcr-pair",
+  "steps": [
+   {
+    "js": "__t.click('clearBtn'); document.querySelector('[data-boundary=\"loop\"]').click(); document.querySelector('[data-topology=\"torus\"]').click();__t.tog('magnetic-toggle', false);__t.tog('gravitomag-toggle', false);__t.tog('onepn-toggle', false);__t.tog('blackhole-toggle', false);__t.tog('radiation-toggle', false);__t.tog('spinorbit-toggle', false);__t.tog('barneshut-toggle', false);__t.tog('bosoninter-toggle', false);__t.tog('yukawa-toggle', false);__t.tog('axion-toggle', false);__t.tog('expansion-toggle', false);__t.tog('higgs-toggle', false);__t.tog('gravity-toggle', true);__t.tog('coulomb-toggle', true);__t.tog('relativity-toggle', true);sim._spawningPreset = true; for (let i = 0; i < 500; i++) { const r = Math.random; sim.addParticle(r()*sim.domainW, r()*sim.domainH, (r()-0.5)*0.3, (r()-0.5)*0.3, { mass: 0.5 + Math.random(), charge: (Math.random() < 0.5 ? -1 : 1) * 0.2, spin: 0 }); } sim._spawningPreset = false;",
+    "wait": 1500,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000,
+   "shot": true
+  }
+ },
+ {
+  "name": "n500-gcr-bh",
+  "steps": [
+   {
+    "js": "__t.click('clearBtn'); document.querySelector('[data-boundary=\"loop\"]').click(); document.querySelector('[data-topology=\"torus\"]').click();__t.tog('magnetic-toggle', false);__t.tog('gravitomag-toggle', false);__t.tog('onepn-toggle', false);__t.tog('blackhole-toggle', false);__t.tog('radiation-toggle', false);__t.tog('spinorbit-toggle', false);__t.tog('bosoninter-toggle', false);__t.tog('yukawa-toggle', false);__t.tog('axion-toggle', false);__t.tog('expansion-toggle', false);__t.tog('higgs-toggle', false);__t.tog('gravity-toggle', true);__t.tog('coulomb-toggle', true);__t.tog('relativity-toggle', true);__t.tog('barneshut-toggle', true);sim._spawningPreset = true; for (let i = 0; i < 500; i++) { const r = Math.random; sim.addParticle(r()*sim.domainW, r()*sim.domainH, (r()-0.5)*0.3, (r()-0.5)*0.3, { mass: 0.5 + Math.random(), charge: (Math.random() < 0.5 ? -1 : 1) * 0.2, spin: 0 }); } sim._spawningPreset = false;",
+    "wait": 1500,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000,
+   "shot": true
+  }
+ },
+ {
+  "name": "n500-g-bh",
+  "steps": [
+   {
+    "js": "__t.click('clearBtn'); document.querySelector('[data-boundary=\"loop\"]').click(); document.querySelector('[data-topology=\"torus\"]').click();__t.tog('coulomb-toggle', false);__t.tog('magnetic-toggle', false);__t.tog('gravitomag-toggle', false);__t.tog('relativity-toggle', false);__t.tog('onepn-toggle', false);__t.tog('blackhole-toggle', false);__t.tog('radiation-toggle', false);__t.tog('spinorbit-toggle', false);__t.tog('bosoninter-toggle', false);__t.tog('yukawa-toggle', false);__t.tog('axion-toggle', false);__t.tog('expansion-toggle', false);__t.tog('higgs-toggle', false);__t.tog('gravity-toggle', true);__t.tog('barneshut-toggle', true);sim._spawningPreset = true; for (let i = 0; i < 500; i++) { const r = Math.random; sim.addParticle(r()*sim.domainW, r()*sim.domainH, (r()-0.5)*0.3, (r()-0.5)*0.3, { mass: 0.5 + Math.random(), charge: 0, spin: 0 }); } sim._spawningPreset = false;",
+    "wait": 1500,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000,
+   "shot": true
+  }
+ },
+ {
+  "name": "n500-gcr-bh-tilt",
+  "steps": [
+   {
+    "js": "__t.click('clearBtn'); document.querySelector('[data-boundary=\"loop\"]').click(); document.querySelector('[data-topology=\"torus\"]').click();__t.tog('magnetic-toggle', false);__t.tog('gravitomag-toggle', false);__t.tog('onepn-toggle', false);__t.tog('blackhole-toggle', false);__t.tog('radiation-toggle', false);__t.tog('spinorbit-toggle', false);__t.tog('bosoninter-toggle', false);__t.tog('yukawa-toggle', false);__t.tog('axion-toggle', false);__t.tog('expansion-toggle', false);__t.tog('higgs-toggle', false);__t.tog('gravity-toggle', true);__t.tog('coulomb-toggle', true);__t.tog('relativity-toggle', true);__t.tog('barneshut-toggle', true);sim._spawningPreset = true; for (let i = 0; i < 500; i++) { const r = Math.random; sim.addParticle(r()*sim.domainW, r()*sim.domainH, (r()-0.5)*0.3, (r()-0.5)*0.3, { mass: 0.5 + Math.random(), charge: (Math.random() < 0.5 ? -1 : 1) * 0.2, spin: 0 }); } sim._spawningPreset = false;document.getElementById('view-spacetime').click()",
+    "wait": 1500,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000,
+   "shot": true
+  }
+ },
+ {
+  "name": "bh-pools",
+  "steps": [
+   {
+    "js": "__t.click('clearBtn'); document.querySelector('[data-boundary=\"loop\"]').click(); document.querySelector('[data-topology=\"torus\"]').click();__t.tog('magnetic-toggle', false);__t.tog('gravitomag-toggle', false);__t.tog('onepn-toggle', false);__t.tog('spinorbit-toggle', false);__t.tog('bosoninter-toggle', false);__t.tog('yukawa-toggle', false);__t.tog('axion-toggle', false);__t.tog('expansion-toggle', false);__t.tog('higgs-toggle', false);__t.tog('gravity-toggle', true);__t.tog('coulomb-toggle', true);__t.tog('relativity-toggle', true);__t.tog('blackhole-toggle', true);__t.tog('radiation-toggle', true);__t.tog('barneshut-toggle', true);sim._spawningPreset = true; for (let i = 0; i < 200; i++) { const r = Math.random; sim.addParticle(r()*sim.domainW, r()*sim.domainH, (r()-0.5)*0.3, (r()-0.5)*0.3, { mass: 0.3 + 0.3 * Math.random(), charge: (Math.random() < 0.5 ? -1 : 1) * 0.1, spin: 0 }); } sim._spawningPreset = false;",
+    "wait": 1500,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000,
+   "shot": true
+  }
+ },
+ {
+  "name": "fields-grav",
+  "steps": [
+   {
+    "js": "__t.click('clearBtn'); document.querySelector('[data-boundary=\"loop\"]').click(); document.querySelector('[data-topology=\"torus\"]').click();__t.tog('coulomb-toggle', false);__t.tog('magnetic-toggle', false);__t.tog('gravitomag-toggle', false);__t.tog('relativity-toggle', false);__t.tog('onepn-toggle', false);__t.tog('blackhole-toggle', false);__t.tog('radiation-toggle', false);__t.tog('spinorbit-toggle', false);__t.tog('barneshut-toggle', false);__t.tog('bosoninter-toggle', false);__t.tog('yukawa-toggle', false);__t.tog('expansion-toggle', false);__t.tog('gravity-toggle', true);__t.tog('higgs-toggle', true);__t.tog('axion-toggle', true);sim._spawningPreset = true; for (let i = 0; i < 64; i++) { const r = Math.random; sim.addParticle(r()*sim.domainW, r()*sim.domainH, (r()-0.5)*0.3, (r()-0.5)*0.3, { mass: 1 + Math.random(), charge: (Math.random() < 0.5 ? -1 : 1) * 0.2, spin: 0 }); } sim._spawningPreset = false;",
+    "wait": 1500,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000,
+   "shot": true
+  }
+ },
+ {
+  "name": "cluster-substeps",
+  "steps": [
+   {
+    "js": "__t.click('clearBtn'); document.querySelector('[data-boundary=\"loop\"]').click(); document.querySelector('[data-topology=\"torus\"]').click();__t.tog('gravity-toggle', true);__t.tog('coulomb-toggle', false);__t.tog('magnetic-toggle', false);__t.tog('gravitomag-toggle', false);__t.tog('relativity-toggle', false);__t.tog('onepn-toggle', false);__t.tog('blackhole-toggle', false);__t.tog('radiation-toggle', false);__t.tog('spinorbit-toggle', false);__t.tog('barneshut-toggle', true);__t.tog('bosoninter-toggle', false);__t.tog('yukawa-toggle', false);__t.tog('axion-toggle', false);__t.tog('expansion-toggle', false);__t.tog('higgs-toggle', false);sim._spawningPreset = true; for (let i = 0; i < 200; i++) { const r = Math.random, a = r() * 6.283, d = 4 + 10 * r(); sim.addParticle(sim.domainW / 2 + d * Math.cos(a), sim.domainH / 2 + d * Math.sin(a), 0, 0, { mass: 4 + 4 * r(), charge: 0, spin: 0 }); } sim._spawningPreset = false; sim.speedIndex = 5; sim.speedScale = 16;",
+    "wait": 1500,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000,
+   "shot": true
+  }
+ }
+]

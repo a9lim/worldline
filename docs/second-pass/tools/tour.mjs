@@ -77,7 +77,7 @@ if (Object.keys(bench).length) {
   writeFileSync(`${out}/bench.json`, JSON.stringify({ date: new Date().toISOString(), rev, adapter, viewport: [+width, +height, +dpr], scenarios: bench }, null, 1));
   for (const [k, v] of Object.entries(bench)) {
     if (!v) { console.log(k.padEnd(28), 'no profiler'); continue; }
-    console.log(k.padEnd(28), `frame ${v.interval.p50.toFixed(2)}/${v.interval.p95.toFixed(2)}  cpu ${v.cpuTotal.p50.toFixed(2)}/${v.cpuTotal.p95.toFixed(2)}  gpu ${v.gpuBusy.p50.toFixed(2)}/${v.gpuBusy.p95.toFixed(2)}  span ${v.gpuSpan.p50.toFixed(2)}  sub ${v.substeps.p50}  submits ${v.submits.p50}  n=${v.alive}`);
+    console.log(k.padEnd(28), `frame ${v.interval.p50.toFixed(2)}/${v.interval.p95.toFixed(2)}  cpu ${v.cpuTotal.p50.toFixed(2)}/${v.cpuTotal.p95.toFixed(2)}  span ${v.gpuSpan.p50.toFixed(2)}/${v.gpuSpan.p95.toFixed(2)}  step ${v.stepSpan.p50.toFixed(2)}  render ${v.renderSpan.p50.toFixed(2)}  sub ${v.substeps.p50}  submits ${v.submits.p50}  n=${v.alive}`);
   }
 }
 await browser.close();

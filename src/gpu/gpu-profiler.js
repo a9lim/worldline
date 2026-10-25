@@ -149,7 +149,10 @@ export default class GPUProfiler {
         mapped.then(() => {
             const t = new BigUint64Array(slot.buf.getMappedRange(0, n * 8).slice(0));
             slot.buf.unmap();
-            const passes = {};
+            // Passes can overlap (Metal runs independent encoders concurrently), so busy, their
+            // sum, overcounts; span, first begin to last end, is the frame's GPU wall time,
+            // gaps between submits included. Each phase gets its own span too.
+            const passes = {}, phases = {};
             let busy = 0, lo = Infinity, hi = -Infinity;
             for (let k = 0; k < labels.length; k++) {
                 const b = t[2 * k], e = t[2 * k + 1];
@@ -160,8 +163,14 @@ export default class GPUProfiler {
                 const bn = Number(b) / 1e6, en = Number(e) / 1e6;
                 if (bn < lo) lo = bn;
                 if (en > hi) hi = en;
+                const ph = labels[k].slice(0, labels[k].indexOf(':'));
+                const r = phases[ph] || (phases[ph] = [bn, en]);
+                if (bn < r[0]) r[0] = bn;
+                if (en > r[1]) r[1] = en;
             }
-            this._gpu.push({ busy, span: hi > lo ? hi - lo : 0, passes });
+            const spans = {};
+            for (const [ph, [a, b]] of Object.entries(phases)) spans[ph] = b - a;
+            this._gpu.push({ busy, span: hi > lo ? hi - lo : 0, spans, passes });
             if (this._gpu.length > WINDOW) this._gpu.shift();
         }).catch(() => {}).finally(() => { slot.busy = false; });
     }
@@ -200,6 +209,8 @@ export default class GPUProfiler {
             mapLatency: stats(this._mapLatency),
             gpuBusy: stats(gpu.map((f) => f.busy)),
             gpuSpan: stats(gpu.map((f) => f.span)),
+            stepSpan: stats(gpu.map((f) => f.spans.step ?? 0)),
+            renderSpan: stats(gpu.map((f) => f.spans.render ?? 0)),
             passes,
             overflow: this._overflow,
             dropped: this._dropped,
@@ -215,7 +226,7 @@ export default class GPUProfiler {
         const lines = [
             `frame ${f(s.interval.p50)} ms (p95 ${f(s.interval.p95)})  cpu ${f(s.cpuTotal.p50)} / ${f(s.cpuTotal.p95)}`,
             `cpu step ${f(s.cpuStep.p50)}  render ${f(s.cpuRender.p50)}  substeps ${s.substeps.p50}`,
-            `gpu busy ${f(s.gpuBusy.p50)} ms (p95 ${f(s.gpuBusy.p95)})  span ${f(s.gpuSpan.p50)}`,
+            `gpu span ${f(s.gpuSpan.p50)} ms (p95 ${f(s.gpuSpan.p95)})  step ${f(s.stepSpan.p50)}  render ${f(s.renderSpan.p50)}`,
             `submits ${s.submits.p50}  writes ${s.writes.p50}  maps ${s.maps.p50} (${f(s.mapLatency.p50)} ms)`,
         ];
         if (!s.timestamps) lines.push('no timestamp-query on this device');
