@@ -9,7 +9,7 @@
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 165;
+const SHADER_VERSION = 166;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -1201,6 +1201,7 @@ export async function createFieldEvolvePipelines(device, wgslConstants = '') {
         { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: gradAccess } },  // fieldGradX
         { binding: 8, visibility: GPUShaderStage.COMPUTE, buffer: { type: gradAccess } },  // fieldGradY
         { binding: 9, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 10, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },  // fieldDotPrev
     ];
     const evolveGroup0Layout = device.createBindGroupLayout({ label: 'fieldEvolve_group0', entries: entries('storage') });
     const evolveBindGroupLayouts = [evolveGroup0Layout];

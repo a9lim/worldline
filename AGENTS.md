@@ -48,13 +48,9 @@ open decisions, and the model's known boundaries. This file describes the code a
   2× and 0.5× in about 30 s; `node shots-diff.mjs A B OUT` counts the pixels whose channel moved by
   more than 8/255, with their bounding box, a diff image, a contact sheet and the physics hashes;
   `node cvd.mjs IMG OUT` renders protan/deutan/tritan/gray sheets (Machado et al. 2009 at severity
-  1.0 in linear RGB) and scores every pair of inks by CIEDE2000. Measured noise on an unchanged
-  tree: five presets reproduce byte for byte, kibbleZurek's Higgs field does not (`higgsHalfKick`
-  reads neighbours' φ̇ while writing it in place) and moves up to 0.13% of its pixels by at most
-  5/255, and one 9 px swatch in the key moved by 5, so changes under 8/255 are noise. A theme is
-  taken by opening the page in it, not by flipping it: `GPUPhysics._isDarkTheme` is read in the
-  constructor and `setToggles()` but not on a theme change, so a flipped page keeps the old theme's
-  body inks until a setting changes.
+  1.0 in linear RGB) and scores every pair of inks by CIEDE2000. Measured on an unchanged
+  tree, every preset reproduces byte for byte with its physics hash, so the 8/255 threshold is
+  margin (one 9 px swatch in the key has moved by 5/255). Each theme opens its own page.
 
 ## Layout
 

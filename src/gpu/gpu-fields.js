@@ -215,7 +215,7 @@ const FieldMethods = {
         const g = this._gravGrid;
         const entries = [
             fb.field, fb.fieldDot, otherFieldBuf, fb.source, fb.thermal,
-            g.metricPhi, g.metricPhiDot, fb.gradX, fb.gradY, uBuf,
+            g.metricPhi, g.metricPhiDot, fb.gradX, fb.gradY, uBuf, fb.fieldDotPrev,
         ].map((buffer, binding) => ({ binding, resource: { buffer } }));
         this._fieldEvolveBGs[which] = this.device.createBindGroup({
             label: `fieldEvolve_${which}`,
@@ -547,8 +547,13 @@ const FieldMethods = {
             this._ensureGravityBindGroups();
             this._dispatchGridPotential(encoder, 'pre');
         }
-        const kick = (which, tag) => pass(`halfKick${tag}_${which}`,
-            which === 'higgs' ? evo.higgsHalfKick : evo.axionHalfKick, [this._fieldEvolveBGs[which]], gridWG, gridWG);
+        const kick = (which, tag) => {
+            // The kick's viscosity reads its neighbours' φ̇ from before it (fieldDotPrev)
+            const fb = which === 'higgs' ? this._higgsBuffers : this._axionBuffers;
+            encoder.copyBufferToBuffer(fb.fieldDot, 0, fb.fieldDotPrev, 0, fb.fieldDot.size);
+            pass(`halfKick${tag}_${which}`,
+                which === 'higgs' ? evo.higgsHalfKick : evo.axionHalfKick, [this._fieldEvolveBGs[which]], gridWG, gridWG);
+        };
         const gradients = (which, tag) => pass(`gridGradients${tag}_${which}`,
             evo.computeGridGradients, [this._fieldGradBGs[which]], gridWG, gridWG);
 

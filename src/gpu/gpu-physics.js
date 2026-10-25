@@ -2706,16 +2706,7 @@ export default class GPUPhysics {
             this._dispatchQuadrupole(encoder);
 
             // Update particle colors from charge/mass/antimatter state
-            if (this._updateColorsPipeline && this.aliveCount > 0) {
-                _colorUniformData[0] = this._blackHoleEnabled ? 1 : 0;
-                _colorUniformData[1] = this._isDarkTheme ? 1 : 0;
-                this.device.queue.writeBuffer(this._colorUniformBuffer, 0, _colorUniformData);
-                const p = encoder.beginComputePass({ label: 'updateColors' });
-                p.setPipeline(this._updateColorsPipeline);
-                p.setBindGroup(0, this._updateColorsBindGroup);
-                p.dispatchWorkgroups(Math.ceil(this.aliveCount / 64));
-                p.end();
-            }
+            this._dispatchUpdateColors(encoder);
 
             const readback = this._encodeFrameReadback(encoder);
             this.device.queue.submit([encoder.finish()]);
@@ -2874,6 +2865,27 @@ export default class GPUPhysics {
     }
 
     /** Passes 0–14 of a substep, everything the bodies do up to the field step. */
+    /** The bodies' inks from their charge, antimatter and black-hole state, in the theme's pair. */
+    _dispatchUpdateColors(encoder) {
+        if (!this._updateColorsPipeline || this.aliveCount === 0) return;
+        _colorUniformData[0] = this._blackHoleEnabled ? 1 : 0;
+        _colorUniformData[1] = this._isDarkTheme ? 1 : 0;
+        this.device.queue.writeBuffer(this._colorUniformBuffer, 0, _colorUniformData);
+        const p = encoder.beginComputePass({ label: 'updateColors' });
+        p.setPipeline(this._updateColorsPipeline);
+        p.setBindGroup(0, this._updateColorsBindGroup);
+        p.dispatchWorkgroups(Math.ceil(this.aliveCount / 64));
+        p.end();
+    }
+
+    /** A theme change re-inks the bodies at once, paused or not (the inks are theme-paired). */
+    setTheme(isDark) {
+        this._isDarkTheme = isDark;
+        const enc = this.device.createCommandEncoder({ label: 'theme-colors' });
+        this._dispatchUpdateColors(enc);
+        this.device.queue.submit([enc.finish()]);
+    }
+
     _dispatchBodyStep(encoder, dtSub, workgroups, plan) {
         const p2 = this._phase2;
 

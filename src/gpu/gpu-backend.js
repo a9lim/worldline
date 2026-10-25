@@ -76,6 +76,7 @@ export default class GPUBackend {
 
     setTheme(isLight) {
         this.renderer.setTheme(isLight);
+        this.physics.setTheme(!isLight);
     }
 
     /** Push the settings store and the modes into GPUPhysics. */

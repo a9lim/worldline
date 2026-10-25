@@ -12,6 +12,9 @@
 @group(0) @binding(7) var<storage, read_write> fieldGradX: array<f32>;  // field gradients (rw for computeGridGradients)
 @group(0) @binding(8) var<storage, read_write> fieldGradY: array<f32>;
 @group(0) @binding(9) var<uniform> uniforms: FieldUniforms;
+// φ̇ as the half-kick began: neighbours are read here, so the kick never reads a cell another
+// thread of the same dispatch has already kicked (the viscosity term)
+@group(0) @binding(10) var<storage, read> fieldDotPrev: array<f32>;
 
 // ─── Metric coefficients ───
 // Fields evolve in ds² = −e^{2Φ}dt² + e^{−2Φ}d𝐱² (Φ from field-gravity.wgsl),
@@ -93,10 +96,10 @@ fn higgsHalfKick(@builtin(global_invocation_id) gid: vec3<u32>) {
     var fdL: f32; var fdR: f32; var fdT: f32; var fdB: f32;
     if (ix > 0u && ix < GRID_LAST && iy > 0u && iy < GRID_LAST) {
         // Interior fast path: direct indexing
-        fdL = fieldDot[idx - 1u];
-        fdR = fieldDot[idx + 1u];
-        fdT = fieldDot[idx - GRID];
-        fdB = fieldDot[idx + GRID];
+        fdL = fieldDotPrev[idx - 1u];
+        fdR = fieldDotPrev[idx + 1u];
+        fdT = fieldDotPrev[idx - GRID];
+        fdB = fieldDotPrev[idx + GRID];
     } else {
         // Border: topology-aware via nbIndex
         let bcMode = uniforms.boundaryMode;
@@ -105,10 +108,10 @@ fn higgsHalfKick(@builtin(global_invocation_id) gid: vec3<u32>) {
         let iR = nbIndex(i32(ix) + 1, i32(iy), bcMode, topoMode);
         let iT = nbIndex(i32(ix), i32(iy) - 1, bcMode, topoMode);
         let iB = nbIndex(i32(ix), i32(iy) + 1, bcMode, topoMode);
-        fdL = select(fdC, fieldDot[iL], iL >= 0);
-        fdR = select(fdC, fieldDot[iR], iR >= 0);
-        fdT = select(fdC, fieldDot[iT], iT >= 0);
-        fdB = select(fdC, fieldDot[iB], iB >= 0);
+        fdL = select(fdC, fieldDotPrev[iL], iL >= 0);
+        fdR = select(fdC, fieldDotPrev[iR], iR >= 0);
+        fdT = select(fdC, fieldDotPrev[iT], iT >= 0);
+        fdB = select(fdC, fieldDotPrev[iB], iB >= 0);
     }
     let fdLap = (fdL + fdR - 2.0 * fdC) * invCWsq + (fdT + fdB - 2.0 * fdC) * invCHsq;
     let viscosity = 0.5 * inverseSqrt(invCWsq + invCHsq) * fdLap;
@@ -164,10 +167,10 @@ fn axionHalfKick(@builtin(global_invocation_id) gid: vec3<u32>) {
     var fdL: f32; var fdR: f32; var fdT: f32; var fdB: f32;
     if (ix > 0u && ix < GRID_LAST && iy > 0u && iy < GRID_LAST) {
         // Interior fast path: direct indexing
-        fdL = fieldDot[idx - 1u];
-        fdR = fieldDot[idx + 1u];
-        fdT = fieldDot[idx - GRID];
-        fdB = fieldDot[idx + GRID];
+        fdL = fieldDotPrev[idx - 1u];
+        fdR = fieldDotPrev[idx + 1u];
+        fdT = fieldDotPrev[idx - GRID];
+        fdB = fieldDotPrev[idx + GRID];
     } else {
         // Border: topology-aware via nbIndex
         let bcMode = uniforms.boundaryMode;
@@ -176,10 +179,10 @@ fn axionHalfKick(@builtin(global_invocation_id) gid: vec3<u32>) {
         let iR = nbIndex(i32(ix) + 1, i32(iy), bcMode, topoMode);
         let iT = nbIndex(i32(ix), i32(iy) - 1, bcMode, topoMode);
         let iB = nbIndex(i32(ix), i32(iy) + 1, bcMode, topoMode);
-        fdL = select(fdC, fieldDot[iL], iL >= 0);
-        fdR = select(fdC, fieldDot[iR], iR >= 0);
-        fdT = select(fdC, fieldDot[iT], iT >= 0);
-        fdB = select(fdC, fieldDot[iB], iB >= 0);
+        fdL = select(fdC, fieldDotPrev[iL], iL >= 0);
+        fdR = select(fdC, fieldDotPrev[iR], iR >= 0);
+        fdT = select(fdC, fieldDotPrev[iT], iT >= 0);
+        fdB = select(fdC, fieldDotPrev[iB], iB >= 0);
     }
     let fdLap = (fdL + fdR - 2.0 * fdC) * invCWsq + (fdT + fdB - 2.0 * fdC) * invCHsq;
     let viscosity = 0.5 * inverseSqrt(invCWsq + invCHsq) * fdLap;

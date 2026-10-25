@@ -410,7 +410,8 @@ export function setupUI(sim) {
     const syncRendererTheme = () => {
         const isLight = document.documentElement.dataset.theme !== 'dark';
         sim.overlay.setTheme(isLight);
-        if (sim._gpuRenderer) sim._gpuRenderer.setTheme(isLight);
+        // The renderer's pipelines and the bodies' inks (GPUBackend.setTheme)
+        if (sim.gpu) sim.gpu.setTheme(isLight);
         sim._dirty = true;
     };
     let _aboutHandle = null;
