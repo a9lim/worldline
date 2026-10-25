@@ -9,7 +9,7 @@
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 189;
+const SHADER_VERSION = 193;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -211,9 +211,9 @@ export async function createTreeBuildPipelines(device, wgslConstants = '', items
     const module = device.createShaderModule({ label: `treeBuild-${items}`, code });
     const storage = (binding) => ({ binding, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } });
 
-    // Group 0: nodes, the item count, bounds, children per node
+    // Group 0: nodes, the item count, bounds
     const group0Layout = device.createBindGroupLayout({
-        label: 'treeBuild_group0', entries: [storage(0), storage(1), storage(2), storage(3)],
+        label: 'treeBuild_group0', entries: [storage(0), storage(1), storage(2)],
     });
     // Group 1: the items (tree-items-*.wgsl): particle state + derived + aux, or the two pools
     // and their counts (rw for encoder compat)
@@ -236,7 +236,7 @@ export async function createTreeBuildPipelines(device, wgslConstants = '', items
     const bindGroupLayouts = [group0Layout, group1Layout, group2Layout, group3Layout];
     const layout = device.createPipelineLayout({ bindGroupLayouts });
     const pipeline = (entryPoint) => device.createComputePipeline({ label: entryPoint, layout, compute: { module, entryPoint } });
-    const entries = ['computeBounds', 'initRoot', 'mortonKeys', 'treePlan', 'padKeys', 'sortLocal', 'sortGlobal', 'sortMerge', 'radixBuild', 'quadLink', 'aggregate'];
+    const entries = ['computeBounds', 'initRoot', 'mortonKeys', 'treePlan', 'padKeys', 'sortLocal', 'sortGlobal', 'sortMerge', 'radixBuild', 'quadLink', 'writeLeaves', 'reduceNodes'];
     const out = { bindGroupLayouts };
     for (const e of entries) out[e] = pipeline(e);
     return out;

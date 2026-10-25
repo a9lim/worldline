@@ -19,8 +19,12 @@
 //      sortMerge        then the steps within a block, for one width k (both after k > block)
 //   5. radixBuild       one thread per internal node of the binary radix tree (Karras 2012)
 //   6. quadLink         one thread per binary node that starts a quadtree cell: its children
-//   7. aggregate        one thread per item: its leaf, then up the tree, the last child to
-//                       arrive at a node summing it from its children in slot order
+//   7. writeLeaves      one thread per item: its leaf
+//      reduceNodes      one workgroup per binary internal node that starts a cell: the sums
+//                       over its contiguous range of sorted leaves, written by the dispatch
+//                       before. No node reads another's sums, so no dispatch depends on the
+//                       order another workgroup's writes land in (WGSL's atomics are relaxed,
+//                       so a bottom-up climb that read its children's sums had no guarantee)
 //
 // The quadtree is compressed: a cell exists where its bodies split among two or more of its
 // quadrants, so a node has two to four children, at any deeper level. They fill the child
@@ -63,7 +67,7 @@ const FP_INV_SCALE: f32 = 0.0000152587890625; // 1/65536
 // [11]: totalMomentumY
 // [12..15]: children (i32), the first two to four used, the rest NONE
 // [16]: particleIndex (i32, leaves: the item's itemId; NONE on internal nodes)
-// [17]: particleCount: items under the node (during aggregate, the arrival counter)
+// [17]: particleCount: items under the node
 // [18]: parentIndex (i32)
 // [19]: maxRadius: the largest body radius under the node (f32), which searches prune by
 
@@ -72,8 +76,6 @@ const FP_INV_SCALE: f32 = 0.0000152587890625; // 1/65536
 // [0..3] the fixed-point reduction; [4..7] the padded root box (minX, minY, width, height);
 // [8] the sort's size M
 @group(0) @binding(2) var<storage, read_write> bounds: array<atomic<i32>>;
-// Children per quadtree node: how many arrivals aggregate waits for
-@group(0) @binding(3) var<storage, read_write> visitorFlags: array<atomic<u32>>;
 
 @group(2) @binding(0) var<uniform> uniforms: SimUniforms;
 
@@ -216,9 +218,10 @@ fn planRecord(r: u32, x: u32) {
 }
 
 /**
- * The sort's size and its dispatches: record 0 padKeys, 1 sortLocal, then the network's steps
- * past a block in the order the host's step table lists them (gpu-physics.js
- * _createTreeBuildBindGroups), none for a width past M.
+ * The sort's size and the dispatches sized by the count: record 0 padKeys, 1 reduceNodes (a
+ * workgroup per binary internal node), 2 sortLocal, then the network's steps past a block in
+ * the order the host's step table lists them (gpu-physics.js _createTreeBuildBindGroups), none
+ * for a width past M.
  */
 @compute @workgroup_size(1)
 fn treePlan() {
@@ -227,8 +230,9 @@ fn treePlan() {
     while (M < n) { M <<= 1u; }
     atomicStore(&bounds[8], i32(M));
     planRecord(0u, M / 256u);
-    planRecord(1u, M / SORT_BLOCK);
-    var r = 2u;
+    planRecord(1u, max(n, 1u) - 1u);
+    planRecord(2u, M / SORT_BLOCK);
+    var r = 3u;
     for (var k = 2u * SORT_BLOCK; k <= arrayLength(&keys); k <<= 1u) {
         for (var j = k >> 1u; j >= SORT_BLOCK; j >>= 1u) {
             planRecord(r, select(0u, M / 512u, k <= M));
@@ -445,15 +449,13 @@ fn quadLink(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (s < count) { stI(kids[s], 18u, i32(i)); }
     }
     stI(i, 16u, NONE);
-    stI(i, 17u, 0);
     if (i == 0u) { stI(0u, 18u, NONE); }
-    atomicStore(&visitorFlags[i], count);
 }
 
-// ─── 7: aggregate ───
+// ─── 7: writeLeaves, reduceNodes ───
 
 @compute @workgroup_size(256)
-fn aggregate(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn writeLeaves(@builtin(global_invocation_id) gid: vec3<u32>) {
     let n = atomicLoad(&nActive);
     let k = gid.x;
     if (k >= n) { return; }
@@ -479,53 +481,74 @@ fn aggregate(@builtin(global_invocation_id) gid: vec3<u32>) {
     stI(leaf, 17u, 1);
     stF(leaf, 19u, d.radius);
     if (n == 1u) { stI(leaf, 18u, NONE); }
+}
 
-    // Up the tree: the last child to arrive sums the node, so each node is summed once,
-    // from all its children, in slot order
-    var cur = select(ldI(leaf, 18u), NONE, n == 1u);
-    loop {
-        if (cur < 0) { break; }
-        let node = u32(cur);
-        let expected = atomicLoad(&visitorFlags[node]);
-        let prev = atomicAdd(&nodes[nodeOffset(node) + 17u], 1u);
-        if (prev + 1u < expected) { break; }
+// Per thread, then by halves: mass, charge, magnetic moment, angular momentum, momentum,
+// mass-weighted position, and the largest radius
+const RED_WORDS: u32 = 9u;
+var<workgroup> wgRed: array<array<f32, RED_WORDS>, 64>;
+var<workgroup> wgSkip: u32;
+var<workgroup> wgFirst: u32;
+var<workgroup> wgLast: u32;
+var<workgroup> wgLeaf0: u32;
 
-        var tm = 0.0;
-        var tq = 0.0;
-        var tmm = 0.0;
-        var tam = 0.0;
-        var tpx = 0.0;
-        var tpy = 0.0;
-        var cx = 0.0;
-        var cy = 0.0;
-        var bodies = 0u;
-        var rMax = 0.0;
-        for (var s = 0u; s < expected; s++) {
-            let c = u32(ldI(node, 12u + s));
-            let cm = ldF(c, 6u);
-            tm += cm;
-            tq += ldF(c, 7u);
-            tmm += ldF(c, 8u);
-            tam += ldF(c, 9u);
-            tpx += ldF(c, 10u);
-            tpy += ldF(c, 11u);
-            cx += ldF(c, 4u) * cm;
-            cy += ldF(c, 5u) * cm;
-            bodies += atomicLoad(&nodes[nodeOffset(c) + 17u]);
-            rMax = max(rMax, ldF(c, 19u));
+@compute @workgroup_size(64)
+fn reduceNodes(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lidv: vec3<u32>) {
+    let i = wid.x;
+    let t = lidv.x;
+    if (t == 0u) {
+        let n = atomicLoad(&nActive);
+        var skip = n < 2u || i >= n - 1u;
+        // A binary node in its parent's cell is part of the parent's quadtree node
+        if (!skip && i != 0u) { skip = levelOf(radix[i * R_STRIDE + 5u]) == levelOf(i); }
+        wgSkip = select(0u, 1u, skip);
+        if (!skip) {
+            wgFirst = radix[i * R_STRIDE + 3u];
+            wgLast = radix[i * R_STRIDE + 4u];
+            wgLeaf0 = n - 1u;
         }
-        stF(node, 19u, rMax);
-        stF(node, 6u, tm);
-        stF(node, 7u, tq);
-        stF(node, 8u, tmm);
-        stF(node, 9u, tam);
-        stF(node, 10u, tpx);
-        stF(node, 11u, tpy);
-        // A node of weightless items (ghosts) weighs nothing; its centre is its cell's
-        let invM = select(0.0, 1.0 / tm, tm > 0.0);
-        stF(node, 4u, select(0.5 * (ldF(node, 0u) + ldF(node, 2u)), cx * invM, tm > 0.0));
-        stF(node, 5u, select(0.5 * (ldF(node, 1u) + ldF(node, 3u)), cy * invM, tm > 0.0));
-        atomicStore(&nodes[nodeOffset(node) + 17u], bodies);
-        cur = ldI(node, 18u);
     }
+    if (workgroupUniformLoad(&wgSkip) != 0u) { return; }
+    let first = wgFirst;
+    let last = wgLast;
+    let leaf0 = wgLeaf0;
+
+    var acc: array<f32, RED_WORDS>;
+    for (var k = first + t; k <= last; k += 64u) {
+        let leaf = leaf0 + k;
+        let m = ldF(leaf, 6u);
+        acc[0] += m;
+        acc[1] += ldF(leaf, 7u);
+        acc[2] += ldF(leaf, 8u);
+        acc[3] += ldF(leaf, 9u);
+        acc[4] += ldF(leaf, 10u);
+        acc[5] += ldF(leaf, 11u);
+        acc[6] += m * ldF(leaf, 4u);
+        acc[7] += m * ldF(leaf, 5u);
+        acc[8] = max(acc[8], ldF(leaf, 19u));
+    }
+    wgRed[t] = acc;
+    workgroupBarrier();
+    for (var off = 32u; off > 0u; off >>= 1u) {
+        if (t < off) {
+            for (var w = 0u; w < RED_WORDS - 1u; w++) { wgRed[t][w] += wgRed[t + off][w]; }
+            wgRed[t][RED_WORDS - 1u] = max(wgRed[t][RED_WORDS - 1u], wgRed[t + off][RED_WORDS - 1u]);
+        }
+        workgroupBarrier();
+    }
+    if (t != 0u) { return; }
+    let r = wgRed[0];
+    let tm = r[0];
+    stF(i, 6u, tm);
+    stF(i, 7u, r[1]);
+    stF(i, 8u, r[2]);
+    stF(i, 9u, r[3]);
+    stF(i, 10u, r[4]);
+    stF(i, 11u, r[5]);
+    // A node of weightless items (ghosts) weighs nothing; its centre is its cell's
+    let invM = select(0.0, 1.0 / tm, tm > 0.0);
+    stF(i, 4u, select(0.5 * (ldF(i, 0u) + ldF(i, 2u)), r[6] * invM, tm > 0.0));
+    stF(i, 5u, select(0.5 * (ldF(i, 1u) + ldF(i, 3u)), r[7] * invM, tm > 0.0));
+    stI(i, 17u, i32(last - first + 1u));
+    stF(i, 19u, r[8]);
 }

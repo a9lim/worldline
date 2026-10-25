@@ -2,9 +2,11 @@
 // A group walk: each workgroup takes GROUP bodies consecutive in the tree's sorted (Morton)
 // order, so close together, walks the tree once for all of them against their bounding box
 // into an interaction list in workgroup memory, and then sums the list for every body, LANES
-// threads a body, a tile of entries at a time. The walk pops a batch of nodes off a stack each
-// round, the batch shrinking as the stack fills so that a reserve always holds a depth-first
-// descent: no tree, however deep or crowded, overflows it. A node is taken whole when it
+// threads a body, a tile of entries at a time. The nodes waiting to be judged sit in a ring:
+// each round takes a batch from the front, breadth first, sized so its children fit above a
+// reserve, and once the ring reaches the reserve it takes one node a round from the back, a
+// depth-first descent the reserve always holds, so no tree, however deep or crowded,
+// overflows it. A node is taken whole when it
 // is far from the whole box (size < θ · distance to the box), and on a periodic domain only
 // when its cell and the box lie within half a domain of each other, so every body sees all of
 // it in one image. One thread walking per body left the GPU waiting on each walk's node reads
@@ -21,13 +23,13 @@ const NONE: i32 = -1;
 const GROUP: u32 = 32u;            // bodies per workgroup
 const LANES: u32 = 8u;             // threads per body: each sums every LANES-th list entry
 const WG_SIZE: u32 = GROUP * LANES;
-const JUDGE: u32 = 128u;           // nodes judged a round, at most
+const JUDGE: u32 = WG_SIZE;        // nodes judged a round, at most
 const TILE: u32 = 32u;             // list entries loaded into workgroup memory at a time
-const STACK_MAX: u32 = 1792u;      // nodes waiting to be judged
-// Kept free for a depth-first descent: three more waiting nodes a level, over the 31 levels
-// a compressed quadtree of 30-bit codes and sorted positions can have
-const STACK_RESERVE: u32 = 100u;
-const LIST_MAX: u32 = 1024u;       // list entries summed at a time
+const RING: u32 = 2304u;           // nodes waiting to be judged
+// Kept free for a depth-first descent: three more waiting nodes a level, over the 31 internal
+// levels a compressed quadtree of 30-bit codes and sorted positions can have
+const RING_RESERVE: u32 = 100u;
+const LIST_MAX: u32 = 512u;        // list entries summed at a time
 
 // Node layout accessors from shared-tree-nodes.wgsl (prepended)
 
@@ -298,16 +300,17 @@ fn accumulateForce(
     }
 }
 
-// Workgroup memory, 16 KB in all: the walk's stack and list share one pool, which the lanes'
+// Workgroup memory, 16 KB in all: the walk's ring and list share one pool, which the lanes'
 // partial sums reuse once the walk is done
-const STACK_AT: u32 = 0u;
-const LIST_AT: u32 = STACK_MAX;
-var<workgroup> wgPool: array<u32, 2816>;          // STACK_MAX + LIST_MAX
+const RING_AT: u32 = 0u;
+const LIST_AT: u32 = RING;
+var<workgroup> wgPool: array<u32, 2816>;          // RING + LIST_MAX
 var<workgroup> wgTile: array<TileSource, TILE>;
-var<workgroup> wgScan: array<u32, WG_SIZE>;
+var<workgroup> wgScan: array<u32, 512>;           // two WG_SIZE halves, read one, write the other
 var<workgroup> wgLo: array<vec2<f32>, GROUP>;
 var<workgroup> wgHi: array<vec2<f32>, GROUP>;
-var<workgroup> wgTop: u32;
+var<workgroup> wgHead: u32;      // the ring's front and back, counted up (mod RING to index)
+var<workgroup> wgTail: u32;
 var<workgroup> wgLCount: u32;
 var<workgroup> wgBodies: u32;
 
@@ -425,18 +428,21 @@ fn sumList(lid: u32, lane: u32, count: u32, o: Observer, L: Laws,
     }
 }
 
-/** Inclusive prefix sum of v over the workgroup (Hillis–Steele), in thread order. */
+/**
+ * Inclusive prefix sum of v over the workgroup (Hillis–Steele), in thread order, each step
+ * reading one half of wgScan and writing the other, so it takes one barrier a step. After the
+ * eight steps the last half written is the first, so the total is wgScan[WG_SIZE − 1].
+ */
 fn groupScan(lid: u32, v: u32) -> u32 {
     var x = v;
     wgScan[lid] = x;
     workgroupBarrier();
+    var src = 0u;
     for (var off = 1u; off < WG_SIZE; off <<= 1u) {
-        var y = 0u;
-        if (lid >= off) { y = wgScan[lid - off]; }
+        if (lid >= off) { x += wgScan[src + lid - off]; }
+        wgScan[(WG_SIZE - src) + lid] = x;
         workgroupBarrier();
-        x += y;
-        wgScan[lid] = x;
-        workgroupBarrier();
+        src = WG_SIZE - src;
     }
     return x;
 }
@@ -520,8 +526,9 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     let bodies = groupScan(lid, select(0u, 1u, o.valid && lane == 0u));
     if (lid == WG_SIZE - 1u) {
         wgBodies = bodies;
-        wgPool[STACK_AT] = 0u;
-        wgTop = 1u;
+        wgPool[RING_AT] = 0u;
+        wgHead = 0u;
+        wgTail = 1u;
         wgLCount = 0u;
     }
     if (workgroupUniformLoad(&wgBodies) == 0u) { return; }
@@ -535,11 +542,13 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     if (o.valid && lane == 0u) { localAF = allForces[o.idx]; }
     var localJerk = vec2<f32>(0.0, 0.0);
 
-    // Each round the top `batch` nodes come off the stack, a thread judging each, and prefix
-    // sums place each one's list entry or push its children where the batch was
+    // Each round a batch comes off the ring, a thread judging each, and prefix sums place each
+    // one's list entry or its children at the back
     loop {
-        let top = workgroupUniformLoad(&wgTop);
-        if (top == 0u) { break; }
+        let head = workgroupUniformLoad(&wgHead);
+        let tail = workgroupUniformLoad(&wgTail);
+        let waiting = tail - head;
+        if (waiting == 0u) { break; }
         // A full list is summed and emptied first
         let lcount = workgroupUniformLoad(&wgLCount);
         if (lcount + JUDGE > LIST_MAX) {
@@ -547,17 +556,20 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             if (lid == 0u) { wgLCount = 0u; }
             workgroupBarrier();
         }
-        // A batch that leaves room for four children each above the reserve; within the
-        // reserve, one node at a time, which deepens the stack by at most three a level
-        let free = STACK_MAX - min(top + STACK_RESERVE, STACK_MAX);
-        let batch = min(min(JUDGE, top), max(free / 3u, 1u));
-        let base = top - batch;
+        // From the front, a batch whose children fit above the reserve; within it, one node
+        // from the back, whose children take its place: that deepens the ring by at most three
+        // a level
+        let free = RING - min(waiting + RING_RESERVE, RING);
+        let deep = free < 3u;
+        let batch = select(min(min(JUDGE, waiting), free / 3u), 1u, deep);
+        let takeAt = select(head, tail - 1u, deep);
+        let pushAt = select(tail, tail - 1u, deep);
 
         var node = 0u;
         var take = 0u;   // 1: into the list
         var open = 0u;   // children to push
         if (lid < batch) {
-            node = wgPool[STACK_AT + base + lid];
+            node = wgPool[RING_AT + (takeAt + lid) % RING];
             if (getTotalMass(node) >= EPSILON) {
                 if (getNW(node) == NONE) {
                     // A body; retired bodies act only with Relativity, and the walk runs without
@@ -592,20 +604,21 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         let excl = incl - (take | (open << 16u));
         let total = wgScan[WG_SIZE - 1u];
         let lBase = wgLCount;
-        // Every thread has read its node before any child overwrites the batch
+        // Every thread has read its node before any child overwrites it (from the back)
         workgroupBarrier();
         if (take == 1u) { wgPool[LIST_AT + lBase + (excl & 0xFFFFu)] = node; }
         if (open > 0u) {
-            var at = base + (excl >> 16u);
+            var at = pushAt + (excl >> 16u);
             for (var c = 0u; c < 4u; c++) {
                 let child = getChild(node, c);
-                if (child != NONE) { wgPool[STACK_AT + at] = u32(child); at += 1u; }
+                if (child != NONE) { wgPool[RING_AT + at % RING] = u32(child); at += 1u; }
             }
         }
         workgroupBarrier();
         if (lid == 0u) {
             wgLCount = lBase + (total & 0xFFFFu);
-            wgTop = base + (total >> 16u);
+            wgHead = select(head + batch, head, deep);
+            wgTail = pushAt + (total >> 16u);
         }
         workgroupBarrier();
     }

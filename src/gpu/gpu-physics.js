@@ -1046,11 +1046,11 @@ export default class GPUPhysics {
 
         // Groups 0–3, and treePlan's group 3, which binds the plan's records in place of the radix
         // nodes: a dispatch can't read its size from a buffer it may write
-        const groups = (label, t, nodes, count, bounds, visits, items, keys, radix, plan) => {
+        const groups = (label, t, nodes, count, bounds, items, keys, radix, plan) => {
             const L = t.bindGroupLayouts;
             const params = { buffer: this._treeSortParams, size: 16 };
             return [
-                bg(label + '_g0', L[0], [{ buffer: nodes }, { buffer: count }, { buffer: bounds }, { buffer: visits }]),
+                bg(label + '_g0', L[0], [{ buffer: nodes }, { buffer: count }, { buffer: bounds }]),
                 bg(label + '_g1', L[1], items.map((buffer) => ({ buffer }))),
                 bg(label + '_g2', L[2], [{ buffer: this.uniformBuffer }]),
                 bg(label + '_g3', L[3], [{ buffer: keys }, { buffer: radix }, params]),
@@ -1058,9 +1058,9 @@ export default class GPUPhysics {
             ];
         };
         this._treeBuildBGs = groups('treeBuild', this._treeBuild, b.qtNodeBuffer, b.qtNodeCounter, b.qtBoundsBuffer,
-            b.qtVisitorFlags, [b.particleState, b.derived, b.particleAux], b.treeKeys, b.treeRadix, b.treePlan);
+            [b.particleState, b.derived, b.particleAux], b.treeKeys, b.treeRadix, b.treePlan);
         this._bosonTreeBuildBGs = groups('bosonTreeBuild', this._bosonTreeBuild, b.bosonTreeNodes, b.bosonTreeCounter,
-            b.bosonTreeBounds, b.bosonVisitorFlags, [b.photonPool, b.phCount, b.pionPool, b.piCount],
+            b.bosonTreeBounds, [b.photonPool, b.phCount, b.pionPool, b.piCount],
             b.bosonTreeKeys, b.bosonTreeRadix, b.bosonTreePlan);
     }
 
@@ -1842,15 +1842,16 @@ export default class GPUPhysics {
         run(t.mortonKeys, Math.ceil(slots / 256));
         run(t.treePlan, 1);
         run(t.padKeys, 0, 0, 0);
-        run(t.sortLocal, 0, 0, 1);
+        run(t.sortLocal, 0, 0, 2);
         const steps = this._treeSortSteps;
         for (let i = 1; i < steps.length && steps[i][0] <= M; i++) {
-            run(steps[i][1] ? t.sortGlobal : t.sortMerge, 0, i, 1 + i);
+            run(steps[i][1] ? t.sortGlobal : t.sortMerge, 0, i, 2 + i);
         }
         const wg = Math.ceil(slots / 256);
         run(t.radixBuild, wg);
         run(t.quadLink, wg);
-        run(t.aggregate, wg);
+        run(t.writeLeaves, wg);
+        run(t.reduceNodes, 0, 0, 1);
         pass.end();
     }
 

@@ -282,9 +282,11 @@ There is no Darwin term: Liénard–Wiechert carries EM to all orders in v.
 Barnes–Hut picks the tree walk over pairwise forces, without Relativity. The walk
 (`forces-tree.wgsl`) is a group walk: 32 bodies consecutive in the tree's Morton order walk
 it once against their bounding box into a list in workgroup memory, which eight threads a
-body then sum a tile at a time. Each round pops a batch of nodes off a stack, the batch
-shrinking as the stack fills so a reserve always holds a depth-first descent, so no tree
-overflows it; the list and the stack fill by prefix sums, so the sums are the same every run.
+body then sum a tile at a time. The nodes waiting to be judged sit in a ring: each round
+judges a batch from the front, breadth first, sized so its children fit above a reserve, and
+at the reserve one node a round from the back, a depth-first descent the reserve always
+holds, so no tree overflows it; the list and the ring fill by prefix sums, so the sums are
+the same every run.
 A far node's tidal torque squares its total coupling where pairwise sums the squares: a
 far-field approximation of Barnes–Hut's, large only where softening flattens the distances. A node is taken whole when its size is under θ = 0.5 times
 its distance from the box, and on a periodic domain only when its cell and the box lie
@@ -719,9 +721,12 @@ per stage would land before the whole encoder ran (that bug left Φ ≡ 0 until
   compressed quadtree in the 20-word node layout: a cell exists where its items split among
   two or more quadrants, its two to four children fill the first slots, and a leaf is a node
   whose first slot is NONE. Every cell a CAS-built tree would add holds the same items as a
-  cell this one has, so Barnes–Hut sees the same aggregates. The last child to arrive sums a
-  node from its children in slot order. Internal nodes carry their cell's bounds, leaves their
-  item's position; word 17 counts the items under a node, word 19 holds their largest radius.
+  cell this one has, so Barnes–Hut sees the same aggregates. A node covers a contiguous range
+  of sorted items, so one workgroup per node sums its range of leaves (`reduceNodes`, after
+  the dispatch that writes the leaves): no node reads another's sums, since WGSL's relaxed
+  atomics would not order a climb's reads after its children's writes. Internal nodes carry
+  their cell's bounds, leaves their item's position; word 17 counts the items under a node,
+  word 19 holds their largest radius.
   The same positions give the same tree every run. The CAS-built tree this replaced lost
   bodies when a subdivision raced a claim, so at a few hundred bodies its root was often never
   summed and Barnes–Hut applied no force.

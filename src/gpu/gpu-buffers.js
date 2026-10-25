@@ -185,12 +185,6 @@ export function createParticleBuffers(device, maxParticles, storeCapacity = maxP
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     });
 
-    // Children per node, the arrivals the bottom-up sum waits for (one u32 per node)
-    const qtVisitorFlags = device.createBuffer({
-        label: 'qtVisitorFlags',
-        size: 4 * QT_MAX_NODES,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
-    });
 
     // The sort's (Morton code, slot) pairs, the binary radix tree (6 u32 per internal node), and
     // the sort's indirect dispatch records (tree-build.wgsl treePlan)
@@ -354,7 +348,7 @@ export function createParticleBuffers(device, maxParticles, storeCapacity = maxP
         ghostCounter, ghostOriginalIdx, radiusMax,
         ghostState, ghostAux, ghostDerived,
         // Quadtree (Phase 3)
-        qtNodeBuffer, qtNodeCounter, qtBoundsBuffer, qtVisitorFlags,
+        qtNodeBuffer, qtNodeCounter, qtBoundsBuffer,
         QT_MAX_NODES, TREE_KEYS, treeKeys, treeRadix, treePlan,
         // Collision (Phase 3)
         collisionPairBuffer, collisionPairCounter,

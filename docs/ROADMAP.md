@@ -277,6 +277,11 @@ pair closing during the drift was missed); the walk's breadth-first frontier cou
 and took nodes whole, a body meeting its own mass (205% off on spins, 4000 bodies at a
 point); the bosons' root, no longer the domain, could be a strip that width-only opening tests
 misread; ghosts were capped at the store's tier; annihilation read pions others were clearing.
+The frontier's overflow turned out to fire in ordinary scenes too: at 4000 random bodies its
+walk was 9.4% rms off pairwise, the ring that replaced it 2.1%, at about 1.5 times the cost
+(0.3 → 0.45 ms). And Codex's suggestion replaced the trees' bottom-up climb, whose relaxed
+atomics WGSL doesn't order across locations, with an independent sum over each node's range
+of sorted leaves, at the climb's cost.
 
 What changed (§10 has the commits):
 - **Trees from sorted keys** (`tree-build.wgsl`): Morton codes, a bitonic sort sized on the GPU
@@ -317,10 +322,6 @@ Open:
   `expansion.wgsl`), so those readback words aren't bitwise reproducible.
 - **Kugelblitz's rate in Hawking gas** (one a frame, the limit) is the model's, untested until
   now: whether it is the experiment or a tuning question is open.
-- **The trees' bottom-up sum** publishes a child's fields and then its arrival through relaxed
-  atomics, which WGSL doesn't order across locations (Codex). No run has shown a stale read
-  (the oracles check the root and bitwise reruns), and the CAS trees had the same protocol;
-  a pass per tree level would be strictly safe.
 - **Barnes–Hut's tidal torque** from a far node squares the node's total coupling where the
   pairwise sum adds squares, an approximation that grows with the bodies a node holds and
   matters where softening flattens distances (r ≪ ε).
