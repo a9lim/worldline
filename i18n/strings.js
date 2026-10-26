@@ -327,7 +327,7 @@ const UI_EN = {
     'info.spinorbit.title': 'Spin–orbit',
     'info.spinorbit.body': 'Couples translation and rotation via field gradients: Stern–Gerlach (EM) and Mathisson–Papapetrou (gravity) kicks on spinning particles. Requires Magnetic or GM.',
     'info.barneshut.title': 'Barnes–Hut',
-    'info.barneshut.body': '$O(N\\log N)$ quadtree approximation ($\\theta = 0.5$). When off, every pair is summed, $O(N^2)$, so with Newtonian gravity and Coulomb alone momentum is conserved to rounding. With Relativity on, every pair is summed either way: a tree node has no world line to act from.',
+    'info.barneshut.body': "Chosen by the count, not a switch: every pair is summed below 1536 bodies, and above that a Barnes–Hut quadtree, its opening angle growing from $\\theta = 0.1$ (forces within 0.01% of the pairwise sum) to 0.5 at 4096 bodies. Periodic domains and Relativity always sum every pair.",
     'info.collision.title': 'Collisions',
     'info.collision.body': '<b>Pass</b> — no contact. <b>Bounce</b> — Hertz elastic repulsion with friction. <b>Merge</b> — inelastic coalescence conserving mass, charge, and momentum.',
     'info.boundary.title': 'Boundaries',
@@ -458,6 +458,10 @@ const UI_EN = {
     'knob.M': "lens mass",
     'about.controls.knob': "Change a figure",
     'about.controls.knobVal': "Drag a dotted number in the caption",
+    'stats.forceSum': "Forces summed",
+    'stats.pairwise': "pairwise",
+    'stats.byTree': "by tree, θ {t}",
+    'stats.forceSumAria': "Force summation info",
 };
 
 const UI_JA = {
@@ -777,7 +781,7 @@ const UI_JA = {
     'info.spinorbit.title': 'スピン軌道',
     'info.spinorbit.body': '場の勾配を介して並進と回転を結合：シュテルン＝ゲルラッハ（電磁）とマティソン＝パパペトロウ（重力）の蹴りがスピン粒子に作用。磁気または重力磁気が必要。',
     'info.barneshut.title': 'バーンズ＝ハット',
-    'info.barneshut.body': '$O(N\\log N)$ の四分木近似 ($\\theta = 0.5$)。オフのときはすべての対を $O(N^2)$ で足し合わせ、ニュートン重力とクーロン力だけなら運動量は丸め誤差の範囲で保存されます。相対論がオンのときは、木のノードには作用の元になる世界線がないため、どちらでもすべての対を足し合わせます。',
+    'info.barneshut.body': "スイッチではなく物体の数で選ぶ。1536個未満ではすべての対を足し合わせ、それを超えるとバーンズ＝ハットの四分木を使い、開き角は $\\theta = 0.1$（対ごとの和との差0.01%以内）から4096個で0.5まで増える。周期的な領域と相対論では、いつもすべての対を足し合わせる。",
     'info.collision.title': '衝突',
     'info.collision.body': '<b>すり抜け</b> — 接触なし。<b>反発</b> — 摩擦付きヘルツ弾性反発。<b>合体</b> — 質量・電荷・運動量を保存する非弾性合体。',
     'info.boundary.title': '境界',
@@ -908,6 +912,10 @@ const UI_JA = {
     'knob.M': "レンズの質量",
     'about.controls.knob': "図を変える",
     'about.controls.knobVal': "キャプションの点線の数字をドラッグ",
+    'stats.forceSum': "力の和",
+    'stats.pairwise': "対ごと",
+    'stats.byTree': "木で、θ {t}",
+    'stats.forceSumAria': "力の和の説明",
 };
 
 // Merge UI strings with reference deep-dive translations.

@@ -16,8 +16,8 @@ substepping advances them.
 - **Forces.** Newtonian gravity, Coulomb, magnetic dipole and Lorentz forces,
   gravitomagnetism (frame dragging), tidal locking, Yukawa (a screened nuclear force
   with a massive pion mediator), spin-curvature coupling, and uniform external
-  gravitational, electric, and magnetic fields. Large Newtonian scenes are summed with a
-  Barnes–Hut tree, chosen automatically.
+  gravitational, electric, and magnetic fields. Forces are summed pairwise, and by a
+  Barnes–Hut tree, chosen automatically, once an open Newtonian scene has enough bodies.
 - **Relativity.** Signal delay: forces come from where sources were when their signal
   left, read off each body's recorded world line. Charges interact through their exact
   Liénard–Wiechert fields; gravity and the other forces use their static laws at the

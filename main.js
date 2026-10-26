@@ -168,6 +168,7 @@ class Simulation {
             orbitalAngMom: document.getElementById('orbitalAngMom'),
             spinAngMom: document.getElementById('spinAngMom'),
             angMomDrift: document.getElementById('angMomDrift'),
+            forceSum: document.getElementById('force-sum'),
         };
 
         this.collisionMode = COL_PASS;

@@ -116,7 +116,7 @@ fn computeBosonGravity(@builtin(global_invocation_id) gid: vec3u) {
         let size = nodeF32(nIdx, N_MAX_X) - nodeF32(nIdx, N_MIN_X);
         let isDivided = bitcast<i32>(nodeU32(nIdx, N_NW)) != NONE;
 
-        if (!isDivided || size * size < BH_THETA_SQ * dSq) {
+        if (!isDivided || size * size < BOSON_THETA_SQ * dSq) {
             force += bhGravForce(dx, dy, nodeMass, pMass);
         } else if (top + 4 <= 48) {
             // Two to four children fill the first slots (tree-build.wgsl)
@@ -184,7 +184,7 @@ fn applyBosonBosonGravity(@builtin(global_invocation_id) gid: vec3u) {
         let size = nodeF32(nIdx, N_MAX_X) - nodeF32(nIdx, N_MIN_X);
         let isDivided = bitcast<i32>(nodeU32(nIdx, N_NW)) != NONE;
 
-        if (!isDivided || size * size < BH_THETA_SQ * dSq) {
+        if (!isDivided || size * size < BOSON_THETA_SQ * dSq) {
             kick += bhGravForce(dx, dy, nodeMass, massFactor);
         } else if (top + 4 <= 48) {
             // Two to four children fill the first slots (tree-build.wgsl)
@@ -255,7 +255,7 @@ fn applyPionPionCoulomb(@builtin(global_invocation_id) gid: vec3u) {
         let size = nodeF32(nIdx, N_MAX_X) - nodeF32(nIdx, N_MIN_X);
         let isDivided = bitcast<i32>(nodeU32(nIdx, N_NW)) != NONE;
 
-        if (!isDivided || size * size < BH_THETA_SQ * dSq) {
+        if (!isDivided || size * size < BOSON_THETA_SQ * dSq) {
             kick += bhCoulombForce(dx, dy, nodeCharge, scale);
         } else if (top + 4 <= 48) {
             // Two to four children fill the first slots (tree-build.wgsl)

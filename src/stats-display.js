@@ -53,7 +53,7 @@ export default class StatsDisplay {
     _spark(drifts) {
         drifts.forEach((d, i) => {
             const sp = this._sparks[i];
-            if (!sp.el) return;
+            if (!sp.el || !Number.isFinite(d)) return;
             sp.values.push(d);
             if (sp.values.length > SPARK_LEN) sp.values.shift();
             sparkline(sp.el, sp.values);
@@ -129,6 +129,13 @@ export default class StatsDisplay {
         _set(this.dom.spinAngMom, fmt(e.spinAngMom));
         _set(this.dom.angMomDrift, fmtDrift(aDrift));
         if (this.initialEnergy !== null) this._spark([eDrift, pDrift, aDrift]);
+
+        // How the forces are summed (GPUPhysics._chooseForceSum: pairwise, or the tree past a count)
+        const fs = sim._gpuPhysics?.forceSum, el = this.dom.forceSum;
+        if (fs && el) {
+            const t = (k, fb) => (window._i18n ? window._i18n.t(k, fb) : fb);
+            _set(el, fs.tree ? t('stats.byTree', 'by tree, θ {t}').replace('{t}', fs.theta.toFixed(2)) : t('stats.pairwise', 'pairwise'));
+        }
     }
 
     /**

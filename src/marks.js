@@ -237,6 +237,7 @@ export function bodyGlyph(svg, { m = 1, q = 0, s = 0, anti = false, hole = false
 
 /** A sparkline of `values` in a w × h svg: zero dashed, the line in graphite, the last value marked. */
 export function sparkline(svg, values, w = 64, h = 14) {
+    values = values.filter(Number.isFinite);
     if (!values.length) { svg.innerHTML = ''; return; }
     let lo = 0, hi = 0;
     for (const v of values) { if (v < lo) lo = v; if (v > hi) hi = v; }

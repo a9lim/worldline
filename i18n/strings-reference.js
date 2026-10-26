@@ -164,7 +164,7 @@ const REF_EN = {
 <p>and each clock shows the proper time it had at the crossing. Clocks synchronized in the lab a distance $L$ apart along $\\mathbf{u}$ read $uL$ apart on the observer's slice: the relativity of simultaneity.</p>
 
 <h3>The lagged view</h3>
-<p>Ahead of the observer the slice reaches into the lab's future, which hasn't been computed. Worldline sets the observer's present far enough back, $t_A = t_{\\text{now}} - |\\mathbf{u}|\\gamma\\max x'_\\parallel$ over the visible area, that everything drawn has already happened. The Frame tab shows the lag, and says when part of the slice lies outside the recorded history (128 time units), where bodies are extrapolated at constant velocity.</p>
+<p>Ahead of the observer the slice reaches into the lab's future, which hasn't been computed. Worldline sets the observer's present far enough back, $t_A = t_{\\text{now}} - |\\mathbf{u}|\\gamma\\max x'_\\parallel$ over the visible area, that everything drawn has already happened. The Measure tab shows the lag, and says when part of the slice lies outside the recorded history (128 time units), where bodies are extrapolated at constant velocity.</p>
 
 <h3>The frames</h3>
 <ul>
@@ -490,31 +490,26 @@ const REF_EN = {
 <p>The Hubble radius $c/H$ is where the recession of comoving bodies reaches the speed of light. Beyond it they recede faster, which relativity allows, since nothing moves through space that fast. The event horizon bounds the events whose light will ever reach you; it is finite only when a vacuum term keeps $H$ from falling to zero (de Sitter gives $c/H$).</p>
 
 <h3>Energy</h3>
-<p>An expanding universe has no conserved global energy. The Stats tab books what the expansion takes or gives (redshifted kinetic energy and photons, stretched potentials, the fields' friction and dilution) as a separate line, so the drift measures numerical error alone.</p>
+<p>An expanding universe has no conserved global energy. The Measure tab books what the expansion takes or gives (redshifted kinetic energy and photons, stretched potentials, the fields' friction and dilution) as a separate line, so the drift measures numerical error alone.</p>
 `,
 
-    'ref.barneshut.title': 'Barnes-Hut algorithm',
+    'ref.barneshut.title': 'Barnes–Hut algorithm',
     'ref.barneshut.body': `
-<p>Direct computation of all pairwise forces scales as $O(N^2)$ — doubling the particle count quadruples the work. The Barnes-Hut algorithm reduces this to $O(N\\log N)$ using a spatial tree, enabling simulations with hundreds of particles at interactive framerates.</p>
+<p>Summing every pair's force directly scales as $O(N^2)$: doubling the bodies quadruples the work. The Barnes–Hut algorithm reduces it to $O(N\\log N)$ by grouping distant bodies in a spatial tree.</p>
 
-<h3>Quadtree construction</h3>
-<p>The domain is recursively subdivided into four quadrants. Each leaf holds at most 4 particles. Internal nodes store aggregate properties: total mass, total charge, center of mass, total magnetic moment, and total angular momentum.</p>
+<h3>The tree</h3>
+<p>Every substep the GPU sorts the bodies by a 30-bit Morton code, builds a binary radix tree over the sorted keys (Karras, 2012), and compresses it into a quadtree: a cell exists where its bodies split among two or more quadrants. Each cell holds its total mass, charge, centre of mass, magnetic moment and angular momentum. The same positions always give the same tree.</p>
 
-<h3>Opening angle criterion</h3>
-<p>When computing the force on a particle, the tree is walked from the root. At each node:</p>
-<p>$$\\frac{s}{d} < \\theta \\qquad (\\theta = 0.5)$$</p>
-<p>If the cell size $s$ divided by the distance $d$ to the cell's center of mass is less than $\\theta$, the entire group is treated as a single body using its aggregate properties. Otherwise, the node is opened and its children examined.</p>
+<h3>Opening angle</h3>
+<p>The walk takes a cell whole when its size $s$ over its distance $d$ is small enough,</p>
+<p>$$\\frac{s}{d} < \\theta,$$</p>
+<p>and opens it otherwise. Worldline walks in groups: 32 neighbouring bodies judge each cell against their shared bounding box.</p>
 
-<h3>Accuracy vs. performance</h3>
-<table style="width:100%;border-collapse:collapse;margin:12px 0">
-<tr><th style="text-align:left;padding:4px 8px">Mode</th><th style="text-align:left;padding:4px 8px">Scaling</th><th style="text-align:left;padding:4px 8px">Conservation</th></tr>
-<tr><td style="padding:4px 8px">Pairwise (off)</td><td style="padding:4px 8px">$O(N^2)$</td><td style="padding:4px 8px">Machine precision</td></tr>
-<tr><td style="padding:4px 8px">Barnes-Hut (on)</td><td style="padding:4px 8px">$O(N\\log N)$</td><td style="padding:4px 8px">Approximate</td></tr>
-</table>
-<p>With Barnes-Hut off, Newton's third law is exploited exactly (each pair computed once), so momentum and angular momentum are conserved to floating-point precision. With Barnes-Hut on, the asymmetric force evaluation breaks exact reciprocity, introducing small conservation drift.</p>
+<h3>Chosen by the count</h3>
+<p>Worldline picks the method itself, so there is no line to cross. Below 1536 bodies every pair is summed. Above that the tree takes over at $\\theta = 0.1$, where its forces differ from the pairwise sum by about 0.01% rms, and $\\theta$ grows log-linearly with the count to 0.5 at 4096 bodies, about 0.7%. Once on, the tree stays until the count falls under 1152, so a scene near the threshold doesn't flicker between methods. On a periodic domain every cell reaching past half the domain must be opened, so the walk gains little and periodic scenes stay pairwise. With Relativity on, every pair is summed from the sources' world lines whatever the count: a cell's aggregate has no world line to act from.</p>
 
-<h3>Implementation</h3>
-<p>The tree uses a flat Structure-of-Arrays layout with pre-allocated typed arrays for zero garbage collection. Nodes are pooled and reset each substep rather than allocated and freed, keeping the per-substep tree rebuild fast and free of GC pauses.</p>
+<h3>Accuracy</h3>
+<p>Summed pairwise, Newton's third law holds pair by pair, so with Newtonian gravity and Coulomb alone momentum is conserved to rounding. The tree's forces are not reciprocal, so a small momentum drift comes with it. The Measure tab says which method is in use.</p>
 `,
 
     'ref.collision.title': 'Collision modes',
@@ -625,7 +620,7 @@ const REF_EN = {
 
     'ref.energy.title': 'Energy conservation',
     'ref.energy.body': `
-<p>The total is the sum of the Stats tab's lines:</p>
+<p>The total is the sum of the Measure tab's energy lines:</p>
 <ul>
 <li><b>Mass (mc²)</b>: $\\sum_i m_i$, the rest mass</li>
 <li><b>Linear KE</b>: $\\sum_i(\\gamma_i-1)m_i$ with Relativity on, $\\sum_i\\frac{1}{2}m_iv_i^2$ without</li>
@@ -915,7 +910,7 @@ const REF_JA = {
 <p>各時計は交点での固有時を示します。実験室で同期させ $\\mathbf{u}$ 方向に $L$ 離した時計は、観測者の断面では $uL$ だけ食い違います。これが同時性の相対性です。</p>
 
 <h3>遅らせた表示</h3>
-<p>観測者の前方では、断面が実験室のまだ計算していない未来に届きます。Worldlineは観測者の「今」を、見えている範囲で $t_A = t_{\\text{now}} - |\\mathbf{u}|\\gamma\\max x'_\\parallel$ まで戻し、描くものがすべて計算済みになるようにします。座標系タブには遅れの大きさが表示され、断面の一部が記録された履歴（128時間単位）の外にあるときはその旨も表示されます。そこでは物体を等速運動で外挿します。</p>
+<p>観測者の前方では、断面が実験室のまだ計算していない未来に届きます。Worldlineは観測者の「今」を、見えている範囲で $t_A = t_{\\text{now}} - |\\mathbf{u}|\\gamma\\max x'_\\parallel$ まで戻し、描くものがすべて計算済みになるようにします。測定タブには遅れの大きさが表示され、断面の一部が記録された履歴（128時間単位）の外にあるときはその旨も表示されます。そこでは物体を等速運動で外挿します。</p>
 
 <h3>座標系の種類</h3>
 <ul>
@@ -1241,31 +1236,26 @@ const REF_JA = {
 <p>ハッブル半径 $c/H$ は、共動する物体の後退速度が光速に達する距離です。その外ではさらに速く遠ざかりますが、空間の中をその速さで動くものはないので、相対論はこれを許します。事象の地平面は、その光がいつか届く事象の範囲を限ります。真空の項が $H$ をゼロまで下がらせない場合にだけ有限です（ド・ジッターでは $c/H$）。</p>
 
 <h3>エネルギー</h3>
-<p>膨張宇宙には保存される大域的なエネルギーがありません。統計タブは、膨張が奪い与えるもの（赤方偏移した運動エネルギーと光子、引き伸ばされたポテンシャル、場の摩擦と希釈）を別の行に記録するので、ドリフトは数値誤差だけを表します。</p>
+<p>膨張宇宙には保存される大域的なエネルギーがありません。測定タブは、膨張が奪い与えるもの（赤方偏移した運動エネルギーと光子、引き伸ばされたポテンシャル、場の摩擦と希釈）を別の行に記録するので、ドリフトは数値誤差だけを表します。</p>
 `,
 
     'ref.barneshut.title': 'バーンズ＝ハットアルゴリズム',
     'ref.barneshut.body': `
-<p>すべてのペア力を直接計算すると $O(N^2)$ — 粒子数を倍にすれば計算量は4倍になります。バーンズ＝ハット・アルゴリズムは空間ツリーを用いてこれを $O(N\\log N)$ に減らし、数百個の粒子でも対話的フレームレートのシミュレーションを可能にします。</p>
+<p>すべての対の力を直接足し合わせると $O(N^2)$ で増え、物体を2倍にすると手間は4倍になります。バーンズ＝ハット法は遠くの物体を空間の木でまとめ、これを $O(N\\log N)$ に減らします。</p>
 
-<h3>四分木の構築</h3>
-<p>領域を再帰的に4象限へ分割します。各葉には最大4個の粒子。内部ノードは集約量を保持：全質量、全電荷、重心、全磁気モーメント、全角運動量。</p>
+<h3>木</h3>
+<p>サブステップごとにGPUは物体を30ビットのモートン符号で並べ替え、並んだキーの上に二分基数木を作り（Karras, 2012）、それを四分木に圧縮します。セルは、その中の物体が二つ以上の象限に分かれるところにだけ置かれます。各セルは全質量、全電荷、重心、磁気モーメント、角運動量をもちます。同じ位置からはいつも同じ木ができます。</p>
 
-<h3>開き角基準</h3>
-<p>粒子に働く力を計算する際、ツリーをルートから走査します。各ノードで：</p>
-<p>$$\\frac{s}{d} < \\theta \\qquad (\\theta = 0.5)$$</p>
-<p>セルサイズ $s$ をセル重心までの距離 $d$ で割った値が $\\theta$ より小さければ、群全体を集約量で1体として扱います。そうでなければノードを開いて子を調べます。</p>
+<h3>開き角</h3>
+<p>木をたどるとき、セルの大きさ $s$ と距離 $d$ の比が十分に小さければ、</p>
+<p>$$\\frac{s}{d} < \\theta,$$</p>
+<p>そのセルを一つの物体として扱い、そうでなければ開いて子を調べます。Worldlineは隣り合う32個の物体の組でたどり、各セルをその組の外接矩形に対して判定します。</p>
 
-<h3>精度と性能</h3>
-<table style="width:100%;border-collapse:collapse;margin:12px 0">
-<tr><th style="text-align:left;padding:4px 8px">モード</th><th style="text-align:left;padding:4px 8px">計算量</th><th style="text-align:left;padding:4px 8px">保存則</th></tr>
-<tr><td style="padding:4px 8px">ペアワイズ（オフ）</td><td style="padding:4px 8px">$O(N^2)$</td><td style="padding:4px 8px">機械精度</td></tr>
-<tr><td style="padding:4px 8px">バーンズ＝ハット（オン）</td><td style="padding:4px 8px">$O(N\\log N)$</td><td style="padding:4px 8px">近似</td></tr>
-</table>
-<p>バーンズ＝ハットがオフのときはニュートンの第3法則が厳密に活用され（各ペアを1度だけ計算）、運動量と角運動量は浮動小数点精度で保存されます。オンでは非対称な力評価が厳密な相反性を破り、わずかな保存則ドリフトを生みます。</p>
+<h3>物体の数で選ぶ</h3>
+<p>Worldlineは方法を自分で選ぶので、切り替わりの境目は見えません。1536個未満ではすべての対を足し合わせます。それを超えると木に替わり、$\\theta = 0.1$ では対ごとの和との力の差は二乗平均で約0.01%、$\\theta$ は物体の数とともに対数的に増えて4096個で0.5、差は約0.7%になります。いったん木に替わると、数が1152個を下回るまで木のままなので、境目の近くで方法が行き来することはありません。周期的な領域では、領域の半分より遠くへ届くセルをすべて開く必要があり、木の得は小さいので、周期的な場面は対ごとの和のままです。相対論がオンのときは、数によらず、源の世界線からすべての対を足し合わせます。セルの集計値には作用の元になる世界線がないからです。</p>
 
-<h3>実装</h3>
-<p>ツリーはガベージコレクション無しのフラットな Structure-of-Arrays レイアウトで、事前確保された型付き配列を用います。ノードはプールされ各サブステップでリセット — 確保／解放ではなく、毎サブステップのツリー再構築を高速かつGC停止なしに保ちます。</p>
+<h3>精度</h3>
+<p>対ごとに足し合わせると、作用・反作用の法則が対ごとに成り立つので、ニュートン重力とクーロン力だけなら運動量は丸め誤差の範囲で保存されます。木の力は相互的ではないので、わずかな運動量のずれを伴います。どちらの方法を使っているかは測定タブに表示されます。</p>
 `,
 
     'ref.collision.title': '衝突モード',
@@ -1376,7 +1366,7 @@ const REF_JA = {
 
     'ref.energy.title': 'エネルギー保存',
     'ref.energy.body': `
-<p>全エネルギーは統計タブの各行の和です：</p>
+<p>全エネルギーは測定タブのエネルギーの各行の和です：</p>
 <ul>
 <li><b>質量 (mc²)</b>：$\\sum_i m_i$、静止質量</li>
 <li><b>並進運動エネルギー</b>：相対論が有効なら $\\sum_i(\\gamma_i-1)m_i$、無効なら $\\sum_i\\frac{1}{2}m_iv_i^2$</li>

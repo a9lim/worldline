@@ -58,6 +58,7 @@ import {
     PION_HALF_LIFE, CHARGED_PION_HALF_LIFE, MIN_MASS, BOSON_CHARGE,
     SHEET_THICKNESS, SHEET_THICKNESS_SQ, SOFTENING_SQ, BOUND_LOOP, GPU_SCALAR_GRID, PHYSICS_DT,
     WORLDLINE_LEN, WORLDLINE_DT, INERTIA_K, ELECTRON_MASS, GPU_MAX_PIONS, GPU_MAX_LEPTONS, COL_MERGE,
+    GPU_MAX_PARTICLES, TREE_ON, TREE_OFF, TREE_FULL, THETA_MIN, THETA_MAX, treeTheta,
 } from './src/config.js';
 import { WL_STRIDE } from './src/gpu/gpu-constants.js';
 import { TOGGLE_KEYS } from './src/physics-contract.js';
@@ -104,11 +105,17 @@ function physicsWith(on = [], params = {}) {
     return Object.assign(p, params);
 }
 
-async function makeSim({ on = [], params = {}, domainW = 64, domainH = 48, boundary = 0 } = {}) {
+/**
+ * A headless GPUPhysics. `tree` pins the force summation ('pairwise' | 'tree'; null leaves it to
+ * the automatic rule, config.js "Force summation") and `theta` the tree's opening angle.
+ */
+async function makeSim({ on = [], params = {}, domainW = 64, domainH = 48, boundary = 0, tree = null, theta = null } = {}) {
     const device = await getDevice();
     const gp = new GPUPhysics(device, domainW, domainH);
     await gp.init();
     gp.boundaryMode = boundary;
+    gp.treeOverride = tree;
+    gp.thetaOverride = theta;
     gp.setToggles(physicsWith(on, params));
     if (on.some(k => ['higgsEnabled', 'axionEnabled', 'blackHoleEnabled'].includes(k))) {
         await gp._ensurePhase5Pipelines();
@@ -420,7 +427,7 @@ cases.push({
     name: 'Barnes–Hut equals the pairwise sum on a torus, across the seam and inside',
     async run() {
         const kick = async (bh, x1, x2) => {
-            const gp = await makeSim({ on: ['gravityEnabled', ...(bh ? ['barnesHutEnabled'] : [])],
+            const gp = await makeSim({ on: ['gravityEnabled'], tree: bh ? 'tree' : 'pairwise', theta: 0.5,
                                        domainW: 64, domainH: 64, boundary: BOUND_LOOP });
             gp.addParticle({ x: x1, y: 32, mass: 1000 });
             gp.addParticle({ x: x2, y: 32, mass: 1 });
@@ -449,7 +456,7 @@ cases.push({
     name: 'Barnes–Hut on 600 and 4000 random bodies: within θ error of pairwise, every body once, the same bits twice',
     async run() {
         const step = async (N, W, bh) => {
-            const gp = await makeSim({ on: ['gravityEnabled', ...(bh ? ['barnesHutEnabled'] : [])],
+            const gp = await makeSim({ on: ['gravityEnabled'], tree: bh ? 'tree' : 'pairwise', theta: 0.5,
                                        domainW: W, domainH: W, boundary: BOUND_LOOP });
             let s = 0x9E3779B9;
             const r = () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
@@ -492,7 +499,7 @@ cases.push({
     async run() {
         const N = 4000;
         const step = async (bh) => {
-            const gp = await makeSim({ on: ['gravityEnabled', ...(bh ? ['barnesHutEnabled'] : [])], domainW: 96, domainH: 96, boundary: 1 });
+            const gp = await makeSim({ on: ['gravityEnabled'], tree: bh ? 'tree' : 'pairwise', theta: 0.5, domainW: 96, domainH: 96, boundary: 1 });
             let s = 7;
             const r = () => (s = (Math.imul(s, 1103515245) + 12345) >>> 0) / 4294967296;
             for (let i = 0; i < N; i++) gp.addParticle({ x: 48, y: 48, mass: 0.5 + r(), angw: 0.5 });
@@ -510,6 +517,61 @@ cases.push({
         }
         return { expected: 'no force (they coincide), spin change within 0.1% of pairwise', measured: `largest w ${fmt(moved, 3)}, worst spin change off by ${fmt(spin * 100, 3)}%`,
                  metric: `${fmt(spin * 100, 3)}%`, pass: moved === 0 && spin < 1e-3 };
+    },
+});
+
+// The force summation is automatic (config.js "Force summation"): pairwise below TREE_ON bodies,
+// the tree above, handed back below TREE_OFF, θ ramping with the count; on a periodic domain
+// the tree stays out within the body cap, and with Relativity the forces are pairwise whatever
+// the count. The switch must be invisible: at TREE_ON bodies on an open domain, the automatic
+// rule's forces match the pairwise sum to 0.1% rms (the tree there walks at THETA_MIN).
+cases.push({
+    name: 'Automatic force summation: pairwise below TREE_ON, the tree above with θ ramping, hysteresis, and the switch moves forces by under 0.1%',
+    async run() {
+        const gp = await makeSim({ on: ['gravityEnabled'], domainW: 64, domainH: 64, boundary: 1 });
+        const at = (n) => { gp.aliveCount = n; gp._chooseForceSum(); return gp.forceSum.byCount; };
+        const trace = [TREE_ON - 1, TREE_ON, TREE_OFF, TREE_OFF - 1, TREE_ON - 1, TREE_ON].map(at);
+        const traceOk = trace.join() === [false, true, true, false, false, true].join();
+        at(TREE_ON);
+        const thMin = treeTheta(TREE_ON), thMax = treeTheta(TREE_FULL), thMid = treeTheta(Math.sqrt(TREE_ON * TREE_FULL));
+        const rampOk = Math.abs(thMin - THETA_MIN) < 1e-9 && Math.abs(thMax - THETA_MAX) < 1e-9
+            && Math.abs(thMid - (THETA_MIN + THETA_MAX) / 2) < 1e-9 && treeTheta(1) === THETA_MIN && treeTheta(1e6) === THETA_MAX
+            && Math.abs(gp.forceSum.theta - THETA_MIN) < 1e-9;
+        // A torus keeps the pairwise loop to the cap; Relativity keeps every force pairwise
+        gp.boundaryMode = BOUND_LOOP; gp._treeLatched = false;
+        const torus = at(GPU_MAX_PARTICLES);
+        gp.boundaryMode = 1; gp._treeLatched = false; gp._relativityEnabled = true;
+        const rel = at(GPU_MAX_PARTICLES);
+        const relOk = rel === true && gp.forceSum.tree === false;
+        gp.aliveCount = 0;
+        gp.destroy();
+
+        // The switch itself: TREE_ON bodies (a few heavy among them), automatic against pairwise
+        const W = Math.round(Math.sqrt(TREE_ON / 0.06));
+        const step = async (tree) => {
+            const g = await makeSim({ on: ['gravityEnabled'], tree, domainW: W, domainH: W, boundary: 1 });
+            let s = 0x9E3779B9;
+            const r = () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+            for (let i = 0; i < TREE_ON; i++) g.addParticle({ x: r() * W, y: r() * W, mass: i % 256 === 0 ? 40 : 0.5 + r() });
+            g.update(0.01);
+            const ps = await readParticles(g);
+            const fs = { ...g.forceSum };
+            g.destroy();
+            return { w: ps.map(p => [p.wx, p.wy]), fs };
+        };
+        const pair = await step('pairwise'), auto = await step(null);
+        let num = 0, den = 0;
+        for (let i = 0; i < TREE_ON; i++) {
+            num += (auto.w[i][0] - pair.w[i][0]) ** 2 + (auto.w[i][1] - pair.w[i][1]) ** 2;
+            den += pair.w[i][0] ** 2 + pair.w[i][1] ** 2;
+        }
+        const rms = Math.sqrt(num / den);
+        return {
+            expected: `tree from ${TREE_ON} (back at ${TREE_OFF}), θ ${THETA_MIN} → ${THETA_MAX} by ${TREE_FULL}; rms < 0.1%`,
+            measured: `rule ${trace.map(b => b ? 'T' : 'P').join('')}, torus ${torus ? 'tree' : 'pairwise'}, Relativity ${gp.forceSum.tree ? 'tree' : 'pairwise'}; at ${TREE_ON}: ${auto.fs.tree ? 'tree' : 'pairwise'} θ ${fmt(auto.fs.theta, 3)}`,
+            metric: `rms ${fmt(rms * 100, 3)}%`,
+            pass: traceOk && rampOk && !torus && relOk && auto.fs.tree && Math.abs(auto.fs.theta - THETA_MIN) < 1e-9 && rms < 1e-3,
+        };
     },
 });
 
@@ -555,7 +617,7 @@ cases.push({
 cases.push({
     name: 'The boson tree holds every live boson once and weighs their energy (3000 photons, 800 pions)',
     async run() {
-        const gp = await makeSim({ on: ['gravityEnabled', 'barnesHutEnabled', 'bosonInterEnabled'], domainW: 128, domainH: 128, boundary: 1 });
+        const gp = await makeSim({ on: ['gravityEnabled', 'bosonInterEnabled'], domainW: 128, domainH: 128, boundary: 1 });
         gp.addParticle({ x: 5, y: 5, mass: 0.1 });
         let s = 12345;
         const r = () => (s = (Math.imul(s, 1103515245) + 12345) >>> 0) / 4294967296;
@@ -638,7 +700,7 @@ cases.push({
 cases.push({
     name: 'π⁺π⁻ annihilation: 300 pairs, 600 photons, energy conserved',
     async run() {
-        const gp = await makeSim({ on: ['gravityEnabled', 'barnesHutEnabled', 'bosonInterEnabled'], domainW: 512, domainH: 512, boundary: 1 });
+        const gp = await makeSim({ on: ['gravityEnabled', 'bosonInterEnabled'], domainW: 512, domainH: 512, boundary: 1 });
         gp.addParticle({ x: 2, y: 2, mass: 0.01 });
         const list = [];
         for (let k = 0; k < 300; k++) {
@@ -1214,7 +1276,7 @@ cases.push({
             before.q += p.charge;
         }
         const variant = async (bh) => {
-            const gp = await makeSim({ on: bh ? ['barnesHutEnabled'] : [], domainW: W, domainH: W, boundary: BOUND_LOOP });
+            const gp = await makeSim({ tree: bh ? 'tree' : 'pairwise', domainW: W, domainH: W, boundary: BOUND_LOOP });
             gp.addParticle({ x: cx, y: cy, mass: m, bornAt: -Infinity });
             addAbsorbable(gp, photons, pions);
             await run(gp, 8, 0.25);

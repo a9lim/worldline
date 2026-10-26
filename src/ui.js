@@ -687,7 +687,7 @@ export function setupUI(sim) {
     const INFO_KEYS = [
         'energy', 'conserved', 'spin', 'gravity', 'coulomb', 'magnetic',
         'gravitomag', 'relativity', 'radiation', 'spinorbit',
-        'collision', 'boundary', 'topology', 'charge', 'blackhole',
+        'barneshut', 'collision', 'boundary', 'topology', 'charge', 'blackhole',
         'onepn', 'yukawa', 'axion', 'expansion', 'higgs', 'external', 'pion',
         'fieldExcitation', 'bosoninter', 'frames', 'lensing',
     ];

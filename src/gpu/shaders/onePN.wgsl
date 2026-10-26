@@ -168,7 +168,7 @@ fn compute1PNTree(@builtin(global_invocation_id) gid: vec3u) {
             // Retired particles are excluded from 1PN
             if ((particles[sIdx].flags & FLAG_ALIVE) == 0u) { continue; }
             f += pnFromParticle(o, sIdx, relOn, periodic);
-        } else if (!isLeaf && size * size < BH_THETA_SQ * dSq &&
+        } else if (!isLeaf && size * size < (u.bhTheta * u.bhTheta) * dSq &&
                    (!periodic || nodeInOneImage(nodeIdx, o.pos.x, o.pos.y, u.domainW, u.domainH, u.topologyMode))) {
             // Distant node: aggregate data at its current centre of mass
             let avgW = vec2(getTotalMomX(nodeIdx), getTotalMomY(nodeIdx)) / nodeMass;
