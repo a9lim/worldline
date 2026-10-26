@@ -103,13 +103,19 @@ const _addParticleColorData = new Uint32Array(1);
 const _addParticleModData = new Float32Array(4);
 const _addParticleClockData = new Float32Array(4);   // τ, ring phase, θ, lapse
 const _birthSampleData = new Float32Array(12);
-const _lensData = new ArrayBuffer(80);               // lens-deflection.wgsl LensParams
+const _lensData = new ArrayBuffer(96);               // lens-deflection.wgsl LensParams
 const _lensF32 = new Float32Array(_lensData);
 const _lensU32 = new Uint32Array(_lensData);
 // The lens map's resolution, and each lens's core as a fraction of its R_E², so a ray
 // through a body stays finite (the ring radius shifts by 5·10⁻⁵ R_E)
 export const LENS_RES = 512;
 const LENS_CORE_FRAC = 1e-4;
+const LENS_WG = 32;      // cells a lens-deflection.wgsl workgroup covers a side (16 × 16 threads, 2 × 2 cells each)
+// Past 512 lenses the map is computed on a grid of side LENS_RES·√(512/lenses) (a multiple of 16, at
+// least LENS_MIN_RES) and lensExpand refills the full map, so a dispatch costs about as much at 4000
+// lenses as at 512: the sum is res² × lenses interactions
+const LENS_WORK = LENS_RES * LENS_RES * 512;
+const LENS_MIN_RES = 128;
 const PROBE_RES = 1024;   // the probe's ray-shooting grid, finer: magnifications to ~1%
 const _ledgerAData = new Float32Array(4);           // boson-ledger.wgsl LedgerA
 const _ledgerAU32 = new Uint32Array(_ledgerAData.buffer);
@@ -633,18 +639,23 @@ export default class GPUPhysics {
     async _initLens(wgslConstants) {
         const d = this.device;
         this.lensBuffers = {
-            params: d.createBuffer({ label: 'lensParams', size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
-            probeParams: d.createBuffer({ label: 'lensProbeParams', size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
-            map: d.createBuffer({ label: 'lensMap', size: LENS_RES * LENS_RES * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC }),
+            params: d.createBuffer({ label: 'lensParams', size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
+            probeParams: d.createBuffer({ label: 'lensProbeParams', size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
+            map: d.createBuffer({ label: 'lensMap', size: 2 * LENS_RES * LENS_RES * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC }),
             hits: d.createBuffer({ label: 'lensHits', size: 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST }),
+            lenses: d.createBuffer({ label: 'lensList', size: this.buffers.maxParticles * 16, usage: GPUBufferUsage.STORAGE }),
+            count: d.createBuffer({ label: 'lensCount', size: 4, usage: GPUBufferUsage.STORAGE }),
             staging: d.createBuffer({ label: 'lensHitsStaging', size: 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
         };
         const pl = await createLensPipeline(d, wgslConstants);
         const lb = this.lensBuffers;
         this._lensPipeline = pl.pipeline;
+        this._lensShadowPipeline = pl.pipelineShadows;
+        this._lensCompactPipeline = pl.compact;
+        this._lensExpandPipeline = pl.expand;
         const bg = (params) => d.createBindGroup({
             label: 'lens_g0', layout: pl.layout,
-            entries: [params, this.buffers.particleState, lb.map, lb.hits].map((buffer, i) => ({ binding: i, resource: { buffer } })),
+            entries: [params, this.buffers.particleState, lb.map, lb.hits, lb.lenses, lb.count].map((buffer, i) => ({ binding: i, resource: { buffer } })),
         });
         this._lensBG = bg(lb.params);
         this._lensProbeBG = bg(lb.probeParams);
@@ -664,7 +675,10 @@ export default class GPUPhysics {
     dispatchLens(p) {
         if (!this._lensPipeline) return;
         const refX = p.left + p.width / 2, refY = p.top + p.height / 2;
-        const writeParams = (buf, left, top, w, h, star, countOnly, res) => {
+        // The map's side: LENS_RES up to LENS_WORK / LENS_RES² lenses, then res² × lenses held at LENS_WORK
+        const mapRes = Math.min(LENS_RES, Math.max(LENS_MIN_RES, Math.floor(Math.sqrt(LENS_WORK / Math.max(this.aliveCount, 1)) / 16) * 16));
+        const reduced = mapRes < LENS_RES;
+        const writeParams = (buf, left, top, w, h, star, countOnly, res, mapOffset = 0) => {
             const f = _lensF32, u = _lensU32;
             f[0] = left; f[1] = top; f[2] = w / res; f[3] = h / res;
             u[4] = res; u[5] = this.aliveCount;
@@ -676,15 +690,25 @@ export default class GPUPhysics {
             f[14] = this.domainW; f[15] = this.domainH;
             u[16] = this._blackHoleEnabled ? 1 : 0; u[17] = countOnly ? 1 : 0;
             f[18] = refX; f[19] = refY;   // both passes take each lens's image nearest the view's centre
+            u[20] = mapOffset; u[21] = LENS_RES;
             this.device.queue.writeBuffer(buf, 0, _lensData);
         };
-        writeParams(this.lensBuffers.params, p.left, p.top, p.width, p.height, null, false, LENS_RES);
+        writeParams(this.lensBuffers.params, p.left, p.top, p.width, p.height, null, false, mapRes, reduced ? LENS_RES * LENS_RES : 0);
         const enc = this.device.createCommandEncoder({ label: 'lens' });
         enc.clearBuffer(this.lensBuffers.hits);
         const pass = enc.beginComputePass({ label: 'lensDeflection' });
-        pass.setPipeline(this._lensPipeline);
+        // The live lenses once, for the map and the probe alike (the params agree on the image)
+        pass.setPipeline(this._lensCompactPipeline);
         pass.setBindGroup(0, this._lensBG);
-        pass.dispatchWorkgroups(LENS_RES / 8, LENS_RES / 8);
+        pass.dispatchWorkgroups(1);
+        const sumPipeline = this._blackHoleEnabled ? this._lensShadowPipeline : this._lensPipeline;
+        pass.setPipeline(sumPipeline);
+        pass.dispatchWorkgroups(Math.ceil(mapRes / LENS_WG), Math.ceil(mapRes / LENS_WG));
+        if (reduced) {
+            pass.setPipeline(this._lensExpandPipeline);
+            pass.dispatchWorkgroups(LENS_RES / 16, LENS_RES / 16);
+            pass.setPipeline(sumPipeline);
+        }
         let cellArea = 0;
         if (p.star) {
             const mTot = p.massTotal ?? (this._statsData ? Math.max(this._statsData[8], 0) : 1);
@@ -692,7 +716,7 @@ export default class GPUPhysics {
             writeParams(this.lensBuffers.probeParams, p.star.x - half, p.star.y - half, 2 * half, 2 * half, p.star, true, PROBE_RES);
             cellArea = (2 * half / PROBE_RES) ** 2;
             pass.setBindGroup(0, this._lensProbeBG);
-            pass.dispatchWorkgroups(PROBE_RES / 8, PROBE_RES / 8);
+            pass.dispatchWorkgroups(PROBE_RES / LENS_WG, PROBE_RES / LENS_WG);
         }
         pass.end();
         const readHits = p.star && !this._lensPending;

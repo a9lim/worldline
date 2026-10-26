@@ -231,8 +231,14 @@ fn fsGrid(in: VertexOutput) -> @location(0) vec4<f32> {
         let cell = 4.5 * grid.scaleA;
         let c = floor(backdrop / cell);
         let bw = max(length(bfw), 1e-5);
+        // A star sits inside its cell and reaches 0.08 cells plus the pixel's footprint, so a
+        // neighbour that far from the pixel adds exactly nothing and is skipped before its hash
+        let fr = backdrop / cell - c;
+        let reach = 0.08 + bw / cell;
         for (var oy = -1; oy <= 1; oy++) {
+            if (select(0.0, select(1.0 - fr.y, fr.y, oy < 0), oy != 0) >= reach) { continue; }
             for (var ox = -1; ox <= 1; ox++) {
+                if (select(0.0, select(1.0 - fr.x, fr.x, ox < 0), ox != 0) >= reach) { continue; }
                 let k = c + vec2(f32(ox), f32(oy));
                 let h = starHash(k);
                 if (h.x > 0.3) { continue; }

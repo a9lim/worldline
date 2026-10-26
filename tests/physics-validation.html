@@ -1819,6 +1819,83 @@ cases.push({
     },
 });
 
+/**
+ * A scene of n seeded bodies on a torus, the first `removed` of every 11th slot retired, its lens map
+ * over a square of side 40 about the centre, and the exact sum at a lattice of cells, in doubles from
+ * the particles read back (each lens at its image nearest the centre, as the pass takes it).
+ */
+async function lensScene(n, D) {
+    const W = 64, side = 40, res = 512;
+    let s = 12345;
+    const rnd = () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
+    const gp = await makeSim({ domainW: W, domainH: W, boundary: BOUND_LOOP });
+    for (let i = 0; i < n; i++) gp.addParticle({ x: rnd() * W, y: rnd() * W, mass: 0.2 + 0.8 * rnd() });
+    for (let i = 5; i < n; i += 11) gp.removeParticle(i);
+    const map = await lensMap(gp, W / 2, W / 2, side, D);
+    const parts = (await readParticles(gp)).filter(p => p.alive && p.mass > 0);
+    gp.destroy();
+    const cx = W / 2, cy = W / 2, cell = side / res;
+    const wrap = (r, L) => (r > L / 2 ? r - L : r < -L / 2 ? r + L : r);
+    const lenses = parts.map(p => ({ x: cx + wrap(p.x - cx, W), y: cy + wrap(p.y - cy, W), k: 4 * D * p.mass }));
+    const exact = (ix, iy) => {
+        const tx = cx - side / 2 + (ix + 0.5) * cell, ty = cy - side / 2 + (iy + 0.5) * cell;
+        let ax = 0, ay = 0, near = Infinity;
+        for (const l of lenses) {
+            const dx = tx - l.x, dy = ty - l.y, rSq = dx * dx + dy * dy, q = l.k / (rSq + 1e-4 * l.k);
+            ax += q * dx; ay += q * dy; near = Math.min(near, Math.sqrt(rSq));
+        }
+        return { ax, ay, near, got: [map[(iy * res + ix) * 4], map[(iy * res + ix) * 4 + 1]] };
+    };
+    return { exact, lenses: lenses.length, cell, res };
+}
+
+cases.push({
+    name: 'Lensing: the compacted lens list sums to the exact deflection over dead slots, several tiles and periodic images',
+    async run() {
+        // 400 slots, every 11th retired (about 36 of them): 364 lenses, two 256-lens tiles
+        const { exact, lenses, res } = await lensScene(400, 0.5);
+        // Errors are taken against the largest |α| among the cells (the sum nearly cancels near the
+        // window's centre, where a relative error would only measure that)
+        let worst = 0, top = 0, n = 0;
+        for (let iy = 7; iy < res; iy += 31) for (let ix = 3; ix < res; ix += 29) {
+            const e = exact(ix, iy);
+            if (e.near < 0.3) continue;      // on a lens's core the sum is steep, and f32 rounding of the position shows
+            worst = Math.max(worst, Math.hypot(e.got[0] - e.ax, e.got[1] - e.ay));
+            top = Math.max(top, Math.hypot(e.ax, e.ay));
+            n++;
+        }
+        return {
+            expected: `${lenses} live lenses of 400 slots; α from the double-precision sum at ${n} cells (|α| up to ${fmt(top, 3)})`,
+            measured: `worst error ${worst.toExponential(2)}`,
+            metric: `${(worst / top * 100).toFixed(4)}% of max |α|`,
+            pass: worst / top < 1e-5 && n > 100,
+        };
+    },
+});
+
+cases.push({
+    name: 'Lensing: past 512 lenses the map is computed on a coarser grid and refilled, matching the exact sum away from the lenses',
+    async run() {
+        // 700 slots: the map's side is 432, bilinearly refilled to 512. Cells a unit or more from every lens
+        // see a field that varies over many coarse cells, so the refill's error is its interpolation error
+        const { exact, lenses, res, cell } = await lensScene(700, 0.5);
+        let worst = 0, sum = 0, top = 0, n = 0;
+        for (let iy = 7; iy < res; iy += 13) for (let ix = 3; ix < res; ix += 11) {
+            const e = exact(ix, iy);
+            if (e.near < 1) continue;
+            const err = Math.hypot(e.got[0] - e.ax, e.got[1] - e.ay);
+            worst = Math.max(worst, err); sum += err; n++;
+            top = Math.max(top, Math.hypot(e.ax, e.ay));
+        }
+        return {
+            expected: `${lenses} live lenses; the map computed at 432² and refilled to 512² (cells ${fmt(cell, 3)} apart); |α| up to ${fmt(top, 3)}`,
+            measured: `worst error ${worst.toExponential(2)}, mean ${(sum / n).toExponential(2)} over ${n} cells`,
+            metric: `${(worst / top * 100).toFixed(3)}% of max |α|`,
+            pass: worst / top < 0.003 && n > 100,
+        };
+    },
+});
+
 // ── Runner ──
 
 /** Run every case, or those whose name contains `filter` (console: runAll('Liénard')). */

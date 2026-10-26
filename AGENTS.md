@@ -534,7 +534,7 @@ The Frame tab's Backdrop section (`lens-panel.js`, `sim.lens`) turns the grid in
 backdrop seen through the bodies as a thin lens, viewed along z, in the lab frame only.
 
 - **The map** (`lens-deflection.wgsl`, `GPUPhysics.dispatchLens`, from
-  `GPUBackend.render()` each rendered frame): one thread per cell of a `LENS_RES`² (512)
+  `GPUBackend.render()` each rendered frame): a sum for each cell of a `LENS_RES`² (512)
   grid over the view, 10% oversized, writes α(x) = Σ 4M𝒟(x − xᵢ)/(|x − xᵢ|² + 10⁻⁴·4M𝒟)
   in physical lens-plane coordinates, the gradient of the 2D log potential, with
   𝒟 = D_L·D_LS/D_S on a log slider (R_E = √(4M𝒟); the core shifts the ring by 5·10⁻⁵ R_E).
@@ -544,9 +544,29 @@ backdrop seen through the bodies as a thin lens, viewed along z, in the lab fram
   holes flag an imposed 3√3·M disk, the Schwarzschild capture impact parameter (no spin
   or charge), since the weak thin lens has no shadow. The lens is instantaneous: no
   moving-lens corrections, time delays or strong-field images, and lab frame only.
+- **The pass** (one compute pass, three or four dispatches). `lensCompact`, a single
+  workgroup, keeps the live, massive slots as `vec4(x, y, 4𝒟M, capture radius²)` (the
+  periodic image already chosen, the radius² −1 without black holes) in
+  `lensBuffers.lenses`, with their count in `lensBuffers.count`. Each thread counts a
+  contiguous run of slots and an inclusive scan over the 256 counts places them, so the
+  list is in slot order and every sum over it is the same each run (no atomics).
+  `lensDeflection` then reads that list, not every slot's struct: a 16 × 16 workgroup
+  covers 32 × 32 cells (each thread four cells, 16 apart, so a row of threads still
+  writes a row of cells) and walks the list a tile of 256 through workgroup memory, the
+  count taken with `workgroupUniformLoad` so the barriers stay uniform. The capture test
+  is a pipeline `override` (`LENS_SHADOWS`), built twice, so a scene without black holes
+  spends nothing on it. The probe's pass reads the same list. The cost is res² × lenses,
+  about 0.18 ms at 500 bodies on the M5 Max; past `LENS_WORK` (512² × 512) the map is
+  computed on a grid of side 512·√(512/lenses), a multiple of 16 and at least
+  `LENS_MIN_RES`, written past the full map in the same buffer (`mapOffset`), and
+  `lensExpand` refills the 512² map from it bilinearly, so the renderer and the tests
+  always see one resolution (176² at 4000 bodies, about 0.4 ms in all). The probe's pass
+  is never reduced.
 - **Drawing** (`grid-render.wgsl`): each pixel samples the map bilinearly and draws the
   rulers at β = θ − α; the domain edge is in the slab and stays unlensed; capture disks
-  take the ground's ink.
+  take the ground's ink. The backdrop's stars are a hashed field of 4.5-unit cells; a pixel
+  hashes only the neighbouring cells within a star's reach (0.08 cells plus the pixel's
+  footprint in the backdrop), which adds nothing the other cells would have drawn.
 - **The probe:** a backdrop star of radius r at β_s, placed where the view's centre was.
   Cells whose rays land on it light up in the accent (its images, arcs, Einstein rings)
   and are counted (`lensBuffers.hits`) on a second, `countOnly` pass over a 1024² window
@@ -554,7 +574,8 @@ backdrop seen through the bodies as a thin lens, viewed along z, in the lab fram
   holds a single lens's images to u ≈ 3.7), so μ = hits·cellArea/(πr²) by inverse ray
   shooting, the magnification of a uniform disk, for any lens configuration; captured rays
   see no star. Results carry `sim.lens.gen`, bumped by every change, so a readback from
-  before one is dropped; the panel plots the rest as a light curve.
+  before one is dropped; the panel plots the rest as a light curve. The pass is four
+  times the full map's cells, so a probe costs about 0.7 ms at 500 bodies and 5 ms at 4000.
 
 ### Black holes
 

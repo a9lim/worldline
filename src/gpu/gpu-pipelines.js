@@ -9,7 +9,7 @@
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 194;
+const SHADER_VERSION = 195;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -2085,14 +2085,19 @@ export async function createLensPipeline(device, wgslConstants = '') {
             { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
             { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
             { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+            { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },  // the compact lens list
+            { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },  // its count
         ],
     });
-    const pipeline = device.createComputePipeline({
-        label: 'lensDeflection',
-        layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
-        compute: { module, entryPoint: 'lensDeflection' },
+    const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
+    const make = (entryPoint, constants = {}) => device.createComputePipeline({
+        label: entryPoint, layout: pipelineLayout, compute: { module, entryPoint, constants },
     });
-    return { pipeline, layout };
+    // The map's sum twice: with the black holes' capture test, and without it
+    return {
+        pipeline: make('lensDeflection'), pipelineShadows: make('lensDeflection', { LENS_SHADOWS: 1 }),
+        compact: make('lensCompact'), expand: make('lensExpand'), layout,
+    };
 }
 
 export async function createGridRenderPipeline(device, format, wgslConstants = '') {
