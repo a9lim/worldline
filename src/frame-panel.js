@@ -1,19 +1,20 @@
 // ─── Frame panel ───
-// The Frame tab: which observer the view is drawn for (frames.js), its parameters, what it
-// reads (speed, γ, and how far behind the lab its now is), and the look-back scrubber, which
-// only acts while paused.
+// The Figure tab's Observer: which observer the view is drawn for (frames.js), as words, with
+// its parameters and the look-back scrubber, which only acts while paused; and the Measure
+// tab's readouts of it (speed, γ, and how far behind the lab its now is). The figure bar's
+// lab · observer switches between the lab and the observer chosen here.
 import { FRAME_KEYS, FRAME_LAB, FRAME_PARTICLE, FRAME_BOOST, FRAME_COROTATE, FRAME_FREEFALL } from './frames.js';
 import { WORLDLINE_LEN, WORLDLINE_DT } from './config.js';
 import { t } from './i18n.js';
+import { showChoice, enableChoice } from './controls.js';
 
 export default class FramePanel {
     constructor(sim) {
         this.sim = sim;
         const $ = (id) => document.getElementById(id);
         this.el = {
-            select: $('frame-select'),
+            choice: $('observer-choice'),
             boost: $('frame-boost-group'),
-            direction: $('frame-direction-group'),
             corotate: $('frame-corotate-group'),
             readout: $('frame-readout'),
             speed: $('frame-speed'),
@@ -23,7 +24,6 @@ export default class FramePanel {
             scrub: $('frame-scrub-group'),
             lookBack: $('frameLookBackInput'),
         };
-        this.el.select.addEventListener('change', () => this.choose(this.el.select.value));
 
         this._fmtSpeed = v => Math.tanh(v).toFixed(2) + 'c';
         this._fmtDir = v => Math.round(v) + '°';
@@ -46,6 +46,7 @@ export default class FramePanel {
             sim.frames.lookBack = v;
             sim._dirty = true;
         }, v => v.toFixed(1));
+        this.syncBoost();
         this._sync();
     }
 
@@ -53,6 +54,8 @@ export default class FramePanel {
     choose(key) {
         const sim = this.sim;
         const kind = Math.max(0, FRAME_KEYS.indexOf(key));
+        // The figure bar's observer is the last one chosen here
+        if (kind !== FRAME_LAB) sim.observerKind = key;
         if (kind !== FRAME_LAB && !sim.frames.allowed) {
             if (typeof showToast === 'function') showToast(t('frame.expanding'));
             sim.frames.set(FRAME_LAB);
@@ -82,21 +85,32 @@ export default class FramePanel {
     }
 
     _sync() {
-        const frames = this.sim.frames;
-        const key = FRAME_KEYS[frames.kind];
-        if (this.el.select.value !== key) {
-            // The shared dropdown redraws its label on 'change'; choose() then finds the
-            // frame already set, so this doesn't recurse
-            this.el.select.value = key;
-            this.el.select.dispatchEvent(new Event('change'));
-        }
-        const show = (el, on) => { el.style.display = on ? '' : 'none'; };
-        show(this.el.boost, frames.kind === FRAME_BOOST);
-        show(this.el.direction, frames.kind === FRAME_BOOST);
-        show(this.el.corotate, frames.kind === FRAME_COROTATE);
-        this.el.readout.hidden = !frames.active;
+        this.showObserver();
+        this.syncAvailable();
         this.update();
         this.sim.syncCoords?.();
+    }
+
+    /** The observer as words: the frame in force, or a moving one being eased into. */
+    showObserver() {
+        const sim = this.sim, frames = sim.frames;
+        const shown = frames.active ? FRAME_KEYS[frames.kind] : (sim.spacetime && sim.spacetime._sTo === 1 ? 'boost' : 'lab');
+        showChoice(this.el.choice, shown);
+        // The parameters of the observer the figure bar would switch to
+        const kind = frames.active ? frames.kind : FRAME_KEYS.indexOf(sim.observerKind || 'boost');
+        this.el.boost.hidden = kind !== FRAME_BOOST;
+        this.el.corotate.hidden = kind !== FRAME_COROTATE;
+        this.el.readout.hidden = !frames.active;
+    }
+
+    /** Observers that need a selection, or a static universe, are off without one. */
+    syncAvailable() {
+        const sim = this.sim, allowed = sim.frames.allowed && !sim.settings.expansionEnabled;
+        for (const key of FRAME_KEYS) {
+            if (key === 'lab') continue;
+            const needsBody = key === 'particle' || key === 'freefall';
+            enableChoice(this.el.choice, key, allowed && (!needsBody || sim.selectedIdx >= 0));
+        }
     }
 
     /** Refresh the readouts (each rendered frame). */
@@ -104,7 +118,7 @@ export default class FramePanel {
         const sim = this.sim;
         const frames = sim.frames;
         const paused = !sim.running;
-        this.el.scrub.style.display = frames.active && paused ? '' : 'none';
+        this.el.scrub.hidden = !(frames.active && paused);
         if (!frames.active) return;
         const st = frames.state;
         if (!st || !st.valid) {

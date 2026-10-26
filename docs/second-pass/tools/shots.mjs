@@ -179,7 +179,6 @@ function driver() {
   }
 
   async function freeze(name, frames, seed, view) {
-    const select = document.getElementById('preset-select');
     // Stop the loop's own stepping and drawing before anything else, then pause the usual way
     sim._frame = () => {};
     if (sim.running) document.getElementById('playBtn').click();
@@ -192,8 +191,9 @@ function driver() {
       return ((t ^ t >>> 14) >>> 0) / 4294967296;
     };
     sim._openingScene = true;                   // quiet: no toast
-    select.value = name;
-    select.dispatchEvent(new Event('change'));
+    // The figure list's loader, or (a tree from before the margin's rework) the preset dropdown
+    if (sim.loadFigure) sim.loadFigure(name);
+    else { const select = document.getElementById('preset-select'); select.value = name; select.dispatchEvent(new Event('change')); }
     sim._openingScene = false;
     await quiesce();
     const p = gp();

@@ -44,7 +44,7 @@ export function createPhysicsSettings() {
 }
 
 /** sim.view's keys a configuration may set, besides `fields` (the Fields overlay) and the lens. */
-const VIEW_KEYS = ['trails', 'showClocks', 'showVelocity', 'showForce', 'showForceComponents'];
+const VIEW_KEYS = ['showVelocity', 'showForce', 'showForceComponents'];
 
 /**
  * Apply a configuration, each part optional:
@@ -52,10 +52,11 @@ const VIEW_KEYS = ['trails', 'showClocks', 'showVelocity', 'showForce', 'showFor
  * - `modes`: { collision, boundary, topology } by name (config.js COL_NAMES …), a missing
  *   name taking the first;
  * - `speed`: the speed scale, snapped to the nearest of SPEED_OPTIONS;
- * - `view`: sim.view keys, `fields` (the Fields overlay), `lensing` and `lensDistance`
- *   (sim.lens), and `depth`, the least time the spacetime view shows (SpacetimeView.minDepth).
- * Then sim.syncControls() (ui.js) has every control show the store, runs the dependency
- * cascade and the mode locks once, which may turn more off, and pushes the result to the GPU.
+ * - `view`: sim.view keys, `fields` (the Fields overlay), `lensDistance` (sim.lens: lensing
+ *   itself follows Gravity), and `depth`, the least time the spacetime view shows
+ *   (SpacetimeView.minDepth).
+ * Then sim.syncControls() (ui.js) has every control show the store, runs the laws'
+ * prerequisites and the mode locks once, which may turn more off, and pushes the result to the GPU.
  */
 export function applyConfig(sim, { settings, modes, speed, view } = {}) {
     if (settings) Object.assign(sim.settings, settings);
@@ -73,7 +74,6 @@ export function applyConfig(sim, { settings, modes, speed, view } = {}) {
     if (view) {
         for (const k of VIEW_KEYS) if (k in view) sim.view[k] = view[k];
         if ('fields' in view) sim.heatmap.enabled = view.fields;
-        if ('lensing' in view) sim.lens.on = view.lensing;
         if ('lensDistance' in view) sim.lens.distance = view.lensDistance;
         if ('depth' in view) sim.spacetime.minDepth = view.depth;
     }

@@ -4,13 +4,21 @@
    scene is a figure: the canvas above a hairline figure bar holding the live
    caption and the view controls. The controls live in a margin column on the
    same paper, ruled off by a hairline; on a narrow window it rises as a sheet.
+   Every control is drawn in the plate's own notation (src/controls.js):
+   - a choice is words, the pressed one in the accent and underlined, as the
+     site's tag filters are;
+   - a tick is a hairline frame that shows a law's mark from the key while the
+     law is in force (src/marks.js);
+   - a scale is a ruled line with ticks and a needle in its parameter's ink;
+   - a knob is a number in the caption you drag;
+   - edges are identification diagrams, applied fields arrows you drag.
    ═══════════════════════════════════════════════ */
 
 :root {
-    --margin-w: 340px;
+    --margin-w: 356px;
     --gutter: 20px;
-    /* The swatches of the key and the margin's legend (src/scene-key.js): a body's fill is
-       this much of its ink in the ground, as particle.wgsl mixes it; a horizon is a void */
+    /* The swatches of the key and the margin's marks (src/marks.js): a body's fill is this
+       much of its ink in the ground, as particle.wgsl mixes it; a horizon is a void */
     --key-body: 48%;
     --key-void: var(--text);
     --key-void-edge: var(--text);
@@ -125,7 +133,10 @@ body.wl.margin-open { grid-template-columns: minmax(0, 1fr) var(--margin-w); }
 .scene-key-row > svg { flex: none; overflow: visible; }
 
 .touch-only { display: none; }
-@media (pointer: coarse) { .touch-only { display: inline-block; } }
+@media (pointer: coarse) {
+    .touch-only { display: inline-block; }
+    .no-touch { display: none; }
+}
 
 /* The margin's own × closes it, so its opener stays out of the way meanwhile */
 @media (min-width: 901px) {
@@ -152,43 +163,129 @@ body.wl.margin-open { grid-template-columns: minmax(0, 1fr) var(--margin-w); }
 .scene-controls {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
-    gap: 8px 16px;
+    align-items: baseline;
+    gap: 6px 26px;
 }
 
-.seg { display: inline-flex; }
-.seg button + button { margin-left: -1px; }
+.scale-row.boost { grid-template-columns: auto 132px 3.6em; }
 
-.seg button {
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 0;
-    padding: 4px 11px;
-    color: var(--text-secondary);
-    font-size: 0.95rem;
-    line-height: 1.2;
-    cursor: pointer;
-    transition: color 0.15s var(--ease-out), background-color 0.15s var(--ease-out);
-}
+/* ═══ The kit ═══ */
 
-.seg button:hover { color: var(--text); }
-.seg button[aria-pressed="true"] { color: var(--accent); background: var(--bg-panel-solid); }
-
-.boost {
+/* ─── Choice: words, the pressed one in the accent with a hairline under it ─── */
+.choice {
     display: inline-flex;
-    align-items: center;
-    gap: 10px;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 13px;
+}
+
+.choice button {
+    background: none;
+    border: 0;
+    padding: 1px 0;
     color: var(--text-secondary);
     font-size: 0.95rem;
+    line-height: 1.4;
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-color: transparent;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.3em;
+    transition: color 0.15s var(--ease-out), text-decoration-color 0.15s var(--ease-out);
 }
 
-.boost input { width: 140px; --slider-color: var(--text); }
+.choice button:hover { color: var(--text); }
+.choice button[aria-pressed="true"] { color: var(--accent); text-decoration-color: currentColor; }
+.choice button:disabled { color: var(--text-muted); opacity: 0.45; cursor: default; }
+.choice button:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 2px; }
 
-.boost output {
-    min-width: 3.6em;
+/* ─── Scale: label, a ruled line with a needle in its parameter's ink, the value ─── */
+.scale-row {
+    display: grid;
+    grid-template-columns: 76px minmax(0, 1fr) 3.4em;
+    align-items: center;
+    gap: 0 10px;
+    padding: 2px 0;
+}
+
+.scale-row > label {
+    font-size: 0.93rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.scale-row > output {
+    text-align: right;
+    font-size: 0.92rem;
     font-style: italic;
+    color: var(--text);
     font-variant-numeric: lining-nums tabular-nums;
+    white-space: nowrap;
 }
+
+.scale-row.sub { padding-left: 38px; grid-template-columns: 66px minmax(0, 1fr) 3.4em; }
+
+input.scale {
+    --ink: var(--text);
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 20px;
+    margin: 0;
+    background: transparent;
+    cursor: pointer;
+}
+
+/* The line, its two ends and its middle, and a minor tick every tenth (drawn on the track
+   with gradients: native range inputs have no tick marks of their own) */
+input.scale::-webkit-slider-runnable-track {
+    height: 11px;
+    background:
+        linear-gradient(var(--border-strong), var(--border-strong)) 0 7px / 100% 1px no-repeat,
+        linear-gradient(var(--border-strong), var(--border-strong)) 0 1px / 1px 6px no-repeat,
+        linear-gradient(var(--border-strong), var(--border-strong)) 50% 1px / 1px 6px no-repeat,
+        linear-gradient(var(--border-strong), var(--border-strong)) 100% 1px / 1px 6px no-repeat,
+        repeating-linear-gradient(to right, var(--border) 0 1px, transparent 1px 10%) 0 4px / 100% 3px no-repeat;
+}
+
+input.scale::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 3px;
+    height: 14px;
+    margin-top: -2px;
+    border-radius: 0;
+    background: var(--ink);
+    box-shadow: 0 0 0 2px var(--bg-canvas);
+}
+
+input.scale::-moz-range-track {
+    height: 7px;
+    background:
+        linear-gradient(var(--border-strong), var(--border-strong)) 0 6px / 100% 1px no-repeat,
+        linear-gradient(var(--border-strong), var(--border-strong)) 50% 0 / 1px 6px no-repeat;
+}
+
+input.scale::-moz-range-thumb { width: 3px; height: 14px; border: 0; border-radius: 0; background: var(--ink); }
+input.scale:focus-visible { outline: none; }
+input.scale:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px var(--bg-canvas), 0 0 0 3.5px var(--accent); }
+input.scale:focus-visible::-moz-range-thumb { outline: 1.5px solid var(--accent); outline-offset: 2px; }
+input.scale:disabled { opacity: 0.4; cursor: default; }
+
+/* ─── Knob: a number in the caption you drag (src/controls.js Knob) ─── */
+.knob {
+    color: var(--text);
+    cursor: ew-resize;
+    border-bottom: 1px dotted color-mix(in srgb, var(--accent) 70%, transparent);
+    padding: 0 1px;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    font-variant-numeric: lining-nums tabular-nums;
+    transition: color 0.15s var(--ease-out);
+}
+
+.knob:hover, .knob.drag { color: var(--accent); }
+.knob:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 2px; }
 
 /* ─── The margin ─── */
 .margin {
@@ -274,25 +371,31 @@ body.wl:not(.margin-open) .margin { visibility: hidden; }
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
 
+/* base.css makes .panel-section a flex column; here it is a block ruled off from the last */
 .panel-section {
-    padding: 14px 0 12px;
+    display: block;
+    margin: 0;
+    padding: 13px 0 11px;
     border-top: 1px solid var(--border);
 }
 
 .tab-panel > .panel-section:first-child { border-top: 0; }
-/* base.css gives .panel-section a display, which beats the hidden attribute */
 .panel-section[hidden] { display: none; }
+[hidden] { display: none !important; }
 
 .group-label {
     display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 8px;
-    font-size: 0.95rem;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 0 6px;
+    font-size: 0.93rem;
     font-weight: 400;
     font-style: italic;
     color: var(--text-muted);
 }
+
+.group-label small { font-size: 0.84rem; }
 
 .margin-foot {
     display: flex;
@@ -300,44 +403,6 @@ body.wl:not(.margin-open) .margin { visibility: hidden; }
     padding: 10px var(--gutter) 14px;
     border-top: 1px solid var(--border);
 }
-
-/* ─── Rows ─── */
-.ctrl-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 4px 0;
-}
-
-.ctrl-row > label,
-.control-group > label,
-.checkbox-label {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    font-size: 0.95rem;
-    color: var(--text);
-}
-
-.ctrl-row > label { justify-content: flex-start; }
-
-/* The Forces and Physics rows lead with their mark in the scene (src/scene-key.js) */
-.row-swatch { flex: none; margin-right: 2px; overflow: visible; }
-.ctrl-sub { padding-left: 14px; }
-.ctrl-sub > label { color: var(--text-secondary); }
-.ctrl-disabled { opacity: 0.4; pointer-events: none; }
-
-.control-group { margin: 6px 0 10px; }
-.control-group > label { margin-bottom: 2px; }
-
-.slider-value {
-    color: var(--text-secondary);
-    font-variant-numeric: lining-nums tabular-nums;
-}
-
-.checkbox-label input { accent-color: var(--text); }
 
 .panel-hint {
     margin: 4px 0 0;
@@ -347,41 +412,43 @@ body.wl:not(.margin-open) .margin { visibility: hidden; }
     color: var(--text-muted);
 }
 
-.stat-row {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 2px 0;
-    font-size: 0.92rem;
+/* The info tips' triggers: a quiet italic ?, or, on a law, its formula */
+.margin .info-trigger {
+    width: auto;
+    height: auto;
+    min-width: 0;
+    min-height: 0;
+    padding: 0 2px;
+    border-radius: 0;
+    background: none;
+    color: var(--text-muted);
+    font-size: 0.86rem;
+    font-weight: 400;
+    font-style: italic;
+    cursor: help;
 }
 
-.stat-label { color: var(--text-secondary); }
-.stat-value { color: var(--text); font-variant-numeric: lining-nums tabular-nums; }
-.stat-sub { padding-left: 14px; }
-.stat-sub .stat-label { color: var(--text-muted); }
-.stat-group { display: block; }
+.margin .info-trigger:hover,
+.margin .info-trigger:focus-visible { background: none; color: var(--accent); }
 
-#selected-particle-section .stat-value { color: var(--accent); }
+/* A formula's sub- and superscripts need inline layout, not base.css's flex */
+.margin .info-trigger.law { display: inline-block; line-height: 1.3; }
 
-#phase-plot-container canvas,
-#eff-pot-container canvas {
-    display: block;
-    width: 100%;
-    aspect-ratio: 1;
+/* ─── Tick: a hairline frame that shows the law's own mark while it is in force ─── */
+.tick {
+    --ink: var(--text);
+    position: relative;
+    display: grid;
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0 9px;
+    padding: 3px 0;
+    cursor: pointer;
 }
 
-/* The Stats tab's a(t), H(t) plot and the lens light curve (their panels size them) */
-.cosmo-plot {
-    display: block;
-    margin: 6px 0 2px;
-}
+.tick.sub { padding-left: 20px; }
 
-/* ─── Switches: a hairline track, a dot that slides over and takes the force's ink, and a
-   wash of the ink when on ─── */
-.tog-wrap { position: relative; display: flex; }
-
-.tog-wrap input {
+.tick input {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -390,105 +457,229 @@ body.wl:not(.margin-open) .margin { visibility: hidden; }
     white-space: nowrap;
 }
 
-.tog {
-    --tog-color: var(--text);
-    position: relative;
-    display: inline-block;
-    width: 28px;
-    height: 14px;
-    border: 1px solid var(--border-strong);
-    border-radius: 7px;
-    cursor: pointer;
-    transition: border-color 0.2s var(--ease-out);
-}
-
-.tog-thumb {
-    position: absolute;
-    top: 50%;
-    left: 3px;
-    width: 6px;
-    height: 6px;
-    margin-top: -3px;
-    border-radius: 50%;
-    background: var(--text-muted);
-    transition: left 0.2s var(--ease-out), background-color 0.2s var(--ease-out), width 0.2s var(--ease-out), height 0.2s var(--ease-out), margin 0.2s var(--ease-out);
-}
-
-.tog-wrap input:checked + .tog {
-    border-color: color-mix(in srgb, var(--tog-color) 55%, transparent);
-    background: color-mix(in srgb, var(--tog-color) 14%, transparent);
-}
-
-.tog-wrap input:checked + .tog .tog-thumb {
-    left: 16px;
-    width: 8px;
-    height: 8px;
-    margin-top: -4px;
-    background: var(--tog-color);
-}
-
-.tog-wrap input:focus-visible + .tog { outline: 1.5px solid var(--accent); outline-offset: 2px; }
-.tog-wrap input:disabled + .tog { cursor: default; }
-
-/* ─── Sliders: a hairline track, a dot in the parameter's ink ─── */
-input[type=range] {
-    --slider-color: var(--text);
-    -webkit-appearance: none;
-    appearance: none;
-    width: 100%;
-    height: 18px;
-    margin: 0;
-    background: transparent;
-    cursor: pointer;
-}
-
-input[type=range]::-webkit-slider-runnable-track { height: 1px; background: var(--border-strong); }
-input[type=range]::-moz-range-track { height: 1px; background: var(--border-strong); }
-input[type=range]::-moz-range-progress { height: 1px; background: var(--slider-color); }
-
-input[type=range]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 11px;
-    height: 11px;
-    margin-top: -5px;
-    border-radius: 50%;
-    border: 2px solid var(--bg-canvas);
-    background: var(--slider-color);
-}
-
-input[type=range]::-moz-range-thumb {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    border: 2px solid var(--bg-canvas);
-    background: var(--slider-color);
-}
-
-input[type=range]:focus-visible { outline: none; }
-input[type=range]:focus-visible::-webkit-slider-thumb { outline: 1.5px solid var(--accent); outline-offset: 1px; }
-
-/* ─── Segmented rows in the margin: hairline boxes, no sliding fill ─── */
-.margin .mode-toggles {
+.tick-frame {
     display: flex;
-    gap: 0;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 18px;
+    border: 1px solid var(--border-strong);
+    transition: border-color 0.15s var(--ease-out);
+}
+
+/* Only the mark's own svg overflows: a hatch's nested svg clips to its box */
+.tick-frame > svg { width: 24px; height: 13px; overflow: visible; opacity: 0; transition: opacity 0.15s var(--ease-out); }
+.tick input:checked ~ .tick-frame { border-color: color-mix(in srgb, var(--ink) 60%, transparent); }
+.tick input:checked ~ .tick-frame > svg { opacity: 1; }
+.tick input:focus-visible ~ .tick-frame { outline: 1.5px solid var(--accent); outline-offset: 2px; }
+
+.tick-name {
+    min-width: 0;
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    transition: color 0.15s var(--ease-out);
+}
+
+.tick:hover .tick-name,
+.tick input:checked ~ .tick-name { color: var(--text); }
+
+.tick-law {
+    justify-self: end;
+    font-size: 0.86rem;
+    font-style: italic;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+kbd.tick-law {
+    font-family: var(--font-text);
+    font-style: normal;
+    font-size: 0.8rem;
+    padding: 0 5px;
+    background: var(--bg-panel-solid);
+}
+
+/* A law whose prerequisite is off: its frame dashed, the row faded */
+.tick.ctrl-disabled { opacity: 0.4; cursor: default; }
+.tick.ctrl-disabled .tick-frame { border-style: dashed; }
+.tick.ctrl-disabled .tick-name { color: var(--text-secondary); }
+
+/* ─── A label beside a choice ─── */
+.field-row {
+    display: grid;
+    grid-template-columns: 76px minmax(0, 1fr);
+    align-items: baseline;
+    gap: 0 10px;
+    padding: 3px 0;
+}
+
+.field-k { font-size: 0.93rem; color: var(--text-secondary); }
+
+/* ─── The list of figures (src/ui.js builds it from PRESET_ORDER) ─── */
+.figures { display: grid; }
+
+.figure-row {
+    display: grid;
+    grid-template-columns: 14px 48px minmax(0, 1fr);
+    align-items: center;
+    gap: 0 10px;
+    padding: 3px 0;
+    background: none;
+    border: 0;
+    text-align: left;
+    color: var(--text-secondary);
+    font-size: 0.97rem;
+    cursor: pointer;
+    transition: color 0.15s var(--ease-out);
+}
+
+.figure-row > svg { display: block; overflow: visible; }
+.figure-row .figure-no { color: var(--text-muted); font-size: 0.86rem; text-align: right; font-variant-numeric: lining-nums tabular-nums; }
+.figure-row:hover { color: var(--text); }
+.figure-row[aria-pressed="true"] { color: var(--accent); }
+
+.figure-row[aria-pressed="true"] .figure-name {
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.3em;
+}
+
+.figure-row:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 2px; }
+
+/* The active figure's knobs, under its row, as scales */
+.figure-knobs { padding: 2px 0 4px 72px; }
+.figure-knobs .scale-row { grid-template-columns: minmax(58px, max-content) minmax(0, 1fr) 3.4em; }
+
+/* ─── The next body: its glyph beside its scales ─── */
+.next-body {
+    display: grid;
+    grid-template-columns: 56px minmax(0, 1fr);
+    align-items: center;
+    gap: 0 12px;
+}
+
+.next-body > svg { overflow: visible; }
+.next-body .scale-row { grid-template-columns: 50px minmax(0, 1fr) 3.4em; }
+
+/* ─── Edges: the identification diagrams ─── */
+.edges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    margin-top: 2px;
+}
+
+.edge {
+    display: grid;
+    justify-items: center;
+    gap: 1px;
     padding: 0;
     background: none;
-    margin-top: 4px;
+    border: 0;
+    color: var(--text-muted);
+    font-size: 0.86rem;
+    cursor: pointer;
+    transition: color 0.15s var(--ease-out);
 }
 
-.margin .mode-indicator { display: none; }
+.edge > span:last-child { color: var(--text-secondary); }
+.edge svg { display: block; overflow: visible; }
+.edge:hover { color: var(--text-secondary); }
+.edge[aria-pressed="true"],
+.edge[aria-pressed="true"] > span:last-child { color: var(--accent); }
 
-.margin .mode-btn {
-    flex: 1;
-    padding: 4px 6px;
-    border: 1px solid var(--border);
-    border-radius: 0;
+.edge[aria-pressed="true"] > span:last-child {
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.3em;
+}
+
+.edge:disabled { opacity: 0.4; cursor: default; }
+.edge:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 2px; }
+
+.universe-more { margin-top: 6px; }
+
+/* ─── Applied fields: arrows you drag ─── */
+.pads {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 22px;
+    margin: 2px 0 4px;
+}
+
+.pad-wrap {
+    display: grid;
+    justify-items: center;
+    font-size: 0.88rem;
     color: var(--text-secondary);
-    font-size: 0.9rem;
 }
 
-.margin .mode-btn + .mode-btn { margin-left: -1px; }
-.margin .mode-btn.active { color: var(--accent); background: var(--bg-panel-solid); }
+.pad-wrap output { font-style: italic; color: var(--text); font-variant-numeric: lining-nums tabular-nums; }
+.pad { display: block; cursor: crosshair; touch-action: none; }
+.pad:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 2px; }
+.bz-ends { color: var(--text-muted); font-size: 0.86rem; }
+
+/* ─── Readouts ─── */
+.stat-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 1px 0;
+    font-size: 0.92rem;
+}
+
+.stat-label { color: var(--text-secondary); }
+.stat-value { color: var(--text); font-variant-numeric: lining-nums tabular-nums; white-space: nowrap; }
+.stat-sub { padding-left: 14px; }
+.stat-sub .stat-label { color: var(--text-muted); font-size: 0.92rem; }
+.stat-sub .stat-value { font-size: 0.92rem; color: var(--text); }
+
+/* A drift's sparkline beside its quantity (src/marks.js sparkline) */
+.spark { vertical-align: -2px; margin-left: 9px; overflow: visible; }
+
+/* The selected body: its glyph beside its mass, charge and spin */
+.specimen {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    align-items: center;
+    gap: 0 12px;
+    margin-bottom: 2px;
+}
+
+.specimen > svg { overflow: visible; }
+#selected-particle-section .stat-value { color: var(--accent); }
+
+#force-breakdown { margin-top: 6px; }
+
+/* Each force on the selected body: its law, a bar in its ink against the largest, its size */
+.force-row {
+    --ink: var(--text-muted);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 64px 4.2em;
+    align-items: center;
+    gap: 0 8px;
+    padding: 1px 0 1px 14px;
+    font-size: 0.88rem;
+}
+
+.force-row .stat-label { color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.force-row .stat-value { text-align: right; }
+.force-bar { display: block; height: 3px; }
+.force-bar i { display: block; height: 100%; width: var(--w, 0%); background: var(--ink); }
+
+#phase-plot-container canvas,
+#eff-pot-container canvas {
+    display: block;
+    width: 100%;
+    aspect-ratio: 1;
+}
+
+/* The Measure tab's a(t), H(t) plot and the lens light curve (their panels size them) */
+.cosmo-plot {
+    display: block;
+    margin: 6px 0 2px;
+}
 
 /* ─── Dropdowns (shared/dropdown.js): a ruled line that opens a list ─── */
 .sim-select { width: 100%; }
@@ -501,13 +692,13 @@ input[type=range]:focus-visible::-webkit-slider-thumb { outline: 1.5px solid var
     align-items: center;
     justify-content: space-between;
     gap: 6px;
-    padding: 5px 0;
+    padding: 4px 0;
     border: 0;
     border-bottom: 1px solid var(--border-strong);
     border-radius: 0;
     background: none;
     color: var(--text);
-    font-size: 0.95rem;
+    font-size: 0.93rem;
     text-align: left;
     white-space: nowrap;
     overflow: hidden;
@@ -541,7 +732,7 @@ input[type=range]:focus-visible::-webkit-slider-thumb { outline: 1.5px solid var
 
 .sim-dropdown-item {
     padding: 4px 12px;
-    font-size: 0.95rem;
+    font-size: 0.93rem;
     color: var(--text-secondary);
     white-space: nowrap;
     overflow: hidden;
@@ -567,31 +758,12 @@ input[type=range]:focus-visible::-webkit-slider-thumb { outline: 1.5px solid var
 .stats-title { font-size: 1.15rem; font-weight: 400; }
 #reference-overlay { z-index: 9999; }
 
-/* ─── Force and parameter inks ─── */
-.tog-gravity     { --tog-color: var(--ink-umber); }
-.tog-bosoninter  { --tog-color: var(--text-muted); }
-.tog-gravitomag  { --tog-color: var(--ink-madder); }
-.tog-coulomb     { --tog-color: var(--ink-prussian); }
-.tog-magnetic    { --tog-color: var(--ink-verdigris); }
-.tog-relativity  { --tog-color: var(--text-muted); }
-.tog-radiation   { --tog-color: var(--ink-ochre); }
-.tog-spinorbit   { --tog-color: var(--ink-violet); }
-.tog-onepn       { --tog-color: var(--ink-mulberry); }
-.tog-blackhole   { --tog-color: var(--text); }
-.tog-yukawa      { --tog-color: var(--ink-viridian); }
-.tog-axion       { --tog-color: var(--ink-indigo); }
-.tog-higgs       { --tog-color: var(--ink-sap); }
-
-#massInput   { --slider-color: var(--ink-umber); }
-#chargeInput { --slider-color: var(--ink-prussian); }
-#spinInput   { --slider-color: var(--ink-violet); }
-#yukawa-sliders input[type=range] { --slider-color: var(--ink-viridian); }
-#axion-sliders  input[type=range] { --slider-color: var(--ink-indigo); }
-#higgs-sliders  input[type=range] { --slider-color: var(--ink-sap); }
-#extGravityInput, #extGravityAngleInput   { --slider-color: var(--ink-umber); }
-#extElectricInput, #extElectricAngleInput { --slider-color: var(--ink-prussian); }
-#extBzInput                               { --slider-color: var(--ink-verdigris); }
-#frictionInput { --slider-color: var(--text-muted); }
+/* ─── Japanese: labels upright and tracked, as base.css sets the group labels ─── */
+:lang(ja) .tick-law,
+:lang(ja) .scale-row > output,
+:lang(ja) .group-label small { font-style: normal; }
+:lang(ja) .field-k,
+:lang(ja) .scale-row > label { letter-spacing: 0.05em; }
 
 /* ─── Narrow windows: the margin rises over the scene as a sheet ─── */
 .sheet-handle { display: none; }
@@ -634,11 +806,19 @@ input[type=range]:focus-visible::-webkit-slider-thumb { outline: 1.5px solid var
     .scene-tools { top: 12px; gap: 12px; }
     .figure-bar { padding: 8px var(--gutter) 12px; gap: 8px 18px; }
     .figure-bar .caption { font-size: 0.92rem; flex-basis: 100%; }
-    .boost input { width: min(140px, 34vw); }
+    .scale-row.boost { grid-template-columns: auto min(132px, 30vw) 3.6em; }
 }
 
 @media (max-width: 600px) {
-    .seg button { padding: 4px 9px; }
+    .scene-controls { gap: 6px 18px; }
     /* src/ui.js moves speed and language here, and antimatter into the figure bar */
     .margin-foot #speedBtn { margin-left: auto; }
+}
+
+@media (pointer: coarse) {
+    .choice button { padding: 5px 0; }
+    .tick { padding: 6px 0; }
+    .scale-row { padding: 5px 0; }
+    .figure-row { padding: 5px 0; }
+    .margin .info-trigger { padding: 4px 6px; }
 }

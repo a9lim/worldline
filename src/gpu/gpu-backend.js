@@ -149,7 +149,6 @@ export default class GPUBackend {
         this.renderer.showForce = sim.view.showForce;
         this.renderer.showForceComponents = sim.view.showForceComponents;
         this.renderer.showVelocity = sim.view.showVelocity;
-        this.renderer.showClocks = sim.view.showClocks;
         this.renderer.relativityOn = sim.settings.relativityEnabled;
         this.renderer.blackHoleOn = sim.settings.blackHoleEnabled;
         this.renderer.setDomain(this.physics.domainW, this.physics.domainH);
@@ -202,16 +201,17 @@ export default class GPUBackend {
 
         // The spacetime view: world lines in the lab's coordinates or, boosted, an observer's;
         // and the bodies' slice points on that observer's present (src/spacetime.js). Seen
-        // from above, the same world lines are the plane view's trails
+        // from above, the same world lines are the plane view's trails, always drawn (a frame
+        // that isn't a boost keeps the plane, without them)
         renderOpts.spacetime = null;
         const obs = view ? view.observer() : null;
         const boosting = view && view.boosting && obs.active;
         const pierce = boosting ? 2 : (obs && obs.active && !obs.frameOn ? 1 : 0);
-        if (view && (view.tilt > 0.002 || pierce || sim.view.trails) && (!frameParams || obs.active)) {
+        if (view && (!frameParams || obs.active)) {
             const st = sim._spacetimeOpts || (sim._spacetimeOpts = {});
             st.obs = obs;
             st.pierce = pierce;
-            st.trails = sim.view.trails;
+            st.trails = true;
             st.tilt = view.tilt;
             st.depth = view.depth();
             st.beadStep = 2 ** Math.round(Math.log2(st.depth / 14));

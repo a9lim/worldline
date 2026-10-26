@@ -2,14 +2,14 @@
  * @fileoverview GPURenderer — WebGPU instanced rendering for particles + bosons.
  *
  * Phase 1: particles. Phase 4: photon/pion boson rendering.
- * Also: clock rings, field overlays, heatmap, force arrows; world lines (plane-view trails
+ * Also: field overlays, heatmap, force arrows; world lines (plane-view trails
  * included) in the spacetime pass.
  *
  * Dual-pipeline per renderer type: light mode uses standard alpha blending,
  * dark mode uses additive blending ('lighter' equivalent, matching CPU Canvas 2D).
  * On theme change setTheme() swaps _pipeline / _photonPipeline / _pionPipeline.
  */
-import { fetchShader, getSharedPrefix, createBosonRenderPipelines, createFieldRenderPipeline, createHeatmapRenderPipeline, createArrowRenderPipeline, createClockRenderPipeline, createTorqueRenderPipeline, createRingRenderPipeline, createGridRenderPipeline, createSpacetimeRenderPipelines } from './gpu-pipelines.js';
+import { fetchShader, getSharedPrefix, createBosonRenderPipelines, createFieldRenderPipeline, createHeatmapRenderPipeline, createArrowRenderPipeline, createTorqueRenderPipeline, createRingRenderPipeline, createGridRenderPipeline, createSpacetimeRenderPipelines } from './gpu-pipelines.js';
 import { buildWGSLConstants, paletteRGB } from './gpu-constants.js';
 import { HEATMAP_SENSITIVITY, HEATMAP_MAX_ALPHA, GPU_MAX_PHOTONS, GPU_MAX_PIONS, GPU_MAX_LEPTONS, WORLDLINE_LEN, WORLDLINE_DT } from '../config.js';
 
@@ -152,11 +152,6 @@ export default class GPURenderer {
         this._arrowBindGroups = null;    // Array<GPUBindGroup>[13]
         this._arrowReady = false;
 
-        // Clock ring rendering (track + elapsed-arc pipelines)
-        this._clockTrackPipeline = null;
-        this._clockArcPipeline = null;
-        this._clockBindGroup = null;
-        this._clockReady = false;
 
         // Torque arc rendering (arc + arrowhead pipelines)
         this._torqueArcPipeline = null;
@@ -179,7 +174,6 @@ export default class GPURenderer {
         this.showForce = false;
         this.showForceComponents = false;
         this.showVelocity = false;
-        this.showClocks = false;
         this.relativityOn = false;  // Lorentz-contracted bodies and bent spokes
         this.blackHoleOn = false;   // spokes turn at the horizon's Ω_H
 
@@ -296,9 +290,6 @@ export default class GPURenderer {
 
         // --- Arrow render pipeline (force/velocity vectors) ---
         await this._initArrowRendering();
-
-        // --- Clock ring render pipelines ---
-        await this._initClockRendering();
 
         // --- Torque arc render pipeline ---
         await this._initTorqueRendering();
@@ -609,44 +600,6 @@ export default class GPURenderer {
         }
     }
 
-    /** Create clock ring render pipelines (full track + elapsed arc). */
-    async _initClockRendering() {
-        try {
-            const { trackPipeline, arcPipeline, bindGroupLayout } =
-                await createClockRenderPipeline(this.device, this.format, this.isLight, this._wgslConstants || '');
-            this._clockTrackPipeline = trackPipeline;
-            this._clockArcPipeline = arcPipeline;
-
-            const b = this.buffers;
-            this._clockBindGroup = this.device.createBindGroup({
-                label: 'clockRender',
-                layout: bindGroupLayout,
-                entries: [
-                    { binding: 0, resource: { buffer: this.cameraBuffer } },
-                    { binding: 1, resource: { buffer: b.particleState } },
-                    { binding: 2, resource: { buffer: b.particleAux } },
-                    { binding: 3, resource: { buffer: b.derived } },
-                    { binding: 4, resource: { buffer: b.clocks } },
-                ],
-            });
-            const fb = this.frameBuffers;
-            this._clockBindGroupView = fb && this.device.createBindGroup({
-                label: 'clockRender (frame view)',
-                layout: bindGroupLayout,
-                entries: [
-                    { binding: 0, resource: { buffer: this.cameraBuffer } },
-                    { binding: 1, resource: { buffer: fb.viewState } },
-                    { binding: 2, resource: { buffer: fb.viewAux } },
-                    { binding: 3, resource: { buffer: fb.viewDerived } },
-                    { binding: 4, resource: { buffer: fb.viewClocks } },
-                ],
-            });
-            this._clockReady = true;
-        } catch (e) {
-            console.warn('[worldline] Clock render pipeline creation failed, skipping:', e.message);
-        }
-    }
-
     /** Create torque arc render pipelines (arc ribbon + arrowhead triangles). */
     async _initTorqueRendering() {
         try {
@@ -781,7 +734,7 @@ export default class GPURenderer {
         f[35] = this.isLight ? 0.0 : 1.0;
         f[36] = this.relativityOn ? 1.0 : 0.0;
         f[37] = this.blackHoleOn ? 1.0 : 0.0;
-        f[38] = this.showClocks ? 1.0 : 0.0;
+        f[38] = 0;   // unused
         f[39] = this.frameOn ? 1.0 : 0.0;
         f[40] = this.frameImages;
         f[41] = this.dpr;
@@ -891,15 +844,6 @@ export default class GPURenderer {
             pass.draw(4, GPU_MAX_PHOTONS);
             pass.setPipeline(this._pionPipeline);
             pass.draw(4, GPU_MAX_PIONS + GPU_MAX_LEPTONS);
-        }
-
-        // Clock rings (the Clocks overlay): triangle-strip ribbons, 48 segments × 2 vertices
-        if (this._clockReady && this.showClocks && aliveCount > 0 && !boosting) {
-            pass.setBindGroup(0, frame ? this._clockBindGroupView : this._clockBindGroup);
-            pass.setPipeline(this._clockTrackPipeline);
-            pass.draw(96, instances);
-            pass.setPipeline(this._clockArcPipeline);
-            pass.draw(96, instances);
         }
 
         // Ring overlays (the ergosphere, the selection), each slot its own uniform buffer
@@ -1279,12 +1223,6 @@ export default class GPURenderer {
         if (this._photonPipelineLight && this._photonPipelineDark) {
             this._photonPipeline = isLight ? this._photonPipelineLight : this._photonPipelineDark;
             this._pionPipeline   = isLight ? this._pionPipelineLight   : this._pionPipelineDark;
-        }
-
-        // Rebuild clock pipelines (blend mode depends on theme).
-        if (this._clockReady) {
-            this._clockReady = false;
-            this._initClockRendering();
         }
 
         // Rebuild arrow pipeline (blend mode depends on theme).

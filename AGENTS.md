@@ -62,31 +62,34 @@ open decisions, and the model's known boundaries. This file describes the code a
 ## Layout
 
 ```
-index.html               page shell: colophon, scene and figure bar, margin (Settings / Stats / Particle / Frame), JSON-LD
+index.html               page shell: colophon, scene and figure bar, margin (Figure / Laws / World / Measure), JSON-LD
 main.js                  Simulation: state, device lifecycle, fixed-timestep loop
 colors.js                freezes the shared tokens (Worldline reads the inks directly)
 i18n/strings.js          UI strings (en, ja); merges strings-reference.js (reference overlay)
 src/config.js            constants, mode enums, Kerr–Newman and Paczyński–Wiita helpers
 src/physics-settings.js  the toggle and parameter store (sim.settings); applyConfig(), for presets and saves
 src/physics-contract.js  toggle/parameter keys shared by save/load and the GPU slot map
-src/ui.js                colophon, margin, view and boost controls, toggle dependencies, shortcuts, about
+src/ui.js                colophon, figure bar, the margin's four tabs over the store, the laws' prerequisites, shortcuts, about
+src/controls.js          the margin's controls: choices (words), knobs (numbers you drag), field pads (arrows you drag)
+src/marks.js             the plate's marks as inline SVG: the key's swatches, the ticks' marks, the figures' drawings,
+                         the edge diagrams, body glyphs, sparklines
 src/input.js             spawn, select, delete through GPU hit tests; Alt/Shift-drag orbits the view
 src/spacetime.js         the spacetime view: orbit camera over the 2D camera, Lab/Observer boost
-src/caption.js           the live figure caption under the scene: Fig. 1, the preset's live values (en, ja)
-src/scene-key.js         the key at the stage's bottom right, and the margin's legend swatches (en, ja)
+src/caption.js           the live figure caption under the scene: Fig. N, the figure's live values and knobs (en, ja)
+src/scene-key.js         the key at the stage's bottom right (en, ja)
 src/overlay.js           the 2D canvas above the GPU canvas: the field atlas, spawn-drag line, scale bar,
                          the spacetime box with its dimension line and presents
 src/field-atlas.js       the Fields overlay's contours and field lines, from the heatmap readback
-src/presets.js           six curated presets (PRESET_ORDER): data, a spawn, and an optional tick
-src/quench.js            the Higgs quench: startQuench(), measureHiggs(), the Stats tab's Quench section
+src/presets.js           six curated figures (PRESET_ORDER): data, knobs, a spawn, and an optional tick
+src/quench.js            the Higgs quench: startQuench(), measureHiggs(), the Measure tab's Quench section
 src/cosmology.js         the scale factor a(t): schedules, the Friedmann closure, horizons
-src/cosmology-panel.js   the Stats tab's expansion readouts and the overlay's horizons
+src/cosmology-panel.js   the Measure tab's expansion readouts and the overlay's horizons
 src/frames.js            the observer the view is drawn for (sim.frames), FrameParams
-src/frame-panel.js       the Frame tab: frame choice, parameters, readouts, scrubber
-src/lens-panel.js        the Frame tab's Backdrop section: lensing, the microlensing probe
+src/frame-panel.js       the Figure tab's Observer (choice, parameters, scrubber) and the Measure tab's readouts of it
+src/lens-panel.js        the Laws tab's Backdrop (distance, the microlensing probe) and the Measure tab's light curve
 src/save-load.js         quick save (localStorage), JSON download/upload
-src/stats-display.js     conservation readouts, selected-particle panel
-src/phase-plot.js, effective-potential.js, plot-labels.js   Particle-tab plots
+src/stats-display.js     the Measure tab's ledger (with drift sparklines) and the selected body
+src/phase-plot.js, effective-potential.js, plot-labels.js   the selected body's plots (Measure tab)
 src/i18n.js, reference.js, topology.js (minImage), fft.js (Green's function), vec2.js
 src/gpu/gpu-backend.js   GPU runtime: step, events, render, stats, auto-save
 src/gpu/gpu-physics.js   GPUPhysics: buffers, dispatch, readbacks, serialize
@@ -108,24 +111,28 @@ docs/second-pass/tools/  the headless harness (tour.mjs), benchmarks, serve.mjs
 
 `Simulation` (`main.js`) owns the domain, camera, modes, selection, and the settings
 store `sim.settings` (`physics-settings.js`), which `ui.js` writes and
-`GPUBackend.applySettings()` copies into `GPUPhysics.setToggles()`. View flags (trails,
-clocks, vectors, `grid` for the rulers and key) live in `sim.view`, the Fields overlay's
-state in `sim.heatmap`.
+`GPUBackend.applySettings()` copies into `GPUPhysics.setToggles()`. View flags (the arrows,
+`grid` for the rulers and key, `comoving`) live in `sim.view`, the Fields overlay's state in
+`sim.heatmap`. World lines are always drawn, from above and tilted, and lensing follows
+Gravity (`sim.lens.on`), so neither is a flag.
 
 Presets and saves reach that state by one path, `applyConfig(sim, { settings, modes,
 speed, view })` (`physics-settings.js`): it writes the store, the modes (by name), the
 speed and the view (`sim.view`, the Fields overlay, the lens, and `depth`, the spacetime
 view's least depth), then calls `sim.syncControls()` (`ui.js`), which has every control
-show the store without firing its handler (the parameter sliders are one table,
-`storeSliders`, with each control's transform), runs the dependency cascade and the mode
-locks once, which may turn more off in the store, and pushes the result to the GPU. A
-preset (`presets.js`) is data: the toggles it turns on (every other is off), the
-parameters it sets (the rest default), modes, speed, view (what it doesn't turn on is
-off, except the rulers and key) and domain; `presetConfig()` makes its configuration,
-and `stateConfig()` in `save-load.js` a save's. Then `spawn(sim, run)` places the bodies,
-and a preset with a `tick(sim, run)` (the bremsstrahlung beam) sets `sim.presetTick`,
-which runs after each stepped frame until `reset()` clears it; `run` is that load's own
-state, so nothing outlives the run.
+show the store without firing its handler (the parameter scales are one table,
+`storeScales`, with each control's transform), then `update()`, which applies the laws'
+prerequisites (`LAWS`, in order) and the mode locks to the store, which may turn more off,
+shows the result in every control, and pushes it to the GPU. A preset (`presets.js`) is
+data: the toggles it turns on (every other is off), the parameters it sets (the rest
+default), its knobs, modes, speed, view (what it doesn't turn on is off, except the rulers
+and key) and domain; `presetConfig()` makes its configuration, and `stateConfig()` in
+`save-load.js` a save's. A preset is loaded as a figure (`sim.loadFigure(key)`, `ui.js`),
+which keeps `sim.figure` and the figure's knob values (`sim.knobValues`); then
+`spawn(sim, run)` places the bodies, and a preset with a `tick(sim, run)` (the
+bremsstrahlung beam) sets `sim.presetTick`, which runs after each stepped frame until
+`reset()` clears it; `run` is that load's own state (its knobs as `run.knobs`), so nothing
+outlives the run.
 
 The domain is state, not the window: `sim.domainW`/`domainH` in world units, square
 `DEFAULT_DOMAIN` (64) unless a preset sets `domain: [w, h]` or a save carries one.
@@ -141,7 +148,7 @@ test, and renders when `_dirty`; the loop stops while the tab is hidden.
 
 The GPU buffers are the only particle state. `sim.addParticle()` converts a spawn
 velocity to proper velocity and writes a slot; selection is a slot index
-(`sim.select(idx)`), and the sidebar reads the selected body, and the heaviest other
+(`sim.select(idx)`), and the Measure tab reads the selected body, and the heaviest other
 body as the plots' reference, from the stats readback. A selection whose particle dies
 clears itself; each stats readback carries the selection it was requested for
 (`selectedIdx`), so one still in flight when the selection changes is ignored.
@@ -251,7 +258,7 @@ background doesn't cancel.
   rest mass, which stays matter, and kinetic energy, redshifted as relativistic). The
   capped universe (a = A_MAX) stops its Hubble friction and drag with its stretch.
   Momentum drift compares a·P, which expansion conserves on the torus.
-- **Readouts:** the Stats tab's Expansion section (`cosmology-panel.js`): a, H, c/H, the
+- **Readouts:** the Measure tab's Expansion section (`cosmology-panel.js`): a, H, c/H, the
   event horizon (finite only with a vacuum term), the Friedmann density, and ln a and H
   over the run; the overlay rings the selection (or the view's centre) with c/H and the
   event horizon.
@@ -363,15 +370,19 @@ created at `−∞` and act at once.
   with a faint edge in dark; `ring-render.wgsl` dashes its equatorial ergosphere at
   M + √(M² − Q²), skipped within 1.5 px of the horizon, and rings the selection in the accent
   4.5 px out. Every body is drawn at least 2 px in radius.
+- **The clock** (`particle.wgsl`): every body's outline is its clock face. On bodies at least
+  5 px in radius a band 3 px in from the rim, in the marks' ink (0.6 of it on a hole),
+  sweeps clockwise from the top once per `CLOCK_PERIOD` (16) of proper time, from the
+  clock's phase (`clocks.y`, τ mod 16). Each point reads the body's own time there,
+  `phase − γvΔ∥`, as the spoke does, so a moving clock's face is skewed by the
+  simultaneity that bends its spoke. The Measure tab shows the selected body's τ and dτ/dt.
+  (Until 2026-10-26 the clocks were a separate ring overlay behind a K switch.)
 - **The spoke** (`particle.wgsl`): each body is its rest-frame disk pushed through the
   Lorentz map of its centre's velocity. The vertex shader contracts the quad by 1/γ
   along v; the fragment shader maps each lab offset to its rest-frame offset
   `Δ + (γ − 1)(Δ·n̂)n̂` and draws the spoke at `θ + ω·(−γvΔ∥)`, the angle it held at
   that point's rest-frame time, so a spinning, moving spoke bends by `2·v·v_rim` across
   the diameter. The spoke is drawn only on bodies at least 4 px in radius.
-- **The Clocks overlay** (K, the View section; `clock-render.wgsl`): a faint ring per
-  body and an arc in the body's ink that fills once per `CLOCK_PERIOD` (16) of its proper
-  time, contracted with the body. The particle panel shows τ and dτ/dt.
 - **World lines** (`worldline.wgsl` writes, `shared-worldline.wgsl` reads): a ring of
   `WORLDLINE_LEN` (1024) samples per slot (a substep longer than `WORLDLINE_DT` records one,
   so at the default speed they are about 0.27 apart), one every `WORLDLINE_DT` (1/8) of the
@@ -430,9 +441,10 @@ and Spacetime buttons, ease between the two (`EL_SPACETIME` ≈ 30°).
   folded). The lists are sized for the world-line store (every point of every slot kept, and
   64 events a slot) and rebuilt with it (`GPURenderer.rebindWorldLines`). Every `shots.mjs`
   frame, and the boosted ones, match the undecimated strips within 8/255 (largest step 7).
-- **Trails** are the same world lines seen from above: with Trails on, `vs_line` draws in the
-  plane view too (`SpacetimeParams.trails`; the flat camera zeroes the matrix's h column so
-  the past doesn't clip). There is no separate trail pass or buffer.
+- **Trails** are the same world lines seen from above, always drawn: `vs_line` draws in the
+  plane view too (`SpacetimeParams.trails`, always 1; the flat camera zeroes the matrix's h
+  column so the past doesn't clip). There is no separate trail pass or buffer, and a frame
+  that is not a boost (co-rotating, free fall) keeps the plane without them.
 - **The selected body's past light cone** (`vs_cone`): four lab-time rings reaching
   `CONE_REACH` (0.3) of the depth, boosted like everything else, with its two generators where
   the projection's null directions graze it (`towardCamera()`) and the back of each ring
@@ -454,9 +466,9 @@ and Spacetime buttons, ease between the two (`EL_SPACETIME` ≈ 30°).
   domain's translate around the observer (`renderOpts.boxOrigin`), since any translate of
   the domain is the domain.
 
-**Lab and Observer coordinates.** The Boost slider sets the boost frame's velocity along x
-(`frames.rapidity`, `direction` 0 or π; the Frame tab's speed and direction are the same
-setting). Every event is drawn through a boost at rapidity ψ = s·atanh|u| about an anchor A
+**Lab and observer coordinates.** The figure bar's boost scale sets the moving observer's
+velocity along x (`frames.rapidity`, `direction` 0 or π; the Figure tab's speed and
+direction are the same setting). Every event is drawn through a boost at rapidity ψ = s·atanh|u| about an anchor A
 on the observer's present: s = 0 is the lab's coordinates, s = 1 the observer's, and
 `toCoords()` eases between them. The display transform is `SpacetimeView.display()` in JS and
 `disp()` in the shader:
@@ -491,7 +503,11 @@ direction), co-rotation at a rate Ω about the point the camera was on, or free 
 selected particle's frame kept Galilean, so uniform gravity vanishes and tides remain; the
 slicer runs it as the particle frame with `lorentz` off). Frames are a
 view: spawning, selection, deletion and hover act in the lab, and `input.js` ignores the
-canvas while a frame is active.
+canvas while a frame is active. The Figure tab's Observer chooses one, as words
+(`frame-panel.js`; the red body and falling need a selection, and none but the lab is
+offered in an expanding universe), and the figure bar's lab · observer switches between
+the lab and it (`sim.observerKind`): a moving observer is eased into through the boost
+(`spacetime.toCoords`), any other is set directly. Its readouts are on the Measure tab.
 
 - **Slicing** (`frame-slice.wgsl`, from `GPUBackend.render()` each rendered frame).
   `frameAnchor` (one thread) finds the observer's lab velocity u and its anchor event
@@ -515,23 +531,25 @@ canvas while a frame is active.
   each body's colour at `instance / images`.
 - **Bosons** (`boson-render.wgsl`) are drawn where their straight paths cross the slice,
   no earlier than their emission; photons take the Doppler factor `γ(1 − u·v̂)` in hue.
-- **What frames skip:** trails, force and velocity arrows, torque arcs, the heatmap and
-  the field overlays stay lab-only and are hidden in a frame.
+- **What frames skip:** force and velocity arrows, torque arcs, the heatmap and the field
+  overlays stay lab-only and are hidden in a frame; a frame that is not a boost draws no
+  world lines.
 - **The camera** in a frame is in observer coordinates with the observer at the origin;
   leaving the lab saves the lab camera and returning restores it. Resizing keeps the
   observer centred.
 - **The scrubber** (Look back) adds lag while paused, so a paused run can be re-sliced
   further into its past.
-- **The spacetime view** replaced the Frame tab's side diagram: the canvas itself tilts
-  (above). `readSlotsSnapshot` and `readWorldLines` remain for the tests.
-- **Shortcuts:** B cycles frames (skipping the particle frame without a selection),
-  L returns to the lab, G toggles the rulers and key, W tilts between plane and spacetime, O boosts
-  between Lab and Observer coordinates.
+- **The spacetime view** replaced the old Frame tab's side diagram: the canvas itself
+  tilts (above). `readSlotsSnapshot` and `readWorldLines` remain for the tests.
+- **Shortcuts:** B cycles observers (skipping those that follow a body without a
+  selection), L returns to the lab, G toggles the rulers and key, W tilts between plane and
+  spacetime, O switches between the lab's and the observer's coordinates.
 
 ### Lensing
 
-The Frame tab's Backdrop section (`lens-panel.js`, `sim.lens`) turns the grid into a
-backdrop seen through the bodies as a thin lens, viewed along z, in the lab frame only.
+With Gravity on, the rulers are a backdrop seen through the bodies as a thin lens, viewed
+along z, in the lab frame only: `update()` in `ui.js` sets `sim.lens.on` with Gravity, and
+the Laws tab's Backdrop (`lens-panel.js`) sets the distance and places the probe.
 
 - **The map** (`lens-deflection.wgsl`, `GPUPhysics.dispatchLens`, from
   `GPUBackend.render()` each rendered frame): a sum for each cell of a `LENS_RES`² (512)
@@ -574,7 +592,7 @@ backdrop seen through the bodies as a thin lens, viewed along z, in the lab fram
   holds a single lens's images to u ≈ 3.7), so μ = hits·cellArea/(πr²) by inverse ray
   shooting, the magnification of a uniform disk, for any lens configuration; captured rays
   see no star. Results carry `sim.lens.gen`, bumped by every change, so a readback from
-  before one is dropped; the panel plots the rest as a light curve. The pass is four
+  before one is dropped; the Measure tab plots the rest as a light curve. The pass is four
   times the full map's cells, so a probe costs about 0.7 ms at 500 bodies and 5 ms at 4000.
 
 ### Black holes
@@ -693,15 +711,14 @@ the bath do work the ledger doesn't book. The Higgs overlay measures
 from the current vacuum √ε and colours φ < 0 with the enhanced hue.
 
 **The quench's readouts** (`quench.js`). `startQuench()` sets φ ≈ 0 and starts the quench
-at the store's `quenchTime` (the Higgs section's Quench time slider, logarithmic from 10 to
-1000, shown while a quench runs; changing it re-runs the quench; saves leave it out with
-the field). `QuenchPanel` reads the 128² Higgs grid back about four times a second while a
+at the store's `quenchTime` (the Kibble–Zurek figure's knob, logarithmic from 10 to 1000;
+settling it re-runs the quench; saves leave it out with the field). `QuenchPanel` reads the 128² Higgs grid back about four times a second while a
 quench runs (`GPUPhysics.readHiggsField()`) and `measureHiggs()` measures it: the ordered
 fraction, the cells within v/2 of ±v (v = √ε), and the walls by the Kibble–Zurek oracle's
 count, sign changes between neighbouring cells per unit length of grid line, shown as wall
 length per area (π/2 times the count, Cauchy–Crofton for walls at every angle), as formed
 (the first readback that passes the oracle's ordering test: mean |φ| at least v/2 and 0.2)
-and now. The Stats tab's Quench section shows them, and the caption calls the field frozen
+and now. The Measure tab's Quench section shows them, and the caption calls the field frozen
 into domains only once at least half the plane is ordered and the walls are counted.
 
 **Under expansion** the grid is comoving (its cells grow with a, so the Laplacian is
@@ -788,7 +805,7 @@ per stage would land before the whole encoder ran (that bug left Φ ≡ 0 until
 
 ### The Fields overlay
 
-The View section's Fields toggle (with All, Gravity, Electric, Magnetic and Yukawa) draws the
+The Figure tab's Field layer (none, gravity, electric, magnetic, Yukawa or all) draws the
 heatmap grid (`heatmap.wgsl`, over the view, or the visible plane's box when tilted) the way
 a survey sheet or a physics text prints a field, keeping to the domain:
 
@@ -829,19 +846,52 @@ Worldline was the overhaul's pilot (`../../docs/sim-overhaul/PLAN.md`) and loads
 `shared/hud.css` nor `toolbar.js`. The page is a grid: the scene (a stage for the canvases
 over a hairline figure bar) and the margin. The shared colophon (`_colophon.mount`, with
 translated labels) carries play, step, theme and help; the figure bar carries the caption
-(`caption.js`: "Fig. 1.", the preset's name, then what it shows with its live values, or the
-view, the observer and the selected body, rebuilt a few times a second; tilted, the twin
-and Kibble–Zurek keep their own text, the twin's read off the beads, and the other presets
-give way to the plate's) and the
-Plane/Spacetime, Lab/Observer and Boost controls; the stage's top right has speed, language,
-the touch-only antimatter mode and the Controls toggle (at 600 px and below `ui.js` moves
-speed and language to the sheet's foot and antimatter into the figure bar, so the top keeps
-to one row). The margin holds the old sidebar's tabs on the same paper, ruled off by a
-hairline, with the gear menu's view toggles moved into Settings and Reset/Save/Load at its
-foot; on a narrow window it rises as a sheet. `styles.css` styles every control here
-(hairline switches that take a wash of the force's ink when on, sliders in the force's ink,
-ruled dropdowns), since `hud.css` no longer applies. `resize()` sizes the canvases to the
-stage (a ResizeObserver), so opening the margin narrows the scene.
+and the view's words and scale (plane · spacetime, lab · observer, the boost, shown while the
+observer is a moving one); the stage's top right has speed, language, the touch-only
+antimatter mode and the Controls toggle (at 600 px and below `ui.js` moves speed and
+language to the sheet's foot and antimatter into the figure bar, so the top keeps to one
+row). `resize()` sizes the canvases to the stage (a ResizeObserver), so opening the margin
+narrows the scene.
+
+**The caption** (`caption.js`) is "Fig. N.", N the figure's place in the list of figures
+("Fig." alone for a scene of the visitor's own), the figure's name, then what it shows with
+its live values, or the view, the observer and the selected body, rebuilt a few times a
+second; tilted, the twin and Kibble–Zurek keep their own text, the twin's read off the
+beads, and the other figures give way to the plate's. **Knobs** are the numbers a figure's
+caption states that a visitor changes (roadmap §6.5): a preset's `knobs` (`presets.js`) over
+a store key (the cyclotron's B and E, live) or of its own (`run.knobs`: the beam's speed,
+live; the twin's and the wheel's speeds and the lens's mass, `rerun`), or with a `commit`
+(the quench time re-runs the quench). A sentence marks a knob with a token (`_k()`), and
+the caption's writer keeps one `Knob` element (`controls.js`) per knob across rewrites,
+changing only the text nodes between them, so a drag survives the rebuilds. A knob drags
+sideways (240 px sweeps its range, Shift a tenth of that) or steps with the arrow keys
+(Shift tenfold), and the same knob is a scale under its figure's row.
+
+**The margin** is four tabs on the same paper, ruled off by a hairline, with Reset, Save and
+Load at its foot; on a narrow window it rises as a sheet.
+
+- **Figure**: the list of figures (keys 1–6), each with a small drawing in the plate's marks
+  (`plateGlyph`), the active one's knobs under its row; the Observer; the layers (the
+  Fields overlay's field, the arrows, the rulers and key).
+- **Laws**: Mechanics (Newton · relativity · 1PN over `relativityEnabled` and
+  `onePNEnabled`); the forces; the Backdrop while Gravity is on; radiation; the scalar fields.
+- **World**: the next body (its scales, and its glyph as a click will place it, `bodyGlyph`);
+  collisions and black holes; the edges as five identification diagrams (open, wall, torus,
+  Klein, RP², `edgeGlyph`, over `boundaryMode` and `topology`); the universe, static or
+  expanding, with its history; the applied fields, g and E as arrows dragged in a pad
+  (`bindPad`) and B_z as a scale.
+- **Measure**: energy, momentum and angular momentum, each drift with a sparkline of the run;
+  the selected body (its glyph, clock and speed, and the forces on it as bars in their inks
+  against the largest); its phase-space and effective-potential plots; the observer; the
+  expansion, the quench and the backdrop star's light curve when they run.
+
+Every control is drawn in the plate's notation (`styles.css`): a **choice** is words, the
+pressed one in the accent and underlined, as the site's tag filters are (`bindChoice`,
+single or `multi`); a **tick** is a label over a visually clipped checkbox whose hairline
+frame shows the law's mark from the key while it is in force (`fillMarks` fills each
+`[data-mark]`), dashed and faded while a law it needs is off; a **scale** is a range input
+drawn as a ruled line with ticks and a needle in its parameter's ink, on one row with its
+value. A law's formula is its info tip's trigger (hover; Shift+click opens the reference).
 
 The plate's furniture, all hidden with the rulers by G ("Rulers and key"):
 
@@ -851,17 +901,18 @@ The plate's furniture, all hidden with the rulers by G ("Rulers and key"):
   settings and the view: bodies by kind, the selection, world lines and their bead step,
   clocks, light (photons in the pool), the cone and events when tilted, the Fields layers, the
   scalar hatching, a uniform external field with its value, the lensed backdrop and its star.
-  Swatches are inline SVG with the scene's own marks in `var(--ink-*)`; the DOM is rebuilt
-  only when the rows change. `decorateMargin()` gives each Forces and Physics row the same
-  swatch for its force, so those sections read as the scene's legend; one ink per force,
-  margin and scene alike (1PN mulberry, Relativity and boson interaction graphite as modes).
+  Swatches are inline SVG with the scene's own marks in `var(--ink-*)` (`marks.js`); the DOM
+  is rebuilt only when the rows change. The margin's ticks show the same marks, so the Laws
+  tab reads as the scene's legend; one ink per force, margin and scene alike (1PN mulberry,
+  boson interaction mulberry, the modes graphite). The clock's row shows once a body is
+  drawn 5 px in radius.
 - **The scale bar** (`Overlay._drawScaleBar`): bottom left seen from above, a 1, 2 or 5 × 10^k
   length up to 120 px, "length, c = 1". Tilted, `_drawDimension` sets a dimension line along
   the box's front edge instead.
 
 One red: the accent marks only the selected body, its world line and cone, and the lens
 probe's star. Force arrows are px hairlines, the total in the text ink and components in
-their force's ink; velocity arrows are graphite; clock arcs take the body's ink.
+their force's ink; velocity arrows are graphite; a clock's swept arc takes the marks' ink.
 
 ### Rendering
 
@@ -886,7 +937,7 @@ inks, theme-paired: WGSL gets `INK_<NAME>_L`/`_D` constants (graphite is `textMu
 the force and torque tables are built per theme. `syncRendererTheme()` in `ui.js` sets both;
 `GPUBackend.create()` adopts `sim.overlay.isLight` after `renderer.init()` because it is
 created after the first sync. WGSL theme colors are light/dark constant pairs picked by
-the `isDarkMode` uniform. The sidebar plots redraw with every stats readback, so their
+the `isDarkMode` uniform. The Measure tab's plots redraw with every stats readback, so their
 canvas text needs no font-load redraw.
 
 ## Conventions
@@ -915,7 +966,9 @@ canvas text needs no font-load redraw.
   only cache key.
 - **New toggle or parameter.** Update `physics-contract.js` (`TOGGLE_KEYS`, or
   `PARAMETER_KEYS` and `GPU_PARAMETER_SLOTS`), the default in `physics-settings.js`,
-  `ui.js` (`toggleDefs` and deps, or `storeSliders`), and `GPUPhysics.setToggles()` with
+  `ui.js` (a tick in `TICKS` and its markup in `index.html`, with its prerequisite in
+  `LAWS`, or a scale in `storeScales`; a mark for its tick in `marks.js` if the scene draws
+  one), the strings in `i18n/strings.js` (en and ja), and `GPUPhysics.setToggles()` with
   its bit, then check that saves round-trip it. Presets and saves need nothing more:
   `applyConfig()` carries every store key.
 - **Saves.** `version: 2` holds the domain, particles with τ and θ, toggles,
@@ -951,9 +1004,11 @@ canvas text needs no font-load redraw.
   antimatter with right-click. Click resolution is `InputHandler._resolveClickHit()`:
   a click of the particle's own kind selects, the other kind deletes; black-hole mode
   never spawns antimatter.
-- **CSS.** The shared `.mode-toggles` sets `display: flex`, which beats the `hidden`
-  attribute, so those rows are shown and hidden with `style.display`. `base.css` does the
-  same for `.panel-section`; `styles.css` restores `.panel-section[hidden]`.
+- **CSS.** `styles.css` makes `[hidden]` win over every display rule (`base.css` gives
+  `.panel-section` and others a display), so the margin's rows and sections are shown and
+  hidden with the `hidden` attribute alone, never `style.display`. A mark's own svg may
+  overflow its frame, but only the direct child: a hatch's nested svg must keep clipping
+  to its box (`> svg` in the selectors).
 - **URLs.** Worldline's own files load by relative URL (`styles.css`, `colors.js`, `main.js`,
   the shaders), which resolves only under `/worldline/` with its trailing slash.
 - **Storage keys keep earlier names.** Worldline was Geon until 2026-10-23

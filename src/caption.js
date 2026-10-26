@@ -1,16 +1,24 @@
 // ─── The figure caption ───
 // One live italic line under the scene saying what you are looking at, with its current
-// values: "Fig. 1.", the preset and what it shows now (its own numbers, read from the scene
-// snapshot, the stats and the GPU state), or the view, the observer's frame, the selected
-// body. Rebuilt a few times a second (shared/colophon.js caption() writes only on change).
+// values: "Fig. 3.", the figure's number in the list of figures, its name and what it shows
+// now (its own numbers, read from the scene snapshot, the stats and the GPU state), or the
+// view, the observer's frame, the selected body. Rebuilt a few times a second, and written
+// only on change. The figure's knobs (presets.js) are numbers in its sentences you drag
+// (controls.js Knob): a sentence marks one with a token, and the writer keeps each knob's
+// element across rewrites, changing only the text around it, so a drag survives them.
 import { getLang } from './i18n.js';
+import { PRESET_ORDER } from './presets.js';
+import { Knob } from './controls.js';
+
+// A knob's place in a sentence: \u0001key\u0002
+const TOKEN = /\u0001(\w+)\u0002/;
 
 const fmt = (x, d = 2) => (Math.abs(x) >= 1000 ? Math.round(x).toLocaleString('en-US') : x.toFixed(d));
 const speedOf = (b) => { const w2 = b.wx * b.wx + b.wy * b.wy; return { v: Math.sqrt(w2 / (1 + w2)), g: Math.sqrt(1 + w2) }; };
 
 const TEXT = {
     en: {
-        fig: 'Fig. 1.',
+        fig: (n) => (n ? `Fig. ${n}.` : 'Fig.'),
         paused: 'Paused. ',
         empty: (touch) => `An empty plane. ${touch ? 'Tap' : 'Click'} to place a body, and drag to throw it.`,
         plane: (n, touch) => `Seen from above, the present holds ${n} ${n === 1 ? 'body' : 'bodies'}, each trail the shadow of a world line. ${touch ? 'Spacetime' : 'Alt-drag, W or Spacetime'} tilts the plane into time.`,
@@ -22,14 +30,14 @@ const TEXT = {
         twinBounce: (v, g, tt, th, d) => `The traveller flies at ${v}c (γ = ${g}) to the far wall and back. Its clock reads ${tt} to home’s ${th}, ${d} younger: a moving clock runs at 1/γ of the rate.`,
         twinSpacetime: (v, g, tt, th, d, B) => `Home’s world line climbs straight up, and the traveller’s leans out to the far wall at ${v}c (γ = ${g}) and back to meet it. Both are beaded every ${B} of their own time, the traveller’s more sparsely: its clock reads ${tt} to home’s ${th}, ${d} younger.`,
         wheel: (v, g, tm, tr) => `The same wheel twice, its rim at 0.9c: at rest, and crossing at ${v}c (γ = ${g}), contracted by 1/γ, its spoke bent because each of its points shows a different moment of the wheel’s own time, and its clock at ${tm} to the other’s ${tr}.`,
-        bremsstrahlung: (E) => `Electrons at 0.95c swing past a nucleus of charge 6, and each, bent, sheds light in packets beamed along its path: ${E} radiated so far.`,
+        bremsstrahlung: (v, E) => `Electrons at ${v}c swing past a nucleus of charge 6, and each, bent, sheds light in packets beamed along its path: ${E} radiated so far.`,
         kzBefore: (T, tau) => `The Higgs field sits at φ = 0 in a warm bath while its mass term ramps toward the transition, ${T} from now with a quench time of ${tau}; then each patch falls to +v or −v on its own.`,
         kzOrdering: (T, pct) => `${T} past the transition, φ = 0 is unstable and each patch falls toward +v or −v on its own: ${pct}% of the plane has ordered so far.`,
         kzAfter: (T, pct, n0, n, tau) => `${T} past the transition, ${pct}% of the plane has frozen into domains of +v and −v, with ${n0} of wall per unit area as they formed and ${n} now. The walls straighten and shrink; a quench slower than ${tau} would have formed fewer.`,
         microlensing: (M, thE, beta, mu) => `A mass of ${M} drifts in front of a backdrop star, ${beta} Einstein radii (${thE}) off the line of sight; the star splits in two images${mu ? ` that brighten it ${mu}×` : ''}, along Paczyński’s light curve.`,
     },
     ja: {
-        fig: '図1',
+        fig: (n) => (n ? `図${n}` : '図'),
         paused: '一時停止中。',
         empty: (touch) => `空の平面。${touch ? 'タップ' : 'クリック'}で物体を置き、ドラッグで投げる。`,
         plane: (n, touch) => `上から見た現在に物体が${n}個。軌跡はそれぞれ世界線の影。${touch ? '「時空」' : 'Alt+ドラッグ、W、または「時空」'}で平面を時間の方へ傾ける。`,
@@ -40,7 +48,7 @@ const TEXT = {
         twinBounce: (v, g, tt, th, d) => `旅する双子は${v}c（γ = ${g}）で遠い壁まで行って戻る。その時計は${tt}、家の時計は${th}で、${d}だけ若い。動く時計は1/γの速さで進む。`,
         twinSpacetime: (v, g, tt, th, d, B) => `家の双子の世界線はまっすぐ上へ昇り、旅する双子の世界線は${v}c（γ = ${g}）で遠い壁へ傾いて出て、戻ってそれと出会う。どちらも固有時${B}ごとに珠を打ち、旅する側の珠のほうがまばら。その時計は${tt}、家の時計は${th}で、${d}だけ若い。`,
         wheel: (v, g, tm, tr) => `縁が0.9cで回る同じ車輪が二つ。一つは静止し、一つは${v}c（γ = ${g}）で進む。動く車輪は1/γに縮み、スポークは曲がり（各点が車輪の固有時の別の瞬間を示す）、時計は${tm}、静止した方は${tr}。`,
-        bremsstrahlung: (E) => `0.95cの電子が電荷6の原子核のそばを次々に通り、曲げられるたびに進行方向へ集中した光の波束を放つ。これまでに放射したエネルギーは${E}。`,
+        bremsstrahlung: (v, E) => `${v}cの電子が電荷6の原子核のそばを次々に通り、曲げられるたびに進行方向へ集中した光の波束を放つ。これまでに放射したエネルギーは${E}。`,
         kzBefore: (T, tau) => `ヒッグス場は温浴の中でφ = 0にとどまり、質量項がクエンチ時間${tau}で転移へ向かって変わっていく。転移まであと${T}。その後、各領域が独立に+vか−vへ落ちる。`,
         kzOrdering: (T, pct) => `転移から${T}。φ = 0は不安定になり、各領域が独立に+vか−vへ落ちていく。これまでに秩序化したのは平面の${pct}%。`,
         kzAfter: (T, pct, n0, n, tau) => `転移から${T}。平面の${pct}%が+vと−vの領域に凍りついた。単位面積あたりの壁の長さは形成時に${n0}、今は${n}で、壁はまっすぐになりながら縮む。クエンチ時間が${tau}より長ければ、できる壁はもっと少なかった。`,
@@ -52,14 +60,72 @@ export default class Caption {
     constructor(sim) {
         this.sim = sim;
         this.titleEl = document.getElementById('caption-title');
-        this.set = _colophon.caption(document.getElementById('caption-text'), 250);
+        this.el = document.getElementById('caption-text');
         this._force = true;
         this._touch = window.matchMedia('(pointer: coarse)').matches;
-        this._preset = document.getElementById('preset-select');
+        this._at = -Infinity;
+        this._text = null;
+        this._sig = null;
+        this._nodes = null;
+        this._knobs = new Map();
     }
 
     /** Rewrite on the next update, without waiting out the throttle. */
     refresh() { this._force = true; }
+
+    /** New knobs for a new figure (ui.js sim.knobs): one Knob element each, reused by every rewrite. */
+    rebuildKnobs() {
+        this._knobs = new Map(this.sim.knobs.map((k) => [k.key, new Knob({
+            label: k.label, min: k.def.min, max: k.def.max, step: k.def.step, log: k.def.log, fmt: k.def.fmt,
+            get: k.get, input: k.input, commit: k.commit,
+        })]));
+        this._sig = null;
+        this._force = true;
+    }
+
+    /** Show the knobs' values (a scale or the store changed them). */
+    syncKnobs() {
+        for (const k of this._knobs.values()) k.sync();
+        this._force = true;
+    }
+
+    /** A knob's token, or its value as text when the figure has no such knob. */
+    _k(key, fallback) { return this._knobs.has(key) ? `\u0001${key}\u0002` : fallback; }
+
+    /** Write the caption, at most every 250 ms unless forced: text nodes between kept knobs. */
+    _write(text, force) {
+        const now = performance.now();
+        if (!force && now - this._at < 250) return;
+        this._at = now;
+        if (text === this._text) return;
+        this._text = text;
+        const parts = text.split(TOKEN);
+        const keys = parts.filter((_, i) => i % 2);
+        const sig = keys.join('|');
+        if (sig === this._sig && this._nodes) {
+            for (let i = 0; i < parts.length; i += 2) {
+                const n = this._nodes[i / 2];
+                if (n.data !== parts[i]) n.data = parts[i];
+            }
+            for (const k of keys) this._knobs.get(k)?.sync();
+            return;
+        }
+        this._sig = sig;
+        this._nodes = [];
+        const children = [];
+        parts.forEach((p, i) => {
+            if (i % 2 === 0) {
+                const n = document.createTextNode(p);
+                this._nodes.push(n);
+                children.push(n);
+            } else {
+                const k = this._knobs.get(p);
+                k.sync();
+                children.push(k.el);
+            }
+        });
+        this.el.replaceChildren(...children);
+    }
 
     /** The bead step of the spacetime view: a power of 2 near a 14th of its depth (scene-key.js too). */
     _beadStep() { return 2 ** Math.round(Math.log2(this.sim.spacetime.depth() / 14)); }
@@ -77,31 +143,32 @@ export default class Caption {
             case 'cyclotron': {
                 if (tilted) return '';
                 const B = Math.abs(ph.extBz), E = Math.abs(ph.extElectric);
-                return B > 0 && E < B ? L.cyclotron(fmt(B), fmt(E), fmt(E / B)) : '';
+                return B > 0 && E < B ? L.cyclotron(this._k('B', fmt(B)), this._k('E', fmt(E)), fmt(E / B)) : '';
             }
             case 'twinBounce': {
                 const home = body(0), trav = body(1);
                 if (!home || !trav) return '';
                 const { v, g } = speedOf(trav);
                 const clocks = [fmt(trav.tau, 1), fmt(home.tau, 1), fmt(Math.max(0, home.tau - trav.tau), 1)];
-                return tilted ? L.twinSpacetime(fmt(v), fmt(g), ...clocks, this._beadStep()) : L.twinBounce(fmt(v), fmt(g), ...clocks);
+                const vv = this._k('v', fmt(v));
+                return tilted ? L.twinSpacetime(vv, fmt(g), ...clocks, this._beadStep()) : L.twinBounce(vv, fmt(g), ...clocks);
             }
             case 'wheel': {
                 if (tilted) return '';
                 const rest = body(0), moving = body(1);
                 if (!rest || !moving) return '';
                 const { v, g } = speedOf(moving);
-                return L.wheel(fmt(v), fmt(g), fmt(moving.tau, 1), fmt(rest.tau, 1));
+                return L.wheel(this._k('v', fmt(v)), fmt(g), fmt(moving.tau, 1), fmt(rest.tau, 1));
             }
             case 'bremsstrahlung':
-                return tilted ? '' : L.bremsstrahlung(fmt(sim.stats.radiated || 0));
+                return tilted ? '' : L.bremsstrahlung(this._k('v', '0.95'), fmt(sim.stats.radiated || 0));
             case 'kibbleZurek': {
                 // Before the transition, the time to it; after, what the field measures
                 // (quench.js): frozen into domains once most of the plane is near ±v and the
                 // walls have been counted, as the Kibble–Zurek oracle counts them
                 const q = gp && gp._higgsQuench;
                 if (!q || !ph.higgsEnabled) return '';
-                const left = q.tau - (gp.simTime - q.t0), tau = fmt(q.tau, 0);
+                const left = q.tau - (gp.simTime - q.t0), tau = this._k('tau', fmt(q.tau, 0));
                 if (left > 0) return L.kzBefore(fmt(left, 0), tau);
                 const m = sim.quench && sim.quench.summary;
                 const pct = m ? Math.round(100 * m.ordered) : 0;
@@ -117,7 +184,7 @@ export default class Caption {
                 const beta = Math.hypot(wrap(lens.x - star.x, sim.domainW), wrap(lens.y - star.y, sim.domainH)) / thE;
                 const hits = gp && gp.lensHits;
                 const mu = hits && hits.generation === sim.lens.gen && hits.magnification > 0 ? fmt(hits.magnification) : '';
-                return L.microlensing(fmt(lens.m, 0), fmt(thE, 1), fmt(beta), mu);
+                return L.microlensing(this._k('M', fmt(lens.m, 0)), fmt(thE, 1), fmt(beta), mu);
             }
         }
         return '';
@@ -126,10 +193,11 @@ export default class Caption {
     update() {
         const sim = this.sim;
         const L = TEXT[getLang()] || TEXT.en;
-        if (this.titleEl.textContent !== L.fig) this.titleEl.textContent = L.fig;
-        const key = this._preset.value;
-        const opt = this._preset.selectedOptions[0];
-        const name = key !== 'none' && opt ? opt.textContent.trim() + (getLang() === 'ja' ? '。' : '. ') : '';
+        const key = sim.figure || 'none';
+        const fig = L.fig(PRESET_ORDER.indexOf(key) + 1);
+        if (this.titleEl.textContent !== fig) this.titleEl.textContent = fig;
+        const title = key !== 'none' && window._i18n ? window._i18n.t('preset.' + key + '.name', '') : '';
+        const name = title ? title + (getLang() === 'ja' ? '。' : '. ') : '';
 
         const n = sim.gpu ? sim.gpu.physics.aliveCount : 0;
         // A preset of fields alone (Kibble–Zurek) is not an empty plane
@@ -161,7 +229,7 @@ export default class Caption {
         }
         const sel = sim.selectedIdx >= 0 ? sim.stats.selected : null;
         if (sel) text += L.selected(fmt(sel.speed), fmt(sel.tau, 1));
-        this.set(text, this._force);
+        this._write(text, this._force);
         this._force = false;
     }
 }

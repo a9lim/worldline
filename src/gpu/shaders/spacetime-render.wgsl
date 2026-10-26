@@ -51,7 +51,7 @@ struct CameraUniforms {
     isDarkMode: f32,
     relativityOn: f32,
     blackHoleOn: f32,
-    showClocks: f32,
+    _unused: f32,      // once the Clocks overlay; every body's outline is its clock now
     frameOn: f32,
     frameImages: f32,
     dpr: f32,           // device px per CSS px (the uniform sizes are CSS px)

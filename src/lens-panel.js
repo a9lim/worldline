@@ -1,9 +1,10 @@
 // ─── Backdrop panel ───
-// The Frame tab's lensing controls: the grid as a lensed backdrop (lens-deflection.wgsl), its
-// projected distance 𝒟 = D_L·D_LS/D_S on a log slider (lab units, so R_E = √(4M𝒟)), and the
-// microlensing probe: a backdrop star, placed where the view's centre was, whose
-// magnification is plotted as a light curve. sim.lens.gen counts changes, so a probe
-// readback from before one is dropped.
+// The rulers are a backdrop seen through the bodies' masses as a thin lens
+// (lens-deflection.wgsl) whenever Gravity is on (ui.js sets sim.lens.on with it). The Laws
+// tab's Backdrop sets its projected distance 𝒟 = D_L·D_LS/D_S on a log scale (lab units, so
+// R_E = √(4M𝒟)) and places the microlensing probe: a backdrop star, where the view's centre
+// was, whose magnification the Measure tab plots as a light curve. sim.lens.gen counts
+// changes, so a probe readback from before one is dropped.
 const _PAL = window._PALETTE;
 const CURVE_LEN = 400;
 
@@ -12,19 +13,15 @@ export default class LensPanel {
         this.sim = sim;
         const $ = (id) => document.getElementById(id);
         this.el = {
-            distanceGroup: $('lens-distance-group'),
-            probeGroup: $('lens-probe-group'),
             curveGroup: $('lens-curve-group'),
             mu: $('lens-mu'),
             canvas: $('lens-curve'),
-            toggle: $('lensToggle'),
             probe: $('lensProbeToggle'),
             distance: $('lensDistanceInput'),
         };
         this.ctx = this.el.canvas.getContext('2d');
         this.curve = [];
         this._lastSeq = null;
-        _forms.bindToggle(this.el.toggle, v => this.setLensing(v));
         _forms.bindToggle(this.el.probe, v => this.setProbe(v));
         this.el.distanceValue = $('lensDistanceValue');
         _forms.bindSlider(this.el.distance, this.el.distanceValue, v => {
@@ -36,17 +33,9 @@ export default class LensPanel {
 
     static fmtDistance(v) { return (10 ** v).toPrecision(2); }
 
-    setLensing(on) {
-        this.sim.lens.on = on;
-        this.sync();
-    }
-
-    /** Show sim.lens (on, distance) in the controls, without their handlers; off drops the probe. */
+    /** Show sim.lens's distance in its scale, without its handler. */
     sync() {
-        const lens = this.sim.lens, el = this.el, on = lens.on;
-        if (el.toggle.checked !== on) el.toggle.checked = on;
-        el.distanceGroup.style.display = on ? '' : 'none';
-        el.probeGroup.style.display = on ? '' : 'none';
+        const lens = this.sim.lens, el = this.el;
         const v = Math.log10(lens.distance);
         if (+el.distance.value !== v) {
             el.distance.value = v;
@@ -55,14 +44,12 @@ export default class LensPanel {
             el.distanceValue.textContent = LensPanel.fmtDistance(+el.distance.value);
             this._restartCurve();
         }
-        if (!on) this.setProbe(false);
         this.sim._dirty = true;
     }
 
     /** The star goes where the view's centre is now, a radius of 1/40 of the view. */
     setProbe(on, star = null) {
         const sim = this.sim;
-        if (on && !sim.lens.on) this.setLensing(true);
         if (this.el.probe.checked !== on) this.el.probe.checked = on;
         if (on) {
             const cam = sim.camera;
@@ -71,7 +58,7 @@ export default class LensPanel {
             sim.lens.star = null;
         }
         this._restartCurve();
-        this.el.curveGroup.style.display = on ? '' : 'none';
+        this.el.curveGroup.hidden = !on;
         sim._dirty = true;
     }
 
@@ -141,8 +128,4 @@ export default class LensPanel {
         ctx.fillText('μ', pad, pad - 2);
     }
 
-    /** Back to no lensing (Clear and presets). */
-    reset() {
-        this.setLensing(false);
-    }
 }

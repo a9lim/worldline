@@ -17,7 +17,7 @@ import LensPanel from './src/lens-panel.js';
 import SpacetimeView, { EL_SPACETIME, AZ_SPACETIME } from './src/spacetime.js';
 import Caption from './src/caption.js';
 import QuenchPanel from './src/quench.js';
-import SceneKey, { decorateMargin } from './src/scene-key.js';
+import SceneKey from './src/scene-key.js';
 import GPUProfiler, { PERF } from './src/gpu/gpu-profiler.js';
 
 /**
@@ -96,10 +96,10 @@ class Simulation {
 
         this.settings = createPhysicsSettings();
         this.overlay = new Overlay(this.canvas);
-        this.view = { trails: true, showClocks: false, showVelocity: false, showForce: false, showForceComponents: false, grid: true };
+        this.view = { showVelocity: false, showForce: false, showForceComponents: false, grid: true };
         this.heatmap = { enabled: false, mode: 'all' };
         this.atlas = new FieldAtlas(this);   // the Fields overlay's contours and field lines
-        // The grid as a lensed backdrop (lens-panel.js): on, distance D, the probe's star
+        // The rulers as a lensed backdrop (lens-panel.js): on with Gravity, distance D, the probe's star
         this.lens = { on: false, distance: 1, star: null, gen: 0 };
         // The domain is simulation state; the window is only a camera onto it
         this.domainW = DEFAULT_DOMAIN;
@@ -265,11 +265,9 @@ class Simulation {
      * by then. With reduced motion it opens tilted and still, on a history run up front.
      */
     _openScene() {
-        const select = document.getElementById('preset-select');
-        if (select.value !== 'none' || this.gpu.physics.aliveCount > 0) return;
+        if (this.figure !== 'none' || this.gpu.physics.aliveCount > 0) return;
         this._openingScene = true;
-        select.value = 'cyclotron';
-        select.dispatchEvent(new Event('change'));
+        this.loadFigure('cyclotron');
         this._openingScene = false;
         if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
             for (let i = 0; i < 240; i++) {
@@ -357,7 +355,7 @@ class Simulation {
         this.quench = new QuenchPanel(this);
         this.caption = new Caption(this);
         this.sceneKey = new SceneKey(this);
-        decorateMargin();
+        this.syncControls();
 
         // Re-apply DOM translations after UI setup in case any modules
         // mutated text content during their wiring (e.g. mode-btn label).
@@ -563,6 +561,7 @@ class Simulation {
         }
         this.selectedIdx = idx;
         if (idx < 0) this.stats.updateSelectedGPU(null, this.settings);
+        this.framePanel?.syncAvailable();
         this._statsDirty = true;
         this._dirty = true;
     }

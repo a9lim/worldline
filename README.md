@@ -1,9 +1,9 @@
 # Worldline
 
 Worldline is a browser sandbox for relativistic many-body physics. You spawn charged,
-spinning particles, switch forces and corrections on and off, and watch orbits precess,
-charges radiate, black holes evaporate, and scalar fields ripple, with live conservation
-readouts to check the numbers.
+spinning particles, choose the laws they obey, and watch orbits precess, charges radiate,
+black holes evaporate, and scalar fields ripple, then tilt the plane into spacetime to
+see the world lines they trace, with live conservation readouts to check the numbers.
 
 **[Open it](https://a9l.im/worldline)** · part of [a9l.im](https://a9l.im)
 
@@ -16,8 +16,8 @@ substepping advances them.
 - **Forces.** Newtonian gravity, Coulomb, magnetic dipole and Lorentz forces,
   gravitomagnetism (frame dragging), tidal locking, Yukawa (a screened nuclear force
   with a massive pion mediator), spin-curvature coupling, and uniform external
-  gravitational, electric, and magnetic fields. Forces can be summed pairwise or with a
-  Barnes–Hut tree.
+  gravitational, electric, and magnetic fields. Large Newtonian scenes are summed with a
+  Barnes–Hut tree, chosen automatically.
 - **Relativity.** Signal delay: forces come from where sources were when their signal
   left, read off each body's recorded world line. Charges interact through their exact
   Liénard–Wiechert fields; gravity and the other forces use their static laws at the
@@ -25,12 +25,12 @@ substepping advances them.
   propagation. First post-Newtonian corrections (Einstein–Infeld–Hoffmann for gravity,
   Bažański cross terms, scalar Breit for Yukawa) give the relativistic perihelion
   advance.
-- **Frames.** The view can be redrawn for the zero-momentum frame, the selected
-  particle's rest frame, a custom boost, or a rotating frame, by slicing every body's
-  recorded world line on the observer's surface of simultaneity. A background grid of
-  lab rulers contracts with the observer, and a spacetime diagram shows nearby world
-  lines with the light cone. Two twin-paradox presets, one on a torus, where the lab is
-  a preferred frame.
+- **Spacetime and frames.** The plane tilts into spacetime, where every body's world
+  line climbs to the present, beaded by its proper time, with the selected body's past
+  light cone below it. The view can be redrawn for a moving observer, the zero-momentum
+  frame, the selected body's rest frame, a rotating frame, or free fall, by slicing
+  every recorded world line on the observer's surface of simultaneity; the lab's rulers
+  contract with the observer.
 - **Black holes.** Kerr–Newman horizons set by mass, spin, and charge (super-extremal
   inputs are clamped to an effective radius), a Paczyński–Wiita gravity well that
   swallows bodies crossing the horizon, ergosphere rendering, Hawking evaporation,
@@ -52,39 +52,37 @@ substepping advances them.
 - **Proper time.** Every body carries a clock, slowed by speed and by gravity, and
   pion decay, Hawking evaporation, Schwinger discharge, superradiance, and mass
   transfer run on it: a fast pion beam lives longer in the lab, and a moving black hole
-  takes longer to evaporate. The Clocks overlay shows each body's proper time as a
-  ring that fills once per period.
+  takes longer to evaporate. Every body's outline is its clock, swept heavier once per
+  16 units of its proper time.
 - **The spoke.** Each body is drawn through the Lorentz transformation of its motion,
   with one spoke marking its orientation: moving bodies contract, a spinning, moving
   wheel's spoke bends (relativity of simultaneity), and the spoke precesses on orbits
   (Thomas, geodetic, and Lense–Thirring precession).
 - **Charge quantization.** Every charge is a multiple of 0.1, and emission, absorption,
   decay, and discharge move charge in whole units.
-- **Space.** Despawn, bounce, or periodic boundaries; periodic space can be a torus, a
-  Klein bottle, or the real projective plane.
-- **Lensing.** The grid can become a backdrop seen through the bodies as a thin
-  gravitational lens, with Einstein rings, and a backdrop star whose magnification
+- **Space.** Open edges, walls, or the plane glued into a torus, a Klein bottle, or the
+  real projective plane, each chosen by its identification diagram.
+- **Lensing.** With gravity on, the rulers are a backdrop seen through the bodies as a
+  thin gravitational lens, with Einstein rings, and a backdrop star whose magnification
   traces a microlensing light curve.
 - **Cosmology.** With expansion on, the periodic domain is a slice of an expanding FRW
   universe: an imposed history or one set by the contents through the Friedmann
   equation, redshift, Hubble friction on the fields, the Hubble radius and event
   horizon, and an energy ledger for what the expansion takes. Presets for axion
   misalignment and Kibble–Zurek domain walls.
-- **Analysis.** Energy, momentum, and angular-momentum totals with drift percentages; a
-  per-force breakdown for the selected particle; a potential heatmap (gravity,
-  electric, Yukawa, or all); and a phase-space plot and an effective-potential curve
-  for the selected particle against the heaviest other body.
-- **Presets.** Twenty-four scenarios, from Kepler orbits and binary inspiral through
-  Hawking evaporation, a relativistic wheel, Thomas and geodetic precession, the twin
-  paradox on a line and on a torus, atoms,
-  nuclei, and pion exchange to the Higgs boson, axion bursts, an expanding universe,
-  axion misalignment, Kibble–Zurek walls, and microlensing.
+- **Analysis.** Energy, momentum, and angular-momentum totals with their drift over the
+  run; the selected body's clock, speed and the forces on it; the fields drawn as a
+  textbook figure prints them (contours, field lines, ⊙ and ⊗); and a phase-space plot
+  and an effective-potential curve for the selected body against the heaviest other.
+- **Figures.** Six curated figures: cyclotron drift, the twin paradox, a relativistic
+  wheel, bremsstrahlung, Kibble–Zurek walls, and microlensing. Each caption says what
+  the figure shows with its live values, and its dotted numbers are knobs you drag.
 - **Save and load.** Quick save to the browser, or download and upload the state as
-  JSON (domain, particles with their clocks, toggles, settings, and camera). Each
-  preset sets its own domain size; the window is a camera onto it.
-- **Reference.** The `?` buttons beside controls open short explanations;
-  Shift+click opens a longer reference page with the equations. The interface is in
-  English and Japanese.
+  JSON (domain, particles with their clocks, laws, settings, and camera). Each
+  figure sets its own domain size; the window is a camera onto it.
+- **Reference.** Hovering a law's formula, or a section's `?`, opens a short
+  explanation; Shift+click opens a longer reference page with the equations. The
+  interface is in English and Japanese.
 
 ## Controls
 
@@ -94,11 +92,11 @@ substepping advances them.
   middle-drag to pan, hover for a readout.
 - **Touch.** Tap to spawn, drag to launch, pinch with two fingers to zoom and pan. The
   antimatter button switches taps to antimatter.
-- **Keyboard.** Space pauses, `/` steps, `R` resets, `,` and `.` change speed, `1`–`9`
-  load presets, `X` toggles antimatter mode, `K` the clocks, `T` the theme, `S` the
-  sidebar. `Ctrl+S` /
-  `Ctrl+L` quick save and load. `B` cycles frames, `L` returns to the lab, and `G`
-  toggles the grid. `?` opens the about panel with the full list.
+- **Keyboard.** Space pauses, `/` steps, `R` resets, `,` and `.` change speed, `1`–`6`
+  load the figures, `X` toggles antimatter mode, `T` the theme, `S` the margin, `W`
+  tilts into spacetime. `Ctrl+S` / `Ctrl+L` quick save and load. `B` cycles observers,
+  `L` returns to the lab, `O` switches coordinates, and `G` the rulers and key. `?`
+  opens the about panel with the full list.
 
 ## Running locally
 
@@ -115,8 +113,8 @@ results in the browser.
 ## How it's built
 
 Vanilla JavaScript modules on WebGPU. The physics runs as WGSL compute shaders (up to
-512 particles, with a lock-free GPU tree and 128 × 128 field grids) and draws with
-instanced rendering. Shared controls, theme, and typography come from the parent site,
+4096 bodies, with trees built from sorted Morton codes and 128 × 128 field grids) and
+draws with instanced rendering. Shared controls, theme, and typography come from the parent site,
 and KaTeX renders the reference pages. [AGENTS.md](AGENTS.md) maps the code.
 
 ## License

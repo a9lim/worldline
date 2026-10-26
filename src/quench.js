@@ -4,7 +4,7 @@
 // transition τ_Q later (GPUPhysics.setHiggsQuench); the Higgs section's Quench time slider
 // re-runs it. QuenchPanel reads the field back a few times a second while a quench runs and
 // measures it (measureHiggs): the ordered fraction, which the caption follows, and the wall
-// density, which the Stats tab's Quench section and the caption show.
+// density, which the Measure tab's Quench section and the caption show.
 import { GPU_SCALAR_GRID } from './config.js';
 
 const QUENCH_NOISE = 1e-4;   // the bath's temperature on the Higgs damping
@@ -58,7 +58,7 @@ export default class QuenchPanel {
         this.sim = sim;
         const $ = (id) => document.getElementById(id);
         this.el = {
-            group: $('quench-group'), section: $('quench-section'),
+            section: $('quench-section'),
             eps: $('quench-eps'), ordered: $('quench-ordered'), formed: $('quench-formed'), walls: $('quench-walls'),
         };
         // The latest measurement, with `formed`, the walls when the field first settled (the
@@ -97,10 +97,9 @@ export default class QuenchPanel {
         }).catch(() => {}).finally(() => { this._pending = false; });
     }
 
-    /** The Quench time slider while a quench runs, and the Stats tab's readouts. */
+    /** The Measure tab's readouts while a quench runs (its time is Kibble–Zurek's knob). */
     _show() {
         const el = this.el, s = this.summary, on = !!this._q;
-        el.group.style.display = on ? '' : 'none';
         if (el.section.hidden === on) el.section.hidden = !on;
         if (!on) return;
         const fmtW = (w) => w.toPrecision(2);

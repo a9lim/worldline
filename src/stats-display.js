@@ -1,4 +1,11 @@
+// ─── The Measure tab's readouts ───
+// The ledger (energy, momentum and angular momentum, each with its drift over the run as a
+// sparkline) and the selected body: its glyph, its clock and speed, and the forces on it as
+// bars in their inks against the largest.
 import { DISPLAY_SCALE, EPSILON } from './config.js';
+import { bodyGlyph, sparkline } from './marks.js';
+
+const SPARK_LEN = 120;   // readbacks a sparkline remembers
 const fmt = (v) => { v *= DISPLAY_SCALE; return Math.abs(v) > 999 ? v.toExponential(2) : v.toFixed(2); };
 const fmtRaw = (v) => Math.abs(v) > 999 ? v.toExponential(2) : v.toFixed(2);
 const fmtDrift = (v) => (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
@@ -12,6 +19,13 @@ export default class StatsDisplay {
         this.initialEnergy = null;
         this.initialMomentum = null;
         this.initialAngMom = null;
+        this._sparks = [
+            { el: document.getElementById('spark-energy'), values: [] },
+            { el: document.getElementById('spark-momentum'), values: [] },
+            { el: document.getElementById('spark-angmom'), values: [] },
+        ];
+        this._selGlyph = document.getElementById('sel-glyph');
+        this._glyphSig = '';
         // R14: Pre-allocate force descriptor array (avoids 11 object allocations per updateSelected)
         this._forceDescs = selDom ? [
             { row: selDom.fbGravity, val: selDom.fbGravityVal, vec: null },
@@ -32,6 +46,18 @@ export default class StatsDisplay {
         this.initialEnergy = null;
         this.initialMomentum = null;
         this.initialAngMom = null;
+        for (const sp of this._sparks) { sp.values.length = 0; if (sp.el) sp.el.innerHTML = ''; }
+    }
+
+    /** Each drift's sparkline, from the baseline on. */
+    _spark(drifts) {
+        drifts.forEach((d, i) => {
+            const sp = this._sparks[i];
+            if (!sp.el) return;
+            sp.values.push(d);
+            if (sp.values.length > SPARK_LEN) sp.values.shift();
+            sparkline(sp.el, sp.values);
+        });
     }
 
     /**
@@ -91,9 +117,7 @@ export default class StatsDisplay {
         _set(this.dom.fieldE, fmt(allFieldE));
         _set(this.dom.radiatedE, fmt(radiated));
         const showWork = L.expansionWork !== 0;
-        // .stat-row's display beats the hidden attribute
-        const workDisplay = showWork ? '' : 'none';
-        if (this.dom.expansionWorkRow.style.display !== workDisplay) this.dom.expansionWorkRow.style.display = workDisplay;
+        if (this.dom.expansionWorkRow.hidden === showWork) this.dom.expansionWorkRow.hidden = !showWork;
         if (showWork) _set(this.dom.expansionWork, fmt(L.expansionWork));
         _set(this.dom.momentum, fmt(pMag));
         _set(this.dom.particleMom, fmt(Math.sqrt(e.px * e.px + e.py * e.py)));
@@ -104,6 +128,7 @@ export default class StatsDisplay {
         _set(this.dom.orbitalAngMom, fmt(e.orbitalAngMom));
         _set(this.dom.spinAngMom, fmt(e.spinAngMom));
         _set(this.dom.angMomDrift, fmtDrift(aDrift));
+        if (this.initialEnergy !== null) this._spark([eDrift, pDrift, aDrift]);
     }
 
     /**
@@ -135,6 +160,11 @@ export default class StatsDisplay {
         const forceMag = Math.sqrt(totalFx * totalFx + totalFy * totalFy);
 
         _set(dom.mass, fmtRaw(sel.mass) + (sel.antimatter ? ' (anti)' : ''));
+        // The body as the scene draws it, redrawn when its look changes
+        const rim = sel.angVel * sel.radius;
+        const look = { m: sel.mass, q: sel.charge, s: rim, anti: !!sel.antimatter, hole: !!settings.blackHoleEnabled, selected: true };
+        const sig = [Math.round(sel.mass * 20), Math.sign(Math.round(sel.charge * 20)), Math.round(rim * 20), look.anti, look.hole].join();
+        if (sig !== this._glyphSig && this._selGlyph) { this._glyphSig = sig; bodyGlyph(this._selGlyph, look, 7); }
         _set(dom.charge, fmtRaw(sel.charge));
         const surfaceV = sel.angVel * sel.radius;
         _set(dom.spin, surfaceV.toFixed(4) + 'c');
@@ -158,12 +188,20 @@ export default class StatsDisplay {
         forces[8].vec = sel.forceExternal;
         forces[9].vec = sel.forceHiggs;
         forces[10].vec = sel.forceAxion;
+        // Each force's bar, against the largest
+        let most = EPSILON;
+        for (const f of forces) {
+            f.mag = Math.sqrt(f.vec.x * f.vec.x + f.vec.y * f.vec.y);
+            if (f.mag > most) most = f.mag;
+        }
         for (const f of forces) {
             if (!f.row) continue;
-            const mag = Math.sqrt(f.vec.x * f.vec.x + f.vec.y * f.vec.y);
-            if (mag > EPSILON) {
+            if (f.mag > EPSILON) {
                 f.row.hidden = false;
-                _set(f.val, fmt(mag));
+                _set(f.val, fmt(f.mag));
+                f.bar ??= f.row.querySelector('.force-bar i');
+                const w = (100 * f.mag / most).toFixed(1) + '%';
+                if (f.bar && f.bar.style.getPropertyValue('--w') !== w) f.bar.style.setProperty('--w', w);
             } else {
                 f.row.hidden = true;
             }

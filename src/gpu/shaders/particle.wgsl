@@ -14,7 +14,12 @@
 //   - the sign of the charge as a + or − at the centre, so it survives in grey;
 //   - the spoke from the centre, or, where the centre carries a sign, a tick at the rim;
 //   - antimatter hollow: the ground inside the outline;
-//   - in black-hole mode, the horizon as a void, its tick in the ground's colour.
+//   - in black-hole mode, the horizon as a void, its tick in the ground's colour;
+//   - the clock: the outline is its face, and the part of it the body's proper time has
+//     swept this turn (clockwise from the top, once per CLOCK_PERIOD) is drawn heavier, so a
+//     moving clock, or one deep in a well, visibly lags. Each point reads the body's own time
+//     there, τ − γvΔ∥ as the spoke does, so a moving clock's face is skewed by the same
+//     simultaneity that bends its spoke.
 // Marks show only on bodies at least 5 px across their radius; the edge is antialiased.
 
 struct CameraUniforms {
@@ -26,7 +31,7 @@ struct CameraUniforms {
     isDarkMode: f32,   // 0.0 = light, 1.0 = dark
     relativityOn: f32,
     blackHoleOn: f32,
-    showClocks: f32,
+    _unused: f32,      // once the Clocks overlay; every body's outline is its clock now
     frameOn: f32,      // drawing a frame's view buffers (frame-slice.wgsl)
     frameImages: f32,  // view entries per slot
 };
@@ -38,7 +43,7 @@ struct CameraUniforms {
 @group(0) @binding(2) var<storage, read> particleAux: array<ParticleAux>;
 @group(0) @binding(3) var<storage, read> color: array<u32>;
 @group(0) @binding(4) var<storage, read> derived: array<ParticleDerived>;
-@group(0) @binding(5) var<storage, read> clocks: array<vec4<f32>>;   // z = θ
+@group(0) @binding(5) var<storage, read> clocks: array<vec4<f32>>;   // y = τ mod CLOCK_PERIOD, z = θ
 
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
@@ -47,6 +52,7 @@ struct VertexOut {
     @location(2) @interpolate(flat) boost: vec4<f32>,   // n̂.xy, γ, v
     @location(3) @interpolate(flat) body: vec4<f32>,    // radius, θ, ω, drawn radius
     @location(4) @interpolate(flat) kind: vec2<f32>,    // sign of the charge, antimatter (1/0)
+    @location(5) @interpolate(flat) clock: f32,         // the clock's phase, τ mod CLOCK_PERIOD
 };
 
 // Quad vertices: 2 triangles forming a [-1,1] square
@@ -100,6 +106,7 @@ fn vs_main(
     out.offset = offset;
     out.boost = vec4(n, gamma, speed);
     out.body = vec4(r, clocks[instanceIndex].z, omega, drawR);
+    out.clock = clocks[instanceIndex].y;
     let q = select(0.0, sign(p.charge), abs(p.charge) > 0.5 * BOSON_CHARGE);
     out.kind = vec2(q, select(0.0, 1.0, (p.flags & FLAG_ANTIMATTER) != 0u));
 
@@ -161,12 +168,23 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         rgb = mix(body, ink, select(outline, 1.0, rPx < 2.5));
     }
 
-    // The sign at the centre, upright in the rest frame
+    // The clock: the swept part of the face, a band 3 px in from the rim, its end where
+    // this point's own time has reached; antialiased along the rim at both of its ends
     var mark = 0.0;
+    if (rPx >= 5.0) {
+        let swept = fract((in.clock - gamma * speed * par) / CLOCK_PERIOD);
+        let at = fract(atan2(rest.x, -rest.y) / TWO_PI);
+        let rim = TWO_PI * dist;
+        let arc = smoothstep(-aa, aa, (swept - at) * rim) * smoothstep(-aa, aa, at * rim);
+        let face = smoothstep(drawR - 3.0 * px - aa, drawR - 3.0 * px + aa, dist);
+        mark = arc * face * select(1.0, 0.6, hole);
+    }
+
+    // The sign at the centre, upright in the rest frame
     let hw = 0.55 * px;
     if (!hole && q != 0.0 && rPx >= 5.0) {
         let k = 0.42 * drawR;
-        mark = band(rest.y, hw, aa) * band(rest.x, k, aa);
+        mark = max(mark, band(rest.y, hw, aa) * band(rest.x, k, aa));
         if (q > 0.0) { mark = max(mark, band(rest.x, hw, aa) * band(rest.y, k, aa)); }
     }
 

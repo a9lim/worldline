@@ -1,5 +1,5 @@
 // ─── Expansion panel ───
-// The Stats tab's readouts for an expanding universe (cosmology.js): the scale factor, the
+// The Measure tab's readouts for an expanding universe (cosmology.js): the scale factor, the
 // Hubble rate, the Hubble radius c/H and the event horizon, the mean density the Friedmann
 // closure sources from, and a(t) and H(t) over the run. Shown while the universe expands or
 // after it has.
@@ -35,8 +35,7 @@ export default class CosmologyPanel {
         this._event = c.eventHorizon();
         this.el.rE.textContent = fmt(this._event);
         const friedmann = c.schedule === 'friedmann' && gp.expanding;
-        // .stat-row's display beats the hidden attribute
-        this.el.rhoRow.style.display = friedmann ? '' : 'none';
+        if (this.el.rhoRow.hidden === friedmann) this.el.rhoRow.hidden = !friedmann;
         if (friedmann) this.el.rho.textContent = fmt(c.density(c.a));
         this.draw();
     }

@@ -19,8 +19,18 @@ const BASE = process.env.WL_URL || 'http://localhost:8791/worldline/';
 const bench = {};
 const HELPERS = `
 window.__t = {
-  preset(n) { const s = document.getElementById('preset-select'); s.value = n; s.dispatchEvent(new Event('change')); },
+  // A figure by its preset key (a tree from before the margin's rework had a preset dropdown)
+  preset(n) { if (window.sim.loadFigure) { window.sim.loadFigure(n); return; } const s = document.getElementById('preset-select'); s.value = n; s.dispatchEvent(new Event('change')); },
   tog(id, on) { const e = document.getElementById(id); if (e.checked !== on) e.click(); },
+  // Store keys and modes, through the controls (works on any tree with sim.syncControls)
+  set(settings) { Object.assign(window.sim.settings, settings); window.sim.syncControls(); },
+  modes({ collision, boundary, topology } = {}) {
+    const sim = window.sim;
+    if (collision != null) sim.collisionMode = ['pass', 'merge', 'bounce'].indexOf(collision);
+    if (boundary != null) sim.boundaryMode = ['despawn', 'bounce', 'loop'].indexOf(boundary);
+    if (topology != null) sim.topology = ['torus', 'klein', 'rp2'].indexOf(topology);
+    sim.syncControls();
+  },
   click(id) { document.getElementById(id).click(); },
   slider(id, v) { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('input')); e.dispatchEvent(new Event('change')); },
   margin(open) { if (document.body.classList.contains('margin-open') !== open) document.getElementById('panelToggle').click(); },

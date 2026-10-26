@@ -9,7 +9,7 @@
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 195;
+const SHADER_VERSION = 198;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -1628,55 +1628,6 @@ export async function createUpdateColorsPipeline(device, wgslConstants = '') {
     });
 
     return { pipeline, bindGroupLayout };
-}
-
-/**
- * Create spin ring render pipelines (arc line-strip + arrowhead triangle-list).
- * Standalone shader (defines own structs).
- * Bindings: camera (uniform), particleState (ro), particleAux (ro), derived (ro).
- * Returns { arcPipeline, arrowPipeline, bindGroupLayout }.
- */
-export async function createClockRenderPipeline(device, format, isLight, wgslConstants = '') {
-    const prefix = await getSharedPrefix(wgslConstants);
-    const code = await fetchShader('clock-render.wgsl', prefix);
-    const module = device.createShaderModule({ label: 'clockRender', code });
-
-    const bindGroupLayout = device.createBindGroupLayout({
-        label: 'clockRender_g0',
-        entries: [
-            { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-            { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }, // particleState
-            { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }, // particleAux
-            { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }, // derived
-            { binding: 4, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }, // clocks
-        ],
-    });
-
-    // Premultiplied alpha: shader outputs rgb*a, use srcFactor='one' (not 'src-alpha')
-    const blendState = isLight
-        ? {
-            color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-            alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-        }
-        : {
-            color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-            alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-        };
-
-    const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
-    const ribbon = (label, entryPoint) => device.createRenderPipeline({
-        label,
-        layout: pipelineLayout,
-        vertex: { module, entryPoint },
-        fragment: { module, entryPoint: 'fs_main', targets: [{ format, blend: blendState }] },
-        primitive: { topology: 'triangle-strip' },
-    });
-
-    return {
-        trackPipeline: ribbon('clockRender_track', 'vs_track'),
-        arcPipeline: ribbon('clockRender_arc', 'vs_main'),
-        bindGroupLayout,
-    };
 }
 
 /**
