@@ -570,7 +570,10 @@ the lab and it (`sim.observerKind`): a moving observer is eased into through the
 
 With Gravity on, the rulers are a backdrop seen through the bodies as a thin lens, viewed
 along z, in the lab frame only: `update()` in `ui.js` sets `sim.lens.on` with Gravity, and
-the Laws tab's Backdrop (`lens-panel.js`) sets the distance and places the probe.
+the Laws tab's Backdrop (`lens-panel.js`) sets the distance and places the probe. The pass
+runs only while there is something to bend (`GPUBackend.render`: the rulers shown, a star
+placed, or black holes, whose capture disks it draws); it adds about 0.25 ms to a render of
+500 or 4000 gravitating bodies, timed back to back.
 
 - **The map** (`lens-deflection.wgsl`, `GPUPhysics.dispatchLens`, from
   `GPUBackend.render()` each rendered frame): a sum for each cell of a `LENS_RES`² (512)

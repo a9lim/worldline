@@ -261,8 +261,10 @@ export default class GPUBackend {
             }
         }
 
-        // The lensed backdrop: the deflection map over the view (lab frame only)
-        if (sim.lens.on && !frameParams && this.physics.aliveCount > 0) {
+        // The lensed backdrop: the deflection map over the view (lab frame only), while there is
+        // something to bend: the rulers, the star, or a black hole's capture disk
+        const lensed = sim.view.grid || sim.lens.star || ph.blackHoleEnabled;
+        if (sim.lens.on && lensed && !frameParams && this.physics.aliveCount > 0) {
             const cam = sim.camera;
             const w = 1.1 * sim.width / cam.zoom, h = 1.1 * sim.height / cam.zoom;
             const lens = { res: LENS_RES, left: cam.x - w / 2, top: cam.y - h / 2, width: w, height: h, star: sim.lens.star };
