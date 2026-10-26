@@ -25,6 +25,7 @@ serial sessions, and parallel lanes (subagents, worktrees) fit a whole version i
 
 | Date | Decision |
 |---|---|
+| 2026-10-26 | **The margin in the plate's notation** (2.3, §10): a9 approved the proposal (artifact `JtvJnPLrtReyoxuNG4YQ1G`). Four tabs, Figure · Laws · World · Measure; what the plate always means is not a switch (world lines always drawn, lensing follows Gravity, every body's outline is its clock); one question, one control; each figure's knobs in its caption. Barnes–Hut is not a user choice: the count picks it, seamlessly. |
 | 2026-10-25 | **The caps are 4096 bodies, 16384 photons and 4096 each of pions and leptons** (2.2, §3.3): a9 asked for a second performance pass to raise them. The world-line store grows with the bodies in use, so a small scene costs what it did. |
 | 2026-10-24 | **Worldline is a planar spacetime laboratory** (§1). No volumetric 3D physics, no gas, no quantum layer. |
 | 2026-10-24 | **The versions:** 2.1 is performance and receipts (§3); 2.5 is the record, then sight, then the instrument (§4–§6); 3.0 is the model, honest gravity and curved spacetime, after a decision point (§7). |
@@ -53,9 +54,7 @@ no labels in 2.0, the 1+1 Minkowski panel, 2.1's caps of 512 bodies) are in git 
    resolution overhaul, in what order. Decided at a decision point after 2.5, informed by
    what the instrument measures.
 2. **Where Seen lives:** a third choice beside Lab and Observer (recommended), or an inset.
-3. **Where measurements live:** a Measure tab in the margin (recommended) beside the plate's
-   own marks, or on the canvas only.
-4. **Replay fidelity:** checkpoints are exact on one machine, recipes reproduce
+3. **Replay fidelity:** checkpoints are exact on one machine, recipes reproduce
    statistically; deterministic GPU stepping is not pursued (recommended) (§4.4).
 
 ## 1. Thesis
@@ -127,6 +126,7 @@ use the 3D quadrupole and TT projection.
 | **2.0** | The visual overhaul | done 2026-10-24 (§10) | — |
 | **2.1** | Performance and receipts | done 2026-10-24 (§3, §10) | — |
 | **2.2** | Performance at scale: the caps raised eightfold | done 2026-10-25 (§3.3, §10) | — |
+| **2.3** | The margin in the plate's notation; force summation automatic | done 2026-10-26 (§10) | — |
 | **2.5** | The laboratory | the record (§4), then sight (§5), then the instrument (§6) | L |
 | **3.0** | The model | a decision point, then honest gravity and/or curved spacetime (§7) | L |
 
@@ -552,9 +552,9 @@ For a picked pair:
 - **light cones of any picked event,** future and past, not only the selected body's now;
 - **simultaneity through an event:** the observer's surface, and radar's (§5.2).
 
-A Measure tab holds the picked events and their numbers (open decision 3). The Stats and
-Particle tabs are redrawn around time and frames: sparklines, and the phase and potential
-plots in the plate's language (2.0's pillar 6).
+The Measure tab (2.3) holds the picked events and their numbers beside the ledger and the
+selected body, which 2.3 already redrew with drift sparklines and force bars; the phase and
+potential plots are still to be redrawn in the plate's language (2.0's pillar 6).
 
 ### 6.3 Apparatus
 
@@ -577,7 +577,10 @@ Each is drawn as a hairline mark in an ink, held quiet until selected:
 
 ### 6.5 Every preset an experiment
 
-One knob, one predicted number, one measured number, and the comparison:
+One knob, one predicted number, one measured number, and the comparison. The knobs landed in
+2.3, as numbers dragged in each figure's caption (the cyclotron's B and E, the twin's and the
+wheel's speeds, the beam's speed, the quench time, the lens's mass); the predicted and
+measured numbers are still to come:
 
 | Preset | Knob | Predicted | Measured |
 |---|---|---|---|
@@ -852,6 +855,9 @@ and benchmark harnesses (§3.1).
 | 2.2 | 2026-10-25 | `4650290`, `ab66afa` | The light-cone search's guess from the distance; field lines budgeted; the heatmap's sources in tiles. |
 | 2.2 | 2026-10-25 | `34a1716`, `888a26c`, `7b3275f` | World lines decimated on the GPU before they are drawn (lane); the selection ring draws one body; ghost slots bounded by eight a body. |
 | 2.2 | 2026-10-25 | `f89688c`, `7ab8fea`, `fda423a` | Fixes from Codex's review; three 4000-body benchmarks; Barnes–Hut's oracle at 4000 bodies. |
+| 2.3 | 2026-10-26 | `537323d` | The lens map compacts the live lenses and sums them in tiles, coarser past 512 lenses (lane): 0.97 → 0.26 ms a render at 500 bodies, 6.7 → 0.3 ms at 4000, so lensing can follow Gravity. |
+| 2.3 | 2026-10-26 | `8289c3b`, `d35231e` | Force summation automatic (lane): pairwise below 1536 bodies, the tree above with θ from 0.1 to 0.5 by 4096, held to 1152; periodic domains pairwise (the torus walk is open work, §3.3). |
+| 2.3 | 2026-10-26 | `9c80cbc`, `dc56d43` | The margin in the plate's notation: Figure · Laws · World · Measure, word choices, ticks showing each law's mark, ruled scales, edge diagrams, field pads; caption knobs and figure numbers; the Trails, Clocks and lensing switches removed; every body's outline its clock. |
 
 ## 11. Gotchas
 
