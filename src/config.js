@@ -59,9 +59,34 @@ export const INERTIA_K = 0.4;                // I = (2/5)mr²
 export const MAG_MOMENT_K = 0.2;             // μ = (1/5)q·ω·r²
 export const TIDAL_STRENGTH = 64;
 
-// ── Barnes-Hut ──
-export const BH_THETA = 0.5;
-export const BH_THETA_SQ = BH_THETA * BH_THETA;
+// ── Force summation ──
+// Bodies' forces are summed pairwise below TREE_ON bodies and by a Barnes–Hut tree walk above
+// (GPUPhysics._chooseForceSum). Once the tree is in use it stays until the count falls under
+// TREE_OFF, so a scene hovering at the threshold doesn't flip every frame. The tree's opening
+// angle θ ramps log-linearly with the count from THETA_MIN at TREE_ON to THETA_MAX at TREE_FULL
+// (the body cap), so the error at the switch is far under what shows and grows only with the
+// count. TREE_ON is where the walk at THETA_MIN costs what the pairwise loop does on an open
+// domain (M5 Max; docs/second-pass/bh-notes.md has the table).
+export const TREE_ON = 1536;
+export const TREE_OFF = 1152;
+export const THETA_MIN = 0.1;
+export const THETA_MAX = 0.5;
+export const TREE_FULL = 4096;
+// On a periodic domain the walk has to open every node that reaches past half a domain, which
+// the pairwise loop's minimum image doesn't. It never beats the pairwise loop by more than a
+// third up to the body cap, and from about 4000 bodies it sometimes takes 5–6 ms against the
+// loop's 0.75: the tree is chosen there only above the cap, so never until the cap or the walk
+// changes.
+export const TREE_ON_PERIODIC = 8192;
+export const TREE_OFF_PERIODIC = 6144;
+/** The tree's opening angle for n bodies. */
+export function treeTheta(n) {
+    const u = Math.log(Math.max(n, 1) / TREE_ON) / Math.log(TREE_FULL / TREE_ON);
+    return THETA_MIN + (THETA_MAX - THETA_MIN) * Math.min(Math.max(u, 0), 1);
+}
+// The bosons' own tree has no pairwise alternative, so its opening angle does not move with the
+// body count: the boson tree walks keep THETA_MAX (BOSON_THETA_SQ in WGSL).
+export const BOSON_THETA_SQ = THETA_MAX * THETA_MAX;
 
 // ── Radiation & Bosons ──
 // Pool culls: photons and leptons are removed after this lab-time age.

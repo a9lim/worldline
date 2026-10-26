@@ -14,7 +14,6 @@ export const TOGGLE_KEYS = Object.freeze([
     'magneticEnabled',
     'gravitomagEnabled',
     'relativityEnabled',
-    'barnesHutEnabled',
     'radiationEnabled',
     'blackHoleEnabled',
     'spinOrbitEnabled',

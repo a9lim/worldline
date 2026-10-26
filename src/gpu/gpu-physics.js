@@ -40,9 +40,9 @@
 import { PERF } from './gpu-profiler.js';
 import { createParticleBuffers, createWorldLineStore, STORE_TIERS, createUniformBuffer, writeFrameUniforms, writeSubstepUniforms, UNIFORM_DT_OFFSET, UNIFORM_RADIUS_MAX_OFFSET, createFieldBuffers, createGravityGridBuffers, createAtomicGridBuffer, createHeatmapBuffers, createKugelblitzBuffers, createFrameBuffers, FRAME_PARAMS_SIZE, FRAME_STATE_SIZE, FIELD_GRID_RES, PARTICLE_STATE_SIZE, PARTICLE_AUX_SIZE, RADIATION_STATE_SIZE, DERIVED_SIZE, MERGE_RESULT_SIZE } from './gpu-buffers.js';
 import { fetchShader, createLensPipeline, createPhase2Pipelines, createGhostGenPipeline, createTreeBuildPipelines, createTreeForcePipeline, createCollisionPipelines, createMergePhotonPipeline, createDeadGCPipeline, createPhase4Pipelines, createFieldDepositPipelines, createFieldEvolvePipelines, createFieldForcesPipelines, createFieldParticleGravPipeline, createFieldGravityPipelines, createFFTPipelines, createFieldExcitationPipeline, createHeatmapPipelines, createExpansionPipeline, createExtremalPipeline, createBosonDispatchArgsPipeline, createUpdateColorsPipeline, createHitTestPipeline, createComputeStatsPipeline, createFrameSlicePipelines } from './gpu-pipelines.js';
-import { buildWGSLConstants, GRAVITY_BIT, COULOMB_BIT, MAGNETIC_BIT, GRAVITOMAG_BIT, ONE_PN_BIT, RELATIVITY_BIT, SPIN_ORBIT_BIT, RADIATION_BIT, BLACK_HOLE_BIT, EXPANSION_BIT, YUKAWA_BIT, HIGGS_BIT, AXION_BIT, BARNES_HUT_BIT, BOSON_INTER_BIT, FIELD_GRAV_BIT_T1, HERTZ_BOUNCE_BIT_T1, WL_STRIDE, WL_META_STRIDE, OBSERVERS_PER_GROUP, STATS_LAYOUT } from './gpu-constants.js';
+import { buildWGSLConstants, GRAVITY_BIT, COULOMB_BIT, MAGNETIC_BIT, GRAVITOMAG_BIT, ONE_PN_BIT, RELATIVITY_BIT, SPIN_ORBIT_BIT, RADIATION_BIT, BLACK_HOLE_BIT, EXPANSION_BIT, YUKAWA_BIT, HIGGS_BIT, AXION_BIT, BOSON_INTER_BIT, FIELD_GRAV_BIT_T1, HERTZ_BOUNCE_BIT_T1, WL_STRIDE, WL_META_STRIDE, OBSERVERS_PER_GROUP, STATS_LAYOUT } from './gpu-constants.js';
 import { createGPUDispatchPlan, updateGPUDispatchPlan } from './pass-graph.js';
-import { WORLDLINE_DT, WORLDLINE_LEN, GPU_MAX_PHOTONS, GPU_MAX_PIONS, GPU_MAX_LEPTONS, GPU_MAX_PARTICLES, GPU_HEATMAP_GRID, HEATMAP_INTERVAL_MASK, COL_MERGE, COL_BOUNCE, BOUND_LOOP, TORUS, COL_NAMES, BOUND_NAMES, TOPO_NAMES, SOFTENING, BH_SOFTENING, SOFTENING_SQ, BH_SOFTENING_SQ, CLOCK_PERIOD, HIGGS_COUPLING, AXION_COUPLING, BOSON_CHARGE, EPOCH_SPAN, EPOCH_STEP, kerrNewmanRadius } from '../config.js';
+import { WORLDLINE_DT, WORLDLINE_LEN, GPU_MAX_PHOTONS, GPU_MAX_PIONS, GPU_MAX_LEPTONS, GPU_MAX_PARTICLES, GPU_HEATMAP_GRID, HEATMAP_INTERVAL_MASK, COL_MERGE, COL_BOUNCE, BOUND_LOOP, TORUS, COL_NAMES, BOUND_NAMES, TOPO_NAMES, SOFTENING, BH_SOFTENING, SOFTENING_SQ, BH_SOFTENING_SQ, CLOCK_PERIOD, HIGGS_COUPLING, AXION_COUPLING, BOSON_CHARGE, EPOCH_SPAN, EPOCH_STEP, TREE_ON, TREE_OFF, TREE_ON_PERIODIC, TREE_OFF_PERIODIC, treeTheta, kerrNewmanRadius } from '../config.js';
 import { installFieldMethods } from './gpu-fields.js';
 import Cosmology, { SCHEDULE_KEYS, slabVolume } from '../cosmology.js';
 import { GPU_PARAMETER_SLOTS } from '../physics-contract.js';
@@ -257,7 +257,18 @@ export default class GPUPhysics {
         // Phase 3: Tree build (GPU Barnes-Hut)
         this._treeBuild = null;
         this._treeBuildBindGroups = null;
-        this._barnesHutEnabled = false;
+        // How the bodies' forces are summed (config.js "Force summation"), chosen each frame from
+        // the body count by _chooseForceSum() and read by the dispatches and the UI's readout:
+        //   byCount  the rule picks the tree at this count; lensing, absorption and the heatmap follow it
+        //   tree     the force pass and 1PN's recompute walk the tree: byCount, but not with
+        //            Relativity, where every force acts pairwise from the sources' world lines
+        //   theta    the opening angle the body tree's walks use at this count
+        // treeOverride (null | 'pairwise' | 'tree') and thetaOverride (null | number) pin the rule
+        // for oracles and benchmarks; null is the automatic rule.
+        this.forceSum = { byCount: false, tree: false, theta: treeTheta(0) };
+        this.treeOverride = null;
+        this.thetaOverride = null;
+        this._treeLatched = false;
 
         // Phase 3: Tree force (BH tree walk)
         this._treeForcePipeline = null;
@@ -1412,8 +1423,8 @@ export default class GPUPhysics {
 
     /**
      * Dispatch 1PN velocity-Verlet correction (Phase 4, Pass 14).
-     * After drift: rebuild tree if BH on, recompute 1PN via tree walk, apply VV kick.
-     * Falls back to O(N²) pairwise when Barnes-Hut is off.
+     * After drift: recompute 1PN at the new positions, the way the force pass took it (a tree
+     * walk over a rebuilt tree, or O(N²) pairwise), and apply the VV kick.
      */
     _dispatch1PNVV(encoder) {
         if (!this._onePNEnabled) return;
@@ -1423,7 +1434,7 @@ export default class GPUPhysics {
         const p4 = this._phase4;
 
         // Step 1: Recompute 1PN forces at post-drift positions, the way the force pass took them
-        if (this._treeWalk) {
+        if (this.forceSum.tree) {
             // Rebuild tree at post-drift positions for VV correction
             this._dispatchGhostGen(encoder);
             this._dispatchTreeBuild(encoder);
@@ -1468,7 +1479,7 @@ export default class GPUPhysics {
         const p4 = this._phase4;
         const bgs = this._phase4BindGroups;
         const bodies = this.aliveCount > 0;
-        const useBHTree = this._barnesHutEnabled && bodies;
+        const useBHTree = this.forceSum.byCount && bodies;
 
         // Select tree or pairwise pipelines for lensing + absorption
         const phUpdatePipeline = useBHTree ? p4.updatePhotonsTree.pipeline : p4.updatePhotons.pipeline;
@@ -1976,6 +1987,31 @@ export default class GPUPhysics {
     }
 
     /**
+     * Choose how this frame's forces are summed (this.forceSum; config.js "Force summation"):
+     * pairwise below TREE_ON bodies, the Barnes–Hut tree above, with the tree kept until the
+     * count falls under TREE_OFF, and its opening angle ramping with the count. The override
+     * (treeOverride, thetaOverride) takes the rule's place when set. Once per update(), and when
+     * the toggles change, so every dispatch of a frame agrees.
+     */
+    _chooseForceSum() {
+        const n = this.aliveCount;
+        let byCount;
+        if (this.treeOverride) {
+            byCount = this.treeOverride === 'tree';
+        } else {
+            const periodic = this.boundaryMode === BOUND_LOOP;
+            byCount = n >= (this._treeLatched ? (periodic ? TREE_OFF_PERIODIC : TREE_OFF) : (periodic ? TREE_ON_PERIODIC : TREE_ON));
+            this._treeLatched = byCount;
+        }
+        const fs = this.forceSum;
+        fs.byCount = byCount;
+        // With Relativity every force acts pairwise from the sources' world lines, which a
+        // node's aggregate doesn't have
+        fs.tree = byCount && !this._relativityEnabled;
+        fs.theta = this.thetaOverride ?? treeTheta(n);
+    }
+
+    /**
      * Pack toggle booleans into u32 bitfields for GPU uniforms.
      * Must be called whenever a toggle changes.
      */
@@ -1994,7 +2030,6 @@ export default class GPUPhysics {
         if (physics.yukawaEnabled) t0 |= YUKAWA_BIT;
         if (physics.higgsEnabled) t0 |= HIGGS_BIT;
         if (physics.axionEnabled) t0 |= AXION_BIT;
-        if (physics.barnesHutEnabled) t0 |= BARNES_HUT_BIT;
         if (physics.bosonInterEnabled) t0 |= BOSON_INTER_BIT;
         this._toggles0 = t0;
 
@@ -2002,10 +2037,6 @@ export default class GPUPhysics {
         if (physics.gravityEnabled) t1 |= FIELD_GRAV_BIT_T1; // field gravity follows gravity
         if (physics.collisionMode === COL_BOUNCE) t1 |= HERTZ_BOUNCE_BIT_T1;
         this._toggles1 = t1;
-        // Barnes–Hut walks the tree without Relativity; with it every force acts pairwise
-        // from the sources' world lines, which a node's aggregate doesn't have
-        this._treeWalk = physics.barnesHutEnabled && !physics.relativityEnabled;
-
         this._isDarkTheme = document.documentElement.dataset.theme === 'dark';
         this._gravityEnabled = physics.gravityEnabled;
         this._coulombEnabled = physics.coulombEnabled;
@@ -2013,8 +2044,8 @@ export default class GPUPhysics {
         this._gravitomagEnabled = physics.gravitomagEnabled;
         this._spinOrbitEnabled = physics.spinOrbitEnabled;
         this._blackHoleEnabled = physics.blackHoleEnabled;
-        this._barnesHutEnabled = physics.barnesHutEnabled;
         this._relativityEnabled = physics.relativityEnabled;
+        this._chooseForceSum();
         this._onePNEnabled = physics.onePNEnabled;
         this._radiationEnabled = physics.radiationEnabled;
         this._yukawaEnabled = physics.yukawaEnabled;
@@ -2364,7 +2395,7 @@ export default class GPUPhysics {
         if (!this._heatmapUniformBuffer) {
             this._heatmapUniformBuffer = this.device.createBuffer({
                 label: 'heatmapUniforms',
-                size: 96, // HeatmapUniforms struct size (22 fields, padded)
+                size: 96, // HeatmapUniforms struct size (23 fields, padded)
                 usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
             });
         }
@@ -2404,12 +2435,13 @@ export default class GPUPhysics {
         _heatmapUniformU32[14] = this.boundaryMode === BOUND_LOOP ? 1 : 0;
         _heatmapUniformU32[15] = this.topologyMode;
         _heatmapUniformU32[16] = this.aliveCount;
-        _heatmapUniformU32[17] = this._barnesHutEnabled ? 1 : 0; // useTree
+        _heatmapUniformU32[17] = this.forceSum.byCount ? 1 : 0; // useTree
         _heatmapUniformU32[18] = this._blackHoleEnabled ? 1 : 0;
         _heatmapUniformF32[19] = this.scaleA;
         // Bz: from moving charges and spins once Magnetic is on, and the external field
         _heatmapUniformU32[20] = ((this._magneticEnabled || this._extBz !== 0) && (hm === 'all' || hm === 'magnetic')) ? 1 : 0;
         _heatmapUniformF32[21] = (hm === 'all' || hm === 'magnetic') ? this._extBz : 0;
+        _heatmapUniformF32[22] = this.forceSum.theta;
         this.device.queue.writeBuffer(this._heatmapUniformBuffer, 0, _heatmapUniformData);
 
         if (!this._heatmapBGs) {
@@ -2451,12 +2483,12 @@ export default class GPUPhysics {
 
         const gridWG = Math.ceil(GPU_HEATMAP_GRID / 8);
 
-        // Compute heatmap — use BH tree walk when BH on, signal delay off, non-periodic
+        // Compute heatmap — the tree walk when the body count calls for it, signal delay off, non-periodic
         // (periodic boundaries require minImage wrapping which the tree walk doesn't handle)
         {
             const useDelay = this._relativityEnabled;
             const isPeriodic = this.boundaryMode === BOUND_LOOP;
-            const useTree = this._barnesHutEnabled && !useDelay && !isPeriodic;
+            const useTree = this.forceSum.byCount && !useDelay && !isPeriodic;
             const pipeline = useTree
                 ? this._heatmapPipelines.computeHeatmapTree
                 : this._heatmapPipelines.computeHeatmap;
@@ -2568,6 +2600,7 @@ export default class GPUPhysics {
     update(dt) {
         // Fields and bosons step without bodies: every body pass is sized by aliveCount
         if (!this._ready || dt <= 0) return;
+        this._chooseForceSum();
 
         // Adaptive substepping: use maxAccel from previous frame
         const softening = this._blackHoleEnabled ? BH_SOFTENING : SOFTENING;
@@ -2636,7 +2669,7 @@ export default class GPUPhysics {
             axionCoupling: this._axionCoupling,
             higgsCoupling: this._higgsCoupling,
             particleCount: this.aliveCount + this._ghostSlots(),
-            bhTheta: 0.5,
+            bhTheta: this.forceSum.theta,
             frameCount: this._frameCount,
         });
         updateGPUDispatchPlan(this, this._dispatchPlan);
@@ -2899,7 +2932,7 @@ export default class GPUPhysics {
 
         // Pass 5: force computation — the Barnes–Hut group walk, or O(N^2) pairwise (always
         // with Relativity: every force acts from the sources' world lines)
-        if (!this._treeWalk) {
+        if (!this.forceSum.tree) {
             const pass5 = encoder.beginComputePass({ label: 'pairForce' });
             pass5.setPipeline(p2.pairForce.pipeline);
             pass5.setBindGroup(0, this._bg_pairForce0);
@@ -2909,7 +2942,7 @@ export default class GPUPhysics {
             pass5.dispatchWorkgroups(Math.ceil(this.aliveCount / OBSERVERS_PER_GROUP));
             pass5.end();
         }
-        if (this._treeWalk) {
+        if (this.forceSum.tree) {
             // Tree walk force computation (O(N log N))
             const passTree = encoder.beginComputePass({ label: 'treeForce' });
             passTree.setPipeline(this._treeForcePipeline);
@@ -3100,7 +3133,6 @@ export default class GPUPhysics {
         state.toggles.yukawaEnabled = !!(t0 & YUKAWA_BIT);
         state.toggles.higgsEnabled = !!(t0 & HIGGS_BIT);
         state.toggles.axionEnabled = !!(t0 & AXION_BIT);
-        state.toggles.barnesHutEnabled = !!(t0 & BARNES_HUT_BIT);
         state.toggles.bosonInterEnabled = !!(t0 & BOSON_INTER_BIT);
         // field gravity follows gravity (no separate toggle)
 
@@ -3278,6 +3310,7 @@ export default class GPUPhysics {
             this.device.queue.submit([enc.finish()]);
         }
         this.aliveCount = 0;
+        this._treeLatched = false;
         // An emptied store gives its memory back
         if (this._ready && this.buffers.storeCapacity > STORE_TIERS[0]) this._resizeStore(STORE_TIERS[0], false);
         this.simTime = 0;
@@ -3363,7 +3396,7 @@ export default class GPUPhysics {
             extEy: this._cachedExtEy,
             maxParticles: this.buffers.storeCapacity,
             particleCount: this.aliveCount + this._ghostSlots(),
-            bhTheta: 0.5,
+            bhTheta: this.forceSum.theta,
             frameCount: this._frameCount,
         });
     }

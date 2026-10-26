@@ -13,7 +13,6 @@ export function createPhysicsSettings() {
         magneticEnabled: true,
         gravitomagEnabled: true,
         relativityEnabled: true,
-        barnesHutEnabled: false,
         radiationEnabled: true,
         blackHoleEnabled: false,
         spinOrbitEnabled: true,

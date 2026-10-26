@@ -590,7 +590,7 @@ export function writeFrameUniforms(device, buffer, params) {
     f[28] = params.axionCoupling || 0.05;
     f[29] = params.higgsCoupling || 1.0;
     u[30] = params.particleCount || 0;  // actual alive particle count for dispatch sizing
-    f[31] = params.bhTheta || 0.5;     // Barnes-Hut opening angle
+    f[31] = params.bhTheta;            // the body tree's opening angle (GPUPhysics.forceSum.theta)
     u[32] = params.frameCount || 0;    // frameCount field in SimUniforms
     f[33] = params.scaleA || 1;        // cosmological scale factor
     f[34] = params.hubble || 0;        // the frame's Hubble rate

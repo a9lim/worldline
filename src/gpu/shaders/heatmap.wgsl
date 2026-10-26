@@ -40,6 +40,7 @@ struct HeatmapUniforms {
     scaleA: f32,
     doMagnetic: u32,
     extBz: f32,
+    theta: f32,     // the tree walk's opening angle (GPUPhysics.forceSum)
 };
 
 // Group 0: particleState + particleAux + treeNodes (read_write for encoder compat)
@@ -367,7 +368,7 @@ fn computeHeatmapTree(@builtin(global_invocation_id) gid: vec3<u32>) {
             let sizeY = getMaxY(nIdx) - getMinY(nIdx);
             let sizeSq = max(sizeX * sizeX, sizeY * sizeY);
 
-            if (sizeSq < BH_THETA_SQ * distSq) {
+            if (sizeSq < hu.theta * hu.theta * distSq) {
                 // Use aggregate: mass and charge from tree node
                 let aggMass = getTotalMass(nIdx);
                 let aggCharge = getTotalCharge(nIdx);

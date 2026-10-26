@@ -54,7 +54,7 @@ fn updatePhotonsTree(@builtin(global_invocation_id) gid: vec3u) {
         let size = getMaxX(nIdx) - getMinX(nIdx);
         let isLeaf = getNW(nIdx) == NONE;
 
-        if (isLeaf || size * size < BH_THETA_SQ * dSq) {
+        if (isLeaf || size * size < (u.bhTheta * u.bhTheta) * dSq) {
             let rSq = dSq + BOSON_SOFTENING_SQ;
             let invRSq = 1.0 / rSq;
             let invR3 = invRSq * sqrt(invRSq);
@@ -131,7 +131,7 @@ fn updatePionsTree(@builtin(global_invocation_id) gid: vec3u) {
         let size = getMaxX(nIdx) - getMinX(nIdx);
         let isLeaf = getNW(nIdx) == NONE;
 
-        if (isLeaf || size * size < BH_THETA_SQ * dSq) {
+        if (isLeaf || size * size < (u.bhTheta * u.bhTheta) * dSq) {
             let rSq = dSq + BOSON_SOFTENING_SQ;
             let invRSq = 1.0 / rSq;
             let invR3 = invRSq * sqrt(invRSq);
