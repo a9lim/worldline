@@ -360,6 +360,13 @@ Open:
 - **Barnes–Hut's tidal torque** from a far node squares the node's total coupling where the
   pairwise sum adds squares, an approximation that grows with the bodies a node holds and
   matters where softening flattens distances (r ≪ ε).
+- **The torus walk.** Force summation became automatic (`config.js` "Force summation": pairwise
+  below 1536 bodies, the tree above with θ from 0.1 to 0.5 by 4096). On a periodic domain the
+  walk gains at most a third over the pairwise loop to the cap and on a uniform torus of about
+  4000 bodies sometimes takes 5–6 ms against 0.75 (`docs/second-pass/bh-notes.md`), so the tree
+  is held out there (`TREE_ON_PERIODIC`). Finding the cause (the half-domain criterion opening
+  every node near a plane, or a group box that Morton order's jumps make large) would let the
+  torus use the tree too.
 
 ## 4. 2.5, first: the record
 

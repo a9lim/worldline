@@ -43,7 +43,7 @@ open decisions, and the model's known boundaries. This file describes the code a
   header) runs any scenario with `bench: { warm, measure }` under `?perf` and writes p50/p95
   per scenario to `OUTDIR/bench.json`; `bench-scenarios.json` beside it is the standing set
   (every preset in plane and tilted, Fields, an observer, 500 bodies, full boson pools, both
-  fields with grid gravity, and 4000 seeded bodies relativistic, tilted, and under Barnes–Hut), and `bench-compare.mjs A B` diffs two runs. Concurrent GPU work
+  fields with grid gravity, and 4000 seeded bodies relativistic, tilted, and under Barnes–Hut; the `-bh` and `-pair` scenarios pin `sim.gpu.physics.treeOverride`), and `bench-compare.mjs A B` diffs two runs; `tree-vs-pairwise.mjs` times the force passes and measures the tree's error against the pairwise sum (§ Forces and toggles). Concurrent GPU work
   (another benchmark, another agent's browser) skews the numbers, so compare runs made alone,
   or run `bench-ab.mjs OUT URL_A URL_B`, which alternates the two trees scenario by scenario.
   A frozen tree to compare against is a worktree at the base commit, served with its own
@@ -273,19 +273,41 @@ velocity-Verlet correction.
 
 ### Forces and toggles
 
-Fifteen toggles (`TOGGLE_KEYS`). Their dependency graph is the declarative
+Fourteen toggles (`TOGGLE_KEYS`). Their dependency graph is the declarative
 `_forms.bindDeps()` list in `ui.js`; `updateAllDeps()` adds the mode locks (Black hole
 forces Merge collisions, Expansion forces Loop). Less
-obvious couplings: Boson interaction needs the Barnes–Hut toggle (Simulation section);
-signal delay runs whenever Relativity is on, and with it charges interact through their
+obvious couplings: Boson interaction acts through Gravity or Coulomb and builds its own boson
+tree, so it needs nothing else; signal delay runs whenever Relativity is on, and with it charges interact through their
 Liénard–Wiechert fields; field gravity follows Gravity; kugelblitz runs under Boson
 interaction with Gravity. The 1PN pair forces (`shared-1pn.wgsl`, shared by the force
 pass and the velocity-Verlet recompute): EIH with Gravitomagnetic (not Gravity),
 Bažański's mixed static term with Gravitomagnetic and Coulomb, scalar Breit with Yukawa.
 There is no Darwin term: Liénard–Wiechert carries EM to all orders in v.
 
-Barnes–Hut picks the tree walk over pairwise forces, without Relativity. The walk
-(`forces-tree.wgsl`) is a group walk: 32 bodies consecutive in the tree's Morton order walk
+**Force summation is automatic**, not a toggle (`config.js` "Force summation",
+`GPUPhysics._chooseForceSum()`, once per `update()` and on `setToggles()`). The bodies' forces
+are summed pairwise below `TREE_ON` (1536) bodies and by the Barnes–Hut tree walk above, which
+stays until the count falls under `TREE_OFF` (1152). The opening angle θ ramps log-linearly
+with the count from `THETA_MIN` (0.1) at `TREE_ON` to `THETA_MAX` (0.5) at `TREE_FULL` (4096,
+the body cap). On an open domain (M5 Max, GPU timestamps on the force pass) the walk at
+θ = 0.1 costs what the pairwise loop does at about 1500 bodies, and at the cap the walk at 0.5
+takes 0.18 ms against the loop's 0.76; its rms force error against the pairwise sum is 0.01%
+at the switch and 0.7% at the cap (`docs/second-pass/bh-notes.md` has the table). θ rides
+`SimUniforms.bhTheta` into the force walk, 1PN's recompute, and the photon and pion lensing
+and absorption walks, and `HeatmapUniforms.theta` into the heatmap's; the boson tree's own
+walks have no pairwise alternative and keep 0.5 (`BOSON_THETA_SQ`). On a periodic domain the
+walk has to open every node that reaches past half a domain: it gains at most a third over the
+pairwise loop up to the cap, and on a uniform torus of about 4000 bodies it sometimes takes
+5–6 ms against 0.75 (cause not found; a longer ring and a shorter list don't change it), so the tree is chosen there only
+past `TREE_ON_PERIODIC` (8192): pairwise, within today's cap. With Relativity every force runs
+pairwise from the world lines whatever the count (a node's aggregate has no world line);
+lensing, absorption and the heatmap (off a periodic domain) still follow the count.
+`gpu.physics.forceSum = { byCount, tree, theta }` is the readout (`byCount`: the rule's pick;
+`tree`: the force pass and 1PN's recompute walk the tree, `byCount` without Relativity;
+`theta`: the opening angle in use), and `treeOverride` (`'pairwise'`, `'tree'`, `null`) and
+`thetaOverride` pin it for oracles and benchmarks.
+
+The walk (`forces-tree.wgsl`) is a group walk: 32 bodies consecutive in the tree's Morton order walk
 it once against their bounding box into a list in workgroup memory, which eight threads a
 body then sum a tile at a time. The nodes waiting to be judged sit in a ring: each round
 judges a batch from the front, breadth first, sized so its children fit above a reserve, and
@@ -293,12 +315,11 @@ at the reserve one node a round from the back, a depth-first descent the reserve
 holds, so no tree overflows it; the list and the ring fill by prefix sums, so the sums are
 the same every run.
 A far node's tidal torque squares its total coupling where pairwise sums the squares: a
-far-field approximation of Barnes–Hut's, large only where softening flattens the distances. A node is taken whole when its size is under θ = 0.5 times
+far-field approximation of Barnes–Hut's, large only where softening flattens the distances. A node is taken whole when its size is under θ times
 its distance from the box, and on a periodic domain only when its cell and the box lie
 within half a domain of each other, so every body sees all of it in one image (without that
-rule the torus error against pairwise was 31%). With Relativity every force runs pairwise
-from the world lines whatever the toggle: a node's aggregate has no world line. Collisions,
-hit tests, boson absorption and the heatmap use the tree either way. Periodic modes put
+rule the torus error against pairwise was 31%). Collisions and hit tests use the tree
+either way (it is built every substep), and boson absorption and the heatmap follow the rule. Periodic modes put
 ghost copies in the tree for seam collisions and photon absorption, but ghosts weigh nothing
 in the aggregates (`tree-items-bodies.wgsl`), because every walk takes minimum-image
 displacements and a weighted ghost would count its pair twice. So a ghost needs to reach only
@@ -732,7 +753,7 @@ per stage would land before the whole encoder ran (that bug left Φ ≡ 0 until
   boson's absorber as slot + 1). Per-body CAS float accumulators measured the same at low
   contention but 40× slower with 4096 bosons on one body, and their sums depend on order.
 - **Trees** (`tree-build.wgsl`, one build for the bodies every substep, twice with 1PN's
-  velocity-Verlet correction under Barnes–Hut, and one for the bosons with Boson interaction;
+  velocity-Verlet correction when the walk is in use, and one for the bosons with Boson interaction;
   the items come from `tree-items-bodies.wgsl` or `tree-items-bosons.wgsl`): the bounds, the
   padded root box, a key per active item (a 30-bit Morton code and the slot) packed to the
   front (about a square root box, so every cell is square), `treePlan` (one thread: the sort's
