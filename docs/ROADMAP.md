@@ -27,17 +27,21 @@ three serial sessions, and parallel lanes (subagents, worktrees) fit a whole ver
 
 | Date | Decision |
 |---|---|
+| 2026-10-27 | **The list of figures grows by acceptance criteria** (§1.3, §4): §4's two dozen are candidates; a figure ships when its measured number meets its prediction, and earns its place by putting a question no other figure puts; variants share a figure. |
+| 2026-10-27 | **Sight beside the model:** 2.6 runs in parallel with 2.5, behind the trajectory contract (§3, §6.1). |
+| 2026-10-27 | **The known future is drawn:** a prescribed world line's future rises above the present, faint and dashed, while free bodies' futures stay blank (§6.2). |
+| 2026-10-27 | **No sound, for now** (a9's lean): the opt-in speaker is set aside (§11.2). |
 | 2026-10-27 | **The model before the laboratory** (a9's suggestion; `MODEL.md` §0): 2.5 is the model pass, 3.0 the record and the instrument. Step 0 landed the same day. Supersedes "the model is held through 2.5" (2026-10-24). |
 | 2026-10-27 | **Show, don't tell** (root `AGENTS.md`): the sim names things and reads out values; what they mean lives in the about panel, the info tips and a9's posts. A figure's caption is its name and its live values. |
 | 2026-10-26 | **The margin in the plate's notation** (2.3): four tabs, Figure · Laws · World · Measure; what the plate always means is not a switch (world lines always drawn, lensing follows Gravity, every body's outline is its clock); one question, one control; each figure's knobs in its caption. Barnes–Hut is not a user choice: the count picks it. |
 | 2026-10-25 | **The caps are 4096 bodies, 16384 photons and 4096 each of pions and leptons** (2.2). The world-line store grows with the bodies in use, so a small scene costs what it did. |
 | 2026-10-24 | **Worldline is a planar spacetime laboratory** (§1). No volumetric 3D physics, no gas, no quantum layer. |
 | 2026-10-24 | **Canvas labels arrive with the instrument** (§7.2), attached to picked events and named bodies. |
-| 2026-10-24 | **Six curated presets** (2.0); the eighteen cut presets stay cut. A preset earns its place as an experiment, not as coverage. Open decision 1 proposes growing the list by that rule. |
+| 2026-10-24 | **Six curated presets** (2.0); the eighteen cut presets stay cut. A preset earns its place as an experiment, not as coverage; since 2026-10-27 the list grows by that rule. |
 | 2026-10-23 | **WebGPU only.** No CPU physics or Canvas renderer. |
 | 2026-10-23 | **The planar convention:** the scene is a symmetry plane of a 3+1 world, with named reductions (§1.2). |
 | 2026-10-23 | **Lengths: two knobs.** ℓ, the sheet thickness (physical, comoving under expansion) for fields and grid gravity; ε, numerical softening, for particle forces only. `MODEL.md` §3.1 proposes replacing ε by a contact kernel sized by the two bodies; ℓ stays. |
-| 2026-10-23 | **Photons stay planar,** a labelled surrogate for 3D emission. `MODEL.md` §3.5 makes them diagnostic first (open decision 3). |
+| 2026-10-23 | **Photons stay planar,** a labelled surrogate for 3D emission. `MODEL.md` §3.5 makes them diagnostic first (open decision 1). |
 | 2026-10-23 | **KG in the exponential metric:** `φ̈ = e^{4Φ}∇²φ − e^{2Φ}V′ + 4Φ̇φ̇`, Φ from fields and particles. |
 | 2026-10-23 | **Clocks:** the additive lapse `√max(0, 1 + 2Φ_N − v²)`; Thomas precession from non-gravitational acceleration only, gravity through the geodetic term. |
 | 2026-10-23 | **World-line samples are 12 floats** (`t, x, y, wx, wy, ax, ay, τ, θ, angw, m, q`); the event log's schema is fixed (§12.2). |
@@ -52,21 +56,13 @@ through 2.5, the 2026-10-24 version order) are in git history.
 
 ### Open
 
-1. **The list of figures** (§4): grow from six by acceptance criteria, with the two dozen in §4 as
-   candidates and variants sharing a figure (recommended), or stay a curated handful.
-2. **Sight beside the model** (§3): 2.6, sight and prescribed world lines, in parallel with 2.5
-   behind a shared trajectory contract (recommended), or after the model as part of 3.0.
-3. **The model's decisions** (`MODEL.md` §8): the axion's name and its pair coupling; derive or drop
+1. **The model's decisions** (`MODEL.md` §8): the axion's name and its pair coupling; derive or drop
    the Peccei–Quinn term and the Higgs-modulated Yukawa range (recommended there: drop both);
    whether photons stay diagnostic or come to act; relativistic or Newtonian kinetics near
    Paczyński–Wiita holes. The model's step 2 ratifies its regimes once these are settled.
-4. **The known future** (§6.2): a prescribed world line's future drawn above the present, so the
-   plate shows what is determined (recommended), or the present stays the plate's top edge.
-5. **Where Seen lives** (§6.3): a third choice beside Lab and Observer, with the streak plate as a
+2. **Where Seen lives** (§6.3): a third choice beside Lab and Observer, with the streak plate as a
    band under the scene (recommended), or an inset.
-6. **Sound** (§6.9): an opt-in speaker that makes pulses, Doppler shifts and chirps audible
-   (proposed for a9's taste).
-7. **The first other spacetime** (§8): a static cosmic string, exact and drawn whole by the plate,
+3. **The first other spacetime** (§8): a static cosmic string, exact and drawn whole by the plate,
    then a moving one, with Gott's pair as a separate geometric explorer (recommended); or the
    black-hole metric first.
 
@@ -276,7 +272,7 @@ plan:
 1. **Deterministic stepping with sufficient resolution.** Next. It brings replay (3.0), figures whose
    numbers don't depend on the frame rate, and a caption that says when time is slowed. The ledger's
    compare-and-swap float accumulators become fixed-order sums (§10).
-2. **The regimes ratified,** once open decision 3 is settled.
+2. **The regimes ratified,** once open decision 1 is settled.
 3. **Conservative gravity, the kernels and the Higgs action,** with their energies and momenta. It
    brings the binary, perihelion and walls-and-matter figures; with gravity off the world lines,
    Barnes–Hut can serve gravity under Relativity, so only charges pay the pairwise light-cone cost
@@ -336,7 +332,7 @@ What sight may assume, stated before it is built (Codex):
   `F_agent = d(mw)/dt − F_other` and `W_agent = Δ(γm) − ∫F_other·v dt` (Codex: the inertial term
   matters; an isolated neutral body accelerated from rest is the falsifier). Radiation and its Schott
   term then settle the whole system's balance (`MODEL.md` §3.5).
-- **The known future** (open decision 4) [synthesis]: a prescribed line's future is known, so the
+- **The known future** [synthesis]: a prescribed line's future is known, so the
   tilted plate draws it above the present, faint and dashed, rising out of the sheet, while free
   bodies' futures stay blank. The plate then shows what is determined and what isn't.
 
@@ -353,7 +349,7 @@ What sight may assume, stated before it is built (Codex):
 - **In the plane:** each body is drawn at the emission event's position in the observer's
   coordinates, which puts it in its aberrated direction at the distance its light travelled. A fast
   body shows where it was, at its seen speed.
-- Seen is a third choice beside Lab and Observer (open decision 5), with the streak plate (§6.5)
+- Seen is a third choice beside Lab and Observer (open decision 2), with the streak plate (§6.5)
   under the scene.
 - **Model boundaries:** sight uses straight null lines; with gravity on, light bends (lensing, boson
   deflection) and sight doesn't, and the backdrop's lens map doesn't change that, which the key says.
@@ -459,24 +455,14 @@ Tilted, the sheet of the present is the observer's simultaneity. Drag its far ed
 its slope is the observer's velocity, and the figure bar's boost scale follows. The drawing is the
 control: an affordance rather than an instruction.
 
-### 6.9 Sound (open decision 6)
-
-One speaker control at the stage's top right, off by default (audio starts only from a gesture).
-Each sound reads a quantity, as each mark does: a beacon's pulses click as they arrive on the
-selected observer's clock, at the rate D/T, so the twin hears 1/(kT) going out and k/T coming back;
-a beacon can carry a tone, heard at its Doppler-shifted pitch; 3.x's gravitational-wave ring plays
-its strain, whose leading harmonic for a circular binary is 2·f_orb. Web Audio schedules each sound
-ahead from the arrival times, so it lands on the frame's simulated time. It costs little once
-arrivals exist, and ranks below seeing them.
-
-### 6.10 Extended bodies (a second stage)
+### 6.9 Extended bodies (a second stage)
 
 Each point of a body is seen at its own retarded time, so a fast body's seen outline is neither its
 lab shape nor its contracted shape (Terrell 1959, Penrose 1959) [standard]. In the plane, sample the
 body's rest-frame disk along its world tube per sky direction [synthesis]. Delaying the centre alone
 isn't this effect (Codex); label point-source sight as point-source until this stage lands.
 
-### 6.11 Oracles
+### 6.10 Oracles
 
 - a prescribed body's samples reproduce its curve's position, proper velocity and acceleration, and
   its interpolant stays timelike;
@@ -666,7 +652,6 @@ measurements; imposed backgrounds kept apart from the Friedmann closure.
 After the model pass identified binaries radiate by 2.5PN reaction (`MODEL.md` §3.2). Their waves are
 read at a remote ring of test masses, since their wavelength is about π/(2v) separations and a tensor
 strain is not a picture of a spiral; both polarizations through an off-plane detector's response.
-The ring's strain plays as sound (§6.9), its leading harmonic for a circular binary at 2·f_orb.
 
 ### 8.5 Fields carrying energy, and the model's separate projects
 
@@ -745,6 +730,9 @@ Not scheduled. Each is admitted when a figure needs it and nothing in the spine 
   aren't the register.
 - **Shared universes** between visitors: the record's recipes share runs without a server.
 - **A 1+1 panel beside the plate:** the tilt superseded it.
+- **Sound** (set aside 2026-10-27, a9's lean): an opt-in speaker for pulses clicking as they arrive
+  (at the rate D/T, so the twin would hear 1/(kT) going out and k/T coming back), Doppler-shifted
+  tones and a binary's strain. Each sound would have read a quantity; the plate carries them.
 
 ### 11.3 Retired
 

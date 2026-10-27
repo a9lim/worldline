@@ -1098,7 +1098,7 @@ Codex's answers to the first draft's sixteen questions (2026-10-27), and what ea
 ## 9. After the record (3.x)
 
 Cosmic strings and Gott's pair, the Schwarzschild and Kerr metric regime for test bodies and
-light, the embedding diagram, gravitational waves at a ring of test masses with chirp audio,
+light, the embedding diagram, gravitational waves at a ring of test masses,
 fields carrying energy through a closed surface; the covariance meter comes with the instrument.
 Roadmap §7.2 and §8 hold their detail.
 
