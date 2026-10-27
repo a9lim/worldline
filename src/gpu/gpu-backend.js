@@ -173,6 +173,8 @@ export default class GPUBackend {
             }
             sim.framePanel?.update();
         }
+        // Under Seen, the streak plate's rows over the time the spacetime view shows
+        sim.streak?.tick(this.physics, sim.spacetime ? sim.spacetime.depth() : 64, this._streakFrame = (this._streakFrame || 0) + 1);
         this.renderer.frameOn = !!frameParams;
         this.renderer.frameImages = frameParams ? frameParams.images : 1;
 
@@ -210,7 +212,9 @@ export default class GPUBackend {
         renderOpts.spacetime = null;
         const obs = view ? view.observer() : null;
         const boosting = view && view.boosting && obs.active;
-        const pierce = boosting ? 2 : (obs && obs.active && !obs.frameOn ? 1 : 0);
+        // Under Seen the slice points are where the world lines pierce the observer's past cone
+        const seen = sim.frames.seeing;
+        const pierce = boosting ? 2 : (obs && obs.active && (!obs.frameOn || (seen && view.tilt > 0.05)) ? 1 : 0);
         if (view && (!frameParams || obs.active)) {
             const st = sim._spacetimeOpts || (sim._spacetimeOpts = {});
             st.obs = obs;
@@ -224,6 +228,7 @@ export default class GPUBackend {
             st.topology = sim.boundaryMode === BOUND_LOOP ? sim.topology : -1;
             st.scaleA = this.physics.scaleA;
             st.prescribed = this.physics.prescribed.size;
+            st.seen = seen;
             st.future = view.future();
             renderOpts.spacetime = st;
         }

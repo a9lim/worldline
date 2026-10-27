@@ -2481,6 +2481,107 @@ cases.push({
     },
 });
 
+// ── 2.6: Seen (roadmap §6.3) ──
+
+cases.push({
+    name: 'Seen: a ring of static sources crowds forward, cos θ′ = (cos θ + β)/(1 + β cos θ), each at the distance its light travelled',
+    async run() {
+        const gp = await makeSim({ on: ['relativityEnabled'], domainW: 256, domainH: 256 });
+        const R = 30, N = 12, beta = 0.6, g = 1 / Math.sqrt(1 - beta * beta);
+        for (let k = 0; k < N; k++) {
+            const th = (k + 0.5) * 2 * Math.PI / N;
+            gp.addPrescribed({ kind: 'uniform', t0: 0, x: 128 + R * Math.cos(th), y: 128 + R * Math.sin(th), wx: 0, wy: 0 },
+                             { bornAt: -Infinity });
+        }
+        await run(gp, 1, 0.25);
+        gp.sliceFrame(frameParams({ kind: 3, boostX: beta, boostY: 0, originX: 128, originY: 128, refT: gp.simTime,
+                                    seen: true, viewHalfW: 1, viewHalfH: 1 }));
+        const view = await readView(gp, N);
+        gp.destroy();
+        let worstA = 0, worstR = 0;
+        view.forEach((b, k) => {
+            const th = (k + 0.5) * 2 * Math.PI / N;
+            const want = Math.sign(Math.sin(th)) * Math.acos((Math.cos(th) + beta) / (1 + beta * Math.cos(th)));
+            worstA = Math.max(worstA, Math.abs(Math.atan2(b.y, b.x) - want));
+            worstR = Math.max(worstR, Math.abs(Math.hypot(b.x, b.y) / (g * R * (1 + beta * Math.cos(th))) - 1));
+        });
+        return { expected: 'angles by aberration; r′ = γR(1 + β cos θ)', measured: `${view.filter((b) => b.valid).length} of ${N} seen`,
+                 metric: `|Δθ′| ${fmt(worstA, 2)} rad, r′ ${fmt(worstR * 100, 2)}%`,
+                 pass: view.every((b) => b.valid) && worstA < 1e-3 && worstR < 1e-3 };
+    },
+});
+
+cases.push({
+    name: 'Seen: a moving body is seen where it was when its light left, and one spawned now only once its light arrives',
+    async run() {
+        const gp = await makeSim({ on: ['relativityEnabled'], domainW: 256, domainH: 256 });
+        const eye = [128, 128];
+        const c = { kind: 'uniform', t0: 0, x: 90, y: 150, wx: 0.75, wy: 0.1 };
+        gp.addPrescribed(c, { bornAt: -Infinity });
+        gp.addParticle({ x: 128 + 20, y: 128, mass: 1 });   // born now, 20 away
+        const seen = async () => {
+            gp.sliceFrame(frameParams({ kind: 3, boostX: 0, boostY: 0, originX: eye[0], originY: eye[1], refT: gp.simTime,
+                                        seen: true, viewHalfW: 1, viewHalfH: 1 }));
+            return readView(gp, 2);
+        };
+        await run(gp, 10, 0.25);
+        const early = await seen();
+        await run(gp, 15, 0.25);
+        const late = await seen();
+        const T = gp.simTime;
+        gp.destroy();
+        let tr = T;
+        for (let k = 0; k < 60; k++) { const p = curveAt(c, tr); tr = T - Math.hypot(p.x - eye[0], p.y - eye[1]); }
+        const p = curveAt(c, tr);
+        const err = Math.hypot(late[0].x - (p.x - eye[0]), late[0].y - (p.y - eye[1]));
+        return { expected: `(${fmt(p.x - eye[0], 4)}, ${fmt(p.y - eye[1], 4)}); the newborn unseen at t 10, seen at t 25`,
+                 measured: `(${fmt(late[0].x, 4)}, ${fmt(late[0].y, 4)}); newborn ${early[1].valid ? 'seen' : 'unseen'}, then ${late[1].valid ? 'seen' : 'unseen'}`,
+                 metric: `|Δx| ${fmt(err, 2)}`, pass: err < 2e-3 && !early[1].valid && late[1].valid };
+    },
+});
+
+cases.push({
+    name: 'The streak plate: a moving observer sees static sources aberrated and shifted by D = γ(1 + β cos θ), a moving source by γ_o(1 − n̂·u)/γ_s(1 − n̂·v)',
+    async run() {
+        const gp = await makeSim({ on: ['relativityEnabled'], domainW: 256, domainH: 256 });
+        const R = 30, N = 8, beta = 0.6, g = 1 / Math.sqrt(1 - beta * beta);
+        for (let k = 0; k < N; k++) {
+            const th = (k + 0.5) * 2 * Math.PI / N;
+            gp.addPrescribed({ kind: 'uniform', t0: 0, x: 128 + R * Math.cos(th), y: 128 + R * Math.sin(th), wx: 0, wy: 0 },
+                             { bornAt: -Infinity });
+        }
+        const mover = { kind: 'uniform', t0: 0, x: 100, y: 160, wx: 0.5, wy: -0.3 };
+        gp.addPrescribed(mover, { bornAt: -Infinity });
+        await run(gp, 1, 0.25);
+        gp.sliceFrame(frameParams({ kind: 3, boostX: beta, boostY: 0, originX: 128, originY: 128, refT: gp.simTime,
+                                    seen: true, viewHalfW: 1, viewHalfH: 1 }));
+        gp.requestStreak({ dTau: 0.5, forward: [1, 0] });
+        let st = null;
+        for (let i = 0; i < 200 && !st; i++) { await new Promise((r) => setTimeout(r, 5)); st = gp.readStreak(); }
+        const T = gp.simTime;
+        gp.destroy();
+        const row0 = (j) => st.data.subarray(j * 4, j * 4 + 4);
+        let worstA = 0, worstD = 0;
+        for (let k = 0; k < N; k++) {
+            const th = (k + 0.5) * 2 * Math.PI / N, e = row0(k);
+            const want = Math.sign(Math.sin(th)) * Math.acos((Math.cos(th) + beta) / (1 + beta * Math.cos(th)));
+            worstA = Math.max(worstA, Math.abs(e[0] - want));
+            worstD = Math.max(worstD, Math.abs(e[1] / (g * (1 + beta * Math.cos(th))) - 1));
+        }
+        // The moving source, from its analytic retarded event
+        let tr = T;
+        for (let i = 0; i < 60; i++) { const p = curveAt(mover, tr); tr = T - Math.hypot(128 - p.x, 128 - p.y); }
+        const p = curveAt(mover, tr), gs = Math.sqrt(1 + p.wx ** 2 + p.wy ** 2);
+        const r = Math.hypot(128 - p.x, 128 - p.y), n = [(128 - p.x) / r, (128 - p.y) / r];
+        const Dm = g * (1 - n[0] * beta) / (gs * (1 - n[0] * p.wx / gs - n[1] * p.wy / gs));
+        const errM = Math.abs(row0(N)[1] / Dm - 1);
+        return { expected: `aberrated angles; D from ${fmt(g * (1 - beta), 3)} to ${fmt(g * (1 + beta), 3)}; mover D ${fmt(Dm, 4)}`,
+                 measured: `mover D ${fmt(row0(N)[1], 4)}; ${[...Array(N + 1).keys()].filter((j) => row0(j)[2] > 0.5).length} of ${N + 1} seen`,
+                 metric: `|Δθ′| ${fmt(worstA, 2)}, D ${fmt(worstD * 100, 2)}%, mover ${fmt(errM * 100, 2)}%`,
+                 pass: worstA < 1e-3 && worstD < 1e-3 && errM < 1e-3 };
+    },
+});
+
 async function runAll(filter = '') {
     rowsEl.textContent = '';
     logEl.textContent = '';

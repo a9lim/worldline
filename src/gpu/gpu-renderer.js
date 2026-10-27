@@ -359,6 +359,8 @@ export default class GPURenderer {
                 pierceGroup: group(p.pierce, 'spacetimePierce', [...line, [5, b.color], [11, b.particleAux]]),
                 future: p.future,
                 futureGroup: group(p.future, 'spacetimeFuture', [[3, b.wlMeta], [4, b.particleState], [5, b.color], [10, fs], [20, b.curves], [21, b.prescribedList]]),
+                seenRay: p.seenRay,
+                seenRayGroup: group(p.seenRay, 'spacetimeSeenRay', [...line, [5, b.color]]),
                 tickRing: p.tickRing, tickRay: p.tickRay, tickMark: p.tickMark,
                 tickRingGroup: group(p.tickRing, 'spacetimeTickRing', line),
                 tickRayGroup: group(p.tickRay, 'spacetimeTickRay', [...line, [20, b.curves]]),
@@ -412,6 +414,7 @@ export default class GPURenderer {
         const window = o.active ? 0 : Math.min(WORLDLINE_LEN, Math.ceil(st.depth / WORLDLINE_DT) + 2);
         _spacetimeU32[27] = window;
         _spacetimeF32[28] = st.prescribed > 0 ? st.future : 0;
+        _spacetimeF32[29] = st.seen ? 1 : 0;
         this.device.queue.writeBuffer(this._spacetimeUniformBuffer, 0, _spacetimeData);
         if (slots > 0 && _linesShown(st)) {
             encoder.clearBuffer(sp.counts, 0, slots * 4);
@@ -437,9 +440,11 @@ export default class GPURenderer {
     _renderSpacetime(pass, st, slots) {
         const sp = this._spacetime;
         if (!sp || !st || (st.tilt < 0.002 && !st.pierce && !st.trails)) return;
-        pass.setPipeline(sp.cone);
-        pass.setBindGroup(0, sp.coneGroup);
-        pass.draw(2 * (72 + 1), 6);   // four rings, two generators
+        if (st.selected >= 0 || st.seen) {
+            pass.setPipeline(sp.cone);
+            pass.setBindGroup(0, sp.coneGroup);
+            pass.draw(2 * (72 + 1), 6);   // four rings, two generators
+        }
         pass.setPipeline(sp.boson);
         pass.setBindGroup(0, sp.bosonGroup);
         pass.draw(4, GPU_MAX_PHOTONS + GPU_MAX_PIONS + GPU_MAX_LEPTONS);
@@ -472,6 +477,11 @@ export default class GPURenderer {
             pass.setPipeline(sp.future);
             pass.setBindGroup(0, sp.futureGroup);
             pass.draw(6 * FUTURE_SEGS, st.prescribed);
+        }
+        if (st.seen && st.tilt >= 0.05 && slots > 0) {
+            pass.setPipeline(sp.seenRay);
+            pass.setBindGroup(0, sp.seenRayGroup);
+            pass.draw(4, slots);
         }
         if (st.pierce && slots > 0) {
             pass.setPipeline(sp.pierce);

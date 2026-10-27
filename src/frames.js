@@ -6,6 +6,11 @@
 //
 // The lagged view (the default) puts the observer's now far enough in the lab's past that
 // the whole visible slice has already been computed; `state.lag` is how far.
+//
+// Seen (`seen`, roadmap §6.3) draws what the observer sees instead: every world line cut by its
+// past light cone now, each body in its aberrated direction at the distance its light travelled.
+// The cone is all computed past, so it needs no lag. Lorentz observers only: the co-rotating and
+// falling ones see as the boost and the red body do.
 import { BOUND_LOOP, TORUS } from './config.js';
 
 export const FRAME_LAB = 0;
@@ -30,11 +35,15 @@ export default class Frames {
         this.origin = [0, 0];      // boost and co-rotating frames: reference point (lab)
         this.refT = 0;             // lab time at which `origin` was taken
         this.lookBack = 0;         // the scrubber's extra lag, while paused
+        this.seen = false;         // Seen: slice on the observer's past light cone
         this.state = null;         // the observer as last read back (lag, u, γ, validity)
         this._labCamera = null;
     }
 
     get active() { return this.kind !== FRAME_LAB; }
+
+    /** True while the view draws what the observer sees (Seen). */
+    get seeing() { return this.active && this.seen; }
 
     /** Frames that follow the selected particle. */
     get followsParticle() { return this.kind === FRAME_PARTICLE || this.kind === FRAME_FREEFALL; }
@@ -74,6 +83,7 @@ export default class Frames {
         }
         const wasActive = this.active;
         this.kind = kind;
+        if (kind === FRAME_LAB || kind === FRAME_COROTATE || kind === FRAME_FREEFALL) this.seen = false;
         this.state = null;
         this.lookBack = 0;
         if (kind === FRAME_LAB) {
@@ -118,6 +128,7 @@ export default class Frames {
             lookBack: sim.running ? 0 : this.lookBack,
             viewX: cam.x, viewY: cam.y, viewHalfW: halfW, viewHalfH: halfH,
             omega: this.omega,
+            seen: this.seen,
         };
     }
 }

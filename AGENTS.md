@@ -89,6 +89,7 @@ src/cosmology.js         the scale factor a(t): schedules, the Friedmann closure
 src/cosmology-panel.js   the Measure tab's expansion readouts and the overlay's horizons
 src/frames.js            the observer the view is drawn for (sim.frames), FrameParams
 src/frame-panel.js       the Figure tab's Observer (choice, parameters, scrubber) and the Measure tab's readouts of it
+src/streak.js            the streak plate: under Seen, the band under the scene of what the observer saw
 src/lens-panel.js        the Laws tab's Backdrop (distance, the microlensing probe) and the Measure tab's light curve
 src/save-load.js         quick save (localStorage), JSON download/upload
 src/stats-display.js     the Measure tab's ledger (with drift sparklines) and the selected body
@@ -624,6 +625,29 @@ the lab and it (`sim.observerKind`): a moving observer is eased into through the
   each body's colour at `instance / images`.
 - **Bosons** (`boson-render.wgsl`) are drawn where their straight paths cross the slice,
   no earlier than their emission; photons take the Doppler factor `γ(1 − u·v̂)` in hue.
+- **Seen** (`frames.seen`, the figure bar's third word, roadmap §6.3): what the observer sees
+  instead of what it measures. The slicer cuts every world line by the observer's past light cone
+  at its anchor (`wlOnCone` in `frame-slice.wgsl`, on the shared reader's primitives, beside
+  `wlOnSlice`), which is all computed past, so there is no lag; the event a body is seen at,
+  boosted into the observer's coordinates (x′∥ = γ(Δ∥ − uΔt), which on a plane slice is Δ∥/γ), lies
+  in its aberrated direction at the distance its light travelled, so each body sits back on its
+  trail where its light left. Before a source's oldest sample its history is unavailable and it
+  isn't drawn (a body spawned now appears once its light arrives); sight doesn't extrapolate.
+  Lorentz observers only: from rotating or falling, Seen takes the boost or the red body. A boost
+  observer may be at rest: an eye at the camera's centre. Tilted, the observer's past cone is
+  drawn (to half the domain's diagonal, in the ink unless the observer is the red body), each
+  world line's pierce of it ringed (`conePierceOf`), and the light in flight from each pierce to
+  the observer (`vs_seenRay`). Point sources: a fast body's seen outline (Terrell) is §6.9's.
+- **The streak plate** (`src/streak.js`, `streakRows` in `frame-slice.wgsl`, roadmap §6.5): under
+  Seen, a band under the scene. Row k is the reception event k·dTau of the observer's proper time
+  back (128 rows over the spacetime view's depth, now at the top); for each of the first
+  `STREAK_SOURCES` (128) slots, the direction it was seen in at that event, in the observer's rest
+  frame against the plate's reference direction (the Figure tab's direction, at the centre), and
+  the Doppler factor D = γ_o(1 − n̂·u_o)/γ_s(1 − n̂·v_s). The GPU computes the rows every sixth
+  render and they are read back and drawn with Canvas 2D: each source a track in its ink (the
+  selection's in the accent), its width reading D⁴ (bolometric intensity), solid while approaching
+  (D ≥ 1) and dashed while receding. A track ends where the source's or the observer's history
+  runs out. Real light (pool photons arriving) isn't on it yet.
 - **What frames skip:** force and velocity arrows, torque arcs, the heatmap and the field
   overlays stay lab-only and are hidden in a frame; a frame that is not a boost draws no
   world lines.

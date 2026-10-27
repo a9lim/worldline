@@ -291,6 +291,9 @@
                 <button id="panelToggle" class="text-btn" type="button" aria-controls="control-panel" aria-expanded="false" data-i18n="topbar.controls">Controls</button>
             </div>
         </div>
+        <div id="streak" class="streak" hidden>
+            <canvas id="streakCanvas" aria-label="What the observer has seen: direction across, its proper time upward"></canvas>
+        </div>
         <div class="figure-bar">
             <p class="caption" id="caption"><span class="caption-n" id="caption-title"></span><span id="caption-text"></span></p>
             <div class="scene-controls">
@@ -298,7 +301,7 @@
                     <button id="view-plane" type="button" aria-pressed="true" data-i18n="view.plane">plane</button><button id="view-spacetime" type="button" aria-pressed="false" data-i18n="view.spacetime">spacetime</button>
                 </span>
                 <span class="choice" role="group" aria-label="Coordinates" data-i18n-aria="coords.group">
-                    <button id="coords-lab" type="button" aria-pressed="true" data-i18n="coords.lab">lab</button><button id="coords-observer" type="button" aria-pressed="false" data-i18n="coords.observer">observer</button>
+                    <button id="coords-lab" type="button" aria-pressed="true" data-i18n="coords.lab">lab</button><button id="coords-observer" type="button" aria-pressed="false" data-i18n="coords.observer">observer</button><button id="coords-seen" type="button" aria-pressed="false" data-i18n="coords.seen">seen</button>
                 </span>
                 <span class="scale-row boost" id="boost-row"><label for="boost-input" data-i18n="boost.label">boost</label><input type="range" class="scale" id="boost-input" min="-0.9" max="0.9" step="0.01" value="0"><output id="boost-out" for="boost-input">0.00c</output></span>
             </div>

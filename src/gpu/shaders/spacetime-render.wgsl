@@ -36,6 +36,8 @@
 //   vs_future  prescribed bodies × 6·FUTURE_SEGS, triangle list: a prescribed body's known
 //              future, from its curve (shared-prescribed.wgsl), above the present, dashed, its
 //              beads hollow; seen from above, its path ahead
+//   vs_seenRay maxParticles × 4, triangle strip: under Seen, tilted, the light in flight from
+//              where each world line pierces the observer's past cone to the observer now
 //   vs_tickRing  TICKS × 2·(CONE_SEGS + 1), triangle strip: the selected body's ticks' light
 //              where it crosses the present, a ring growing at c from each tick
 //   vs_tickRay TICKS·RECEIVERS × 4, triangle strip: tilted, the null ray from each tick to where
@@ -91,7 +93,7 @@ struct SpacetimeParams {
     lineWindow: u32,    // samples drawn back from each line's newest (0: all); past the depth
                         // the lines fade to nothing, so in the lab's coordinates only these show
     future: f32,        // how far above the present the prescribed bodies' known future is drawn
-    _pad0: f32,
+    seen: f32,          // 1 under Seen: slice points on the observer's past light cone
     _pad1: f32,
     _pad2: f32,
 };
@@ -428,6 +430,43 @@ fn pierceOf(s: u32, l: Line, o: Obs) -> Pierce {
     out.p.tau = mix(a.tau, b.tau, k);
     out.found = true;
     return out;
+}
+
+/** Where slot s's world line crosses the observer's past light cone at its anchor (Seen):
+ *  g = |x − x_A| − (t_A − t) rises along a timelike line. */
+fn conePierceOf(s: u32, l: Line, o: Obs) -> Pierce {
+    var out: Pierce;
+    out.found = false;
+    let last = pointOf(s, l, l.n - 1u);
+    let first = pointOf(s, l, 0u);
+    if (coneSeenG(o, last) < 0.0 || coneSeenG(o, first) > 0.0) { return out; }
+    var lo = 0u;
+    var hi = l.n - 1u;
+    for (var it = 0; it < 12; it++) {
+        if (hi - lo <= 1u) { break; }
+        let mid = (lo + hi) >> 1u;
+        if (coneSeenG(o, pointOf(s, l, mid)) <= 0.0) { lo = mid; } else { hi = mid; }
+    }
+    let a = pointOf(s, l, lo);
+    let b = pointOf(s, l, hi);
+    let ga = coneSeenG(o, a);
+    let gb = coneSeenG(o, b);
+    let k = select(0.0, clamp(ga / (ga - gb), 0.0, 1.0), abs(ga - gb) > 1e-9);
+    out.p.pos = mix(a.pos, b.pos, k);
+    out.p.t = mix(a.t, b.t, k);
+    out.p.tau = mix(a.tau, b.tau, k);
+    out.found = true;
+    return out;
+}
+
+fn coneSeenG(o: Obs, p: LinePoint) -> f32 {
+    return length(p.pos - o.xA) - (o.tA - p.t);
+}
+
+/** The slice point a body is drawn at: on the observer's present, or under Seen its past cone. */
+fn slicePierce(s: u32, l: Line, o: Obs) -> Pierce {
+    if (params.seen > 0.5) { return conePierceOf(s, l, o); }
+    return pierceOf(s, l, o);
 }
 
 // ─── World lines, decimated before they are drawn ───
@@ -983,18 +1022,31 @@ fn vs_line(@builtin(vertex_index) vid: u32) -> VOut {
 @vertex
 fn vs_cone(@builtin(vertex_index) vid: u32, @builtin(instance_index) k: u32) -> VOut {
     let sel = params.selected;
-    if (params.tilt < 0.002 || sel >= params.maxParticles) { return collapsed(); }
+    let seen = params.seen > 0.5;
+    if (params.tilt < 0.002 || (sel >= params.maxParticles && !seen)) { return collapsed(); }
     let o = observer();
-    let l = lineOf(sel, o);
-    if (!l.ok || !l.alive) { return collapsed(); }
-    // The apex: the body where the observer sees it now (its lab present without a boost)
-    var apex = pointOf(sel, l, l.n - 1u);
-    if (o.observing) {
-        let pc = pierceOf(sel, l, o);
-        if (!pc.found) { return collapsed(); }
-        apex = pc.p;
+    var apex: LinePoint;
+    if (seen) {
+        // Under Seen, the observer's own past cone, which the world lines pierce
+        apex.pos = o.xA;
+        apex.t = o.tA;
+    } else {
+        let l = lineOf(sel, o);
+        if (!l.ok || !l.alive) { return collapsed(); }
+        // The apex: the body where the observer sees it now (its lab present without a boost)
+        apex = pointOf(sel, l, l.n - 1u);
+        if (o.observing) {
+            let pc = pierceOf(sel, l, o);
+            if (!pc.found) { return collapsed(); }
+            apex = pc.p;
+        }
     }
-    let reach = CONE_REACH * params.depth;
+    // Under Seen the cone reaches back as far as the light of the farthest body nearest it
+    let reach = select(CONE_REACH * params.depth,
+                       min(params.depth, 0.5 * length(vec2(params.domainW, params.domainH))), seen);
+    // The accent is the selection's: under Seen the cone is the observer's, in the accent only
+    // when the observer is the red body
+    let coneInk = select(accent(), select(ink(), accent(), abs(frameState.kind - 2.0) < 0.5), seen);
     let d = towardCamera();
     let m = length(d.xy);
     let outline = m > 1e-4 && d.z < m;
@@ -1017,7 +1069,7 @@ fn vs_cone(@builtin(vertex_index) vid: u32, @builtin(instance_index) k: u32) -> 
         dir = normalize(dir);
         let v = min(vid, 3u);
         out.position = offsetClip(select(c0, c1, (v & 2u) != 0u), vec2(-dir.y, dir.x) * select(-1.0, 1.0, (v & 1u) != 0u) * 2.0);
-        out.color = vec4(accent(), 0.4 * params.tilt);
+        out.color = vec4(coneInk, 0.4 * params.tilt);
         out.across = select(-1.0, 1.0, (v & 1u) != 0u) * 2.0;
         out.core = 0.5;
         return out;
@@ -1035,7 +1087,7 @@ fn vs_cone(@builtin(vertex_index) vid: u32, @builtin(instance_index) k: u32) -> 
     dir = normalize(dir);
     let back = outline && dot(vec3(cos(ang), sin(ang), 1.0), d) < 0.0;
     out.position = offsetClip(c, vec2(-dir.y, dir.x) * side * 2.0);
-    out.color = vec4(accent(), 0.42 * (1.0 - 0.18 * f32(k)) * params.tilt * select(1.0, 0.75, back));
+    out.color = vec4(coneInk, 0.42 * (1.0 - 0.18 * f32(k)) * params.tilt * select(1.0, 0.75, back));
     out.across = side * 2.0;
     // Dashes, about 7 px a period: the ring's angle, and its dash count around
     let rPx = length(ahead - behind) / (2.0 * e);
@@ -1157,7 +1209,7 @@ fn vs_pierce(@builtin(vertex_index) vid: u32, @builtin(instance_index) s: u32) -
     if (!o.observing) { return out; }
     let l = lineOf(s, o);
     if (!l.ok) { return out; }
-    let pc = pierceOf(s, l, o);
+    let pc = slicePierce(s, l, o);
     if (!pc.found) { return out; }
     let e = disp(o, pc.p.pos, pc.p.t);
     let r = max(particleAux[s].radius, 2.5 / camera.zoom);
@@ -1168,6 +1220,32 @@ fn vs_pierce(@builtin(vertex_index) vid: u32, @builtin(instance_index) s: u32) -
     out.uv = corner * 1.25;
     out.ring = select(0.0, 1.0, params.pierce < 1.5);
     out.px = r * camera.zoom;
+    return out;
+}
+
+/** Under Seen, tilted: the light in flight, from where slot s pierces the cone to the observer now. */
+@vertex
+fn vs_seenRay(@builtin(vertex_index) vid: u32, @builtin(instance_index) s: u32) -> VOut {
+    if (params.seen < 0.5 || params.tilt < 0.05) { return collapsed(); }
+    let o = observer();
+    let l = lineOf(s, o);
+    if (!l.ok) { return collapsed(); }
+    let pc = conePierceOf(s, l, o);
+    if (!pc.found) { return collapsed(); }
+    let c0 = projectEvent(o, pc.p.pos, pc.p.t);
+    let c1 = projectEvent(o, o.xA, o.tA);
+    var dir = toPx(c1) - toPx(c0);
+    if (dot(dir, dir) < 1e-6) { return collapsed(); }
+    dir = normalize(dir);
+    let side = select(-1.0, 1.0, (vid & 1u) != 0u);
+    var out: VOut;
+    out.position = offsetClip(select(c0, c1, (vid & 2u) != 0u), vec2(-dir.y, dir.x) * side * 1.5);
+    let rgb = select(mix(unpack(color[s]), ink(), 0.35), accent(), s == params.selected);
+    out.color = vec4(rgb, 0.3 * params.tilt);
+    out.across = side * 1.5;
+    out.tau = NO_TAU;
+    out.pxPerTau = 0.0;
+    out.core = 0.45;
     return out;
 }
 

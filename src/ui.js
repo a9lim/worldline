@@ -9,6 +9,7 @@ import { DEFAULT_DOMAIN, COL_MERGE, COL_BOUNCE, BOUND_DESPAWN, BOUND_BOUNCE, BOU
 import { REFERENCE } from './reference.js';
 import { quickSave, quickLoad, downloadState, uploadState } from './save-load.js';
 import { bindChoice, showChoice, enableChoice, bindPad } from './controls.js';
+import { FRAME_KEYS } from './frames.js';
 import { plateGlyph, edgeGlyph, bodyGlyph, fillMarks } from './marks.js';
 
 let antimatterMode = false;
@@ -539,11 +540,14 @@ export function setupUI(sim) {
     const boostOut = $('boost-out');
     const coordsLab = $('coords-lab');
     const coordsObserver = $('coords-observer');
+    const coordsSeen = $('coords-seen');
     sim.observerKind = 'boost';   // the observer `observer` switches to
     const syncCoords = () => {
-        const obs = sim.frames.active || sim.spacetime._sTo === 1;
-        coordsLab.setAttribute('aria-pressed', String(!obs));
+        const seen = sim.frames.seeing;
+        const obs = !seen && (sim.frames.active || sim.spacetime._sTo === 1);
+        coordsLab.setAttribute('aria-pressed', String(!obs && !seen));
         coordsObserver.setAttribute('aria-pressed', String(obs));
+        coordsSeen.setAttribute('aria-pressed', String(seen));
         $('boost-row').hidden = sim.observerKind !== 'boost';
         sim.framePanel?.showObserver();
         sim.caption?.refresh();
@@ -569,6 +573,7 @@ export function setupUI(sim) {
         syncCoords();
     });
     const toObserver = () => {
+        sim.frames.seen = false;
         if (sim.observerKind === 'boost') {
             // An observer at rest is the lab: give it somewhere to go
             if (sim.frames.boostSpeed < 0.01) setBoost(0.5);
@@ -579,6 +584,16 @@ export function setupUI(sim) {
         syncCoords();
     };
     coordsObserver.addEventListener('click', toObserver);
+    // Seen: what the observer sees (frames.js). A boost observer may be at rest, an eye at the
+    // camera's centre; the co-rotating and falling observers see as the boost and the red body
+    const toSeen = () => {
+        const kind = { corotate: 'boost', freefall: 'particle' }[sim.observerKind] ?? sim.observerKind;
+        if (sim.frames.kind !== FRAME_KEYS.indexOf(kind)) sim.framePanel?.choose(kind);
+        if (sim.frames.active) sim.frames.seen = true;
+        sim._dirty = true;
+        syncCoords();
+    };
+    coordsSeen.addEventListener('click', toSeen);
     sim.spacetime.onCoords = syncCoords;
     // Words drawn on the canvas
     const labelCanvas = () => {

@@ -14,6 +14,12 @@
 // The lagged view sets t_A = now − |u|γ·max(x′·û) over the visible rectangle (plus any
 // scrub), so the whole visible slice lies in the computed past.
 //
+// Seen (fp.seen, roadmap §6.3): what the observer sees instead of what it measures. Each world
+// line is cut by the observer's past light cone at its anchor, which is all computed past, so
+// there is no lag (only the scrub's). The event a body is seen at, boosted into the observer's
+// coordinates, lies in its aberrated direction at the distance its light travelled. Before a
+// source's oldest sample its history is unavailable, and sight doesn't extrapolate it (§6.1).
+//
 // Prepended with the shared prefix and shared-worldline.wgsl.
 
 struct FrameParams {
@@ -35,7 +41,7 @@ struct FrameParams {
     periodic: u32,
     topology: u32,
     maxLag: f32,        // the recorded history's reach
-    _pad0: f32,
+    seen: u32,          // 1: slice on the observer's past light cone (Seen) instead of its present
     _pad1: f32,
 };
 
@@ -55,7 +61,7 @@ struct FrameState {
     domainH: f32,
     topology: f32,      // the loop topology, or −1 when the domain isn't periodic
     kind: f32,          // FrameParams.kind
-    _pad0: f32,
+    seen: f32,          // 1: the view buffers hold what the observer sees (FrameParams.seen)
     _pad1: f32,
 };
 
@@ -131,6 +137,49 @@ fn wlOnSlice(v: WLView, uc: vec2<f32>, c: f32) -> SlicePoint {
         let q = wlHermite(p0, p1, s);
         let g = sliceG(q.t, q.pos, uc, c);
         let gp = 1.0 - dot(uc, q.vel);
+        s = clamp(s - g / max(gp, 0.05), 0.0, dt);
+    }
+    out.p = wlHermite(p0, p1, s);
+    return out;
+}
+
+/**
+ * The point where world line v crosses the past light cone of the event (T, xo), on the covering
+ * plane: g(t) = |C(t) − xo| − (T − t) rises along a subluminal line (g' = n̂·v + 1 > 0), so the
+ * crossing is bracketed among the points and found by Newton on the Hermite. status: 0 found,
+ * 1 before the oldest sample (unavailable: not extrapolated), 2 after the line ends.
+ */
+fn coneG(t: f32, pos: vec2<f32>, xo: vec2<f32>, T: f32) -> f32 {
+    return length(pos - xo) - (T - t);
+}
+
+fn wlOnCone(v: WLView, xo: vec2<f32>, T: f32) -> SlicePoint {
+    var out: SlicePoint;
+    out.status = 0u;
+    if (v.count == 0u) { out.status = 1u; return out; }
+    let last = v.n - 1u;
+    if (coneG(wlTimeAt(v, last), wlPosAt(v, last), xo, T) < 0.0) { out.status = 2u; return out; }
+    if (coneG(wlTimeAt(v, 0u), wlPosAt(v, 0u), xo, T) > 0.0) { out.status = 1u; return out; }
+    var lo = 0u;
+    var hi = last;
+    for (var it = 0; it < 12; it++) {
+        if (hi - lo <= 1u) { break; }
+        let mid = (lo + hi) >> 1u;
+        if (coneG(wlTimeAt(v, mid), wlPosAt(v, mid), xo, T) <= 0.0) { lo = mid; } else { hi = mid; }
+    }
+    let p0 = wlPointAt(v, lo);
+    let p1 = wlPointAt(v, hi);
+    let dt = p1.t - p0.t;
+    if (dt <= EPSILON) { out.p = p1; return out; }
+    let g0 = coneG(p0.t, p0.pos, xo, T);
+    let g1 = coneG(p1.t, p1.pos, xo, T);
+    var s = clamp(dt * g0 / (g0 - g1), 0.0, dt);
+    for (var k = 0; k < 4; k++) {
+        let q = wlHermite(p0, p1, s);
+        let rv = q.pos - xo;
+        let rl = max(length(rv), EPSILON);
+        let g = rl - (T - q.t);
+        let gp = dot(rv / rl, q.vel) + 1.0;
         s = clamp(s - g / max(gp, 0.05), 0.0, dt);
     }
     out.p = wlHermite(p0, p1, s);
@@ -241,6 +290,7 @@ fn frameAnchor(@builtin(local_invocation_index) lid: u32) {
     st.domainH = fp.domainH;
     st.topology = select(-1.0, f32(fp.topology), fp.periodic != 0u);
     st.kind = f32(fp.kind);
+    st.seen = select(0.0, 1.0, fp.seen != 0u);
     st.valid = 1.0;
     st.phi = 0.0;
     st.u = vec2(0.0);
@@ -270,7 +320,7 @@ fn frameAnchor(@builtin(local_invocation_index) lid: u32) {
     let lorentz = fp.lorentz != 0u && fp.kind != 4u;
     var u = select(vec2(0.0), uNow, lorentz);
     var lag = fp.lookBack;
-    if (lorentz) {
+    if (lorentz && fp.seen == 0u) {
         // The slice reaches t_A + |u|γ·(x′·û) at observer position x′; the latest visible
         // point is the corner furthest along û
         let s = min(length(u), MAX_SPEED_RATIO);
@@ -349,10 +399,16 @@ fn sliceWorldLines(@builtin(global_invocation_id) gid: vec3u) {
     // In cover coordinates the slice t − u·(base + L·(C − C_now)) = t_A − u·X_A reads
     // t − (L·u)·C = c1
     let lorentz = st.lorentz > 0.5 && fp.kind != 4u;
-    let uS = select(vec2(0.0), st.u, lorentz);
-    let uc = L * uS;
-    let c1 = st.tA - dot(uS, st.xA) + dot(uS, base) - dot(uc, v.now.pos);
-    let sp = wlOnSlice(v, uc, c1);
+    var sp: SlicePoint;
+    if (fp.seen != 0u) {
+        // The observer's past light cone: its anchor on this world line's cover
+        sp = wlOnCone(v, v.now.pos + L * (st.xA - base), st.tA);
+    } else {
+        let uS = select(vec2(0.0), st.u, lorentz);
+        let uc = L * uS;
+        let c1 = st.tA - dot(uS, st.xA) + dot(uS, base) - dot(uc, v.now.pos);
+        sp = wlOnSlice(v, uc, c1);
+    }
     if (sp.status != 0u) { writeInvalid(k); return; }
     let q = sp.p;
 
@@ -360,17 +416,21 @@ fn sliceWorldLines(@builtin(global_invocation_id) gid: vec3u) {
     let X = base + L * (q.pos - v.now.pos);
     let V = L * q.vel;
     let delta = X - st.xA;
-    var xo = delta;
+    let dT = q.t - st.tA;
+    var xo = delta - select(vec2(0.0), st.u * dT, fp.kind != 4u);   // Galilean: x′ = Δ − u·Δt
     var vo = V - st.u;
     if (fp.kind == 4u) {
         xo = rotate(delta, -st.phi);
         vo = rotate(V - st.omega * vec2(-delta.y, delta.x), -st.phi);
     } else if (lorentz) {
+        xo = delta;
         let su = length(st.u);
         if (su > 1e-6) {
             let n = st.u / su;
-            // On the slice t − t_A = u·Δ, so x′∥ = Δ∥/γ and x′⊥ = Δ⊥
-            xo = delta + (1.0 / st.gamma - 1.0) * dot(delta, n) * n;
+            // x′∥ = γ(Δ∥ − u·Δt), x′⊥ = Δ⊥: on the slice t − t_A = u·Δ that is Δ∥/γ, and on
+            // the cone the event's aberrated direction at the distance its light travelled
+            let par = dot(delta, n);
+            xo = delta + (st.gamma * (par - su * dT) - par) * n;
             // Relativistic velocity addition
             let vPar = dot(V, n);
             let vPerp = V - vPar * n;
@@ -422,4 +482,123 @@ fn sliceWorldLines(@builtin(global_invocation_id) gid: vec3u) {
     let theta = atan2(L.y * sin(q.theta), L.x * cos(q.theta));
     let phase = q.tau - CLOCK_PERIOD * floor(q.tau / CLOCK_PERIOD);
     viewClocks[k] = vec4(q.tau, phase, select(theta, theta - st.phi, fp.kind == 4u), 1.0);
+}
+
+// ─── The streak plate (roadmap §6.5) ───
+// What the observer has seen, as a picture: row k is the reception event R_k on its world line
+// k·dTau of its proper time before the anchor (row 0 is now), and each source's entry there is the
+// direction the observer saw it in at R_k, in its rest frame against the plate's reference
+// direction, with the Doppler factor D = ν_o/ν_s of its light. One thread per (row, source),
+// sources the first `sources` slots. A row whose reception event lies before the observer's
+// oldest sample, and an entry whose emission lies before the source's, are unavailable (valid 0):
+// history has run out there. The plate is computed, not recorded.
+
+struct StreakParams {
+    rows: u32,
+    sources: u32,
+    dTau: f32,              // the observer's proper time between rows
+    _pad0: f32,
+    forward: vec2<f32>,     // the plate's reference direction (lab), at its centre
+    _pad1: vec2<f32>,
+};
+
+@group(1) @binding(4) var<uniform> sp: StreakParams;
+@group(1) @binding(5) var<storage, read_write> streak: array<vec4<f32>>;   // (angle, D, valid, 0)
+
+/** The point of world line v whose proper time is tau (bracketed, then on its Hermite segment). */
+fn wlAtTau(v: WLView, tau: f32) -> SlicePoint {
+    var out: SlicePoint;
+    out.status = 0u;
+    if (v.count == 0u) { out.status = 1u; return out; }
+    let last = v.n - 1u;
+    if (wlPointAt(v, 0u).tau > tau) { out.status = 1u; return out; }
+    if (wlPointAt(v, last).tau < tau) { out.status = 2u; return out; }
+    var lo = 0u;
+    var hi = last;
+    for (var it = 0; it < 12; it++) {
+        if (hi - lo <= 1u) { break; }
+        let mid = (lo + hi) >> 1u;
+        if (wlPointAt(v, mid).tau <= tau) { lo = mid; } else { hi = mid; }
+    }
+    let p0 = wlPointAt(v, lo);
+    let p1 = wlPointAt(v, hi);
+    let dtau = p1.tau - p0.tau;
+    // τ is linear across the Hermite segment (wlHermite mixes it)
+    let f = select(0.0, clamp((tau - p0.tau) / dtau, 0.0, 1.0), dtau > 1e-9);
+    out.p = wlHermite(p0, p1, f * (p1.t - p0.t));
+    return out;
+}
+
+@compute @workgroup_size(64)
+fn streakRows(@builtin(global_invocation_id) gid: vec3u) {
+    let idx = gid.x;
+    let k = idx / max(sp.sources, 1u);
+    let j = idx - k * max(sp.sources, 1u);
+    if (k >= sp.rows) { return; }
+    streak[idx] = vec4(0.0);
+    let st = frame;
+    if (st.valid < 0.5 || j >= fp.aliveCount) { return; }
+
+    // The reception event R_k, in the anchor-centred frame, and the observer's velocity there
+    var tR = st.tA;
+    var xR = st.xA;
+    var uR = st.u;
+    if (fp.kind == 2u) {
+        if (j == fp.slot) { return; }
+        let po = particles[fp.slot];
+        let ov = currentView(fp.slot, (po.flags & FLAG_ALIVE) != 0u);
+        let anchor = wlOnSlice(ov, vec2(0.0), st.tA);
+        if (anchor.status != 0u) { return; }
+        let at = wlAtTau(ov, anchor.p.tau - f32(k) * sp.dTau);
+        if (at.status != 0u) { return; }
+        let deckO = wlDeck(fp.slot);
+        tR = at.p.t;
+        xR = st.aNow + deckO.xy * (at.p.pos - ov.now.pos);
+        uR = select(vec2(0.0), deckO.xy * at.p.vel, st.lorentz > 0.5);
+    } else {
+        let back = st.gamma * f32(k) * sp.dTau;
+        tR = st.tA - back;
+        xR = st.xA - st.u * back;
+    }
+
+    // Source j's image nearest the observer now, its world line cut by R_k's past light cone
+    let p = particles[j];
+    let alive = (p.flags & FLAG_ALIVE) != 0u;
+    let retired = (p.flags & FLAG_RETIRED) != 0u && !alive;
+    if ((!alive && !retired) || (p.flags & FLAG_GHOST) != 0u) { return; }
+    let xNow = vec2(p.posX, p.posY);
+    var d = xNow - st.aNow;
+    var flips = vec2(1.0, 1.0);
+    if (fp.periodic != 0u) {
+        let mi = fullMinImageFlipsP(st.aNow.x, st.aNow.y, xNow.x, xNow.y, fp.domainW, fp.domainH, fp.topology);
+        d = mi.xy;
+        flips = mi.zw;
+    }
+    let L = wlDeck(j).xy * flips;
+    let base = st.aNow + d;
+    let v = currentView(j, alive);
+    let cone = wlOnCone(v, v.now.pos + L * (xR - base), tR);
+    if (cone.status != 0u) { return; }
+    let xE = base + L * (cone.p.pos - v.now.pos);
+    let vE = L * cone.p.vel;
+    let r = xR - xE;
+    let rl = length(r);
+    if (rl < 1e-5) { return; }
+    let n = r / rl;   // the light's direction of travel
+
+    // Doppler, D = γ_o(1 − n̂·u_o) / (γ_s(1 − n̂·v_s)), and aberration into the observer's rest
+    // frame: k = (1, n̂) → k′ = (γ(1 − u·n̂), n̂ + ((γ − 1)(n̂·û) − γ|u|)û)
+    let su = min(length(uR), MAX_SPEED_RATIO);
+    let ss = min(length(vE), MAX_SPEED_RATIO);
+    let go = 1.0 / sqrt(1.0 - su * su);
+    let gs = 1.0 / sqrt(1.0 - ss * ss);
+    let D = go * (1.0 - dot(n, uR)) / max(gs * (1.0 - dot(n, vE)), 1e-6);
+    var nObs = n;
+    if (su > 1e-6) {
+        let uh = uR / length(uR);
+        nObs = (n + ((go - 1.0) * dot(n, uh) - go * su) * uh) / (go * (1.0 - dot(uR, n)));
+    }
+    let look = -nObs;
+    let f = sp.forward;
+    streak[idx] = vec4(atan2(f.x * look.y - f.y * look.x, dot(f, look)), D, 1.0, 0.0);
 }

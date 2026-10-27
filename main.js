@@ -16,6 +16,7 @@ import CosmologyPanel from './src/cosmology-panel.js';
 import LensPanel from './src/lens-panel.js';
 import SpacetimeView, { EL_SPACETIME, AZ_SPACETIME } from './src/spacetime.js';
 import Caption from './src/caption.js';
+import StreakPlate from './src/streak.js';
 import QuenchPanel from './src/quench.js';
 import SceneKey from './src/scene-key.js';
 import GPUProfiler, { PERF } from './src/gpu/gpu-profiler.js';
@@ -356,6 +357,7 @@ class Simulation {
         this.lensPanel = new LensPanel(this);
         this.quench = new QuenchPanel(this);
         this.caption = new Caption(this);
+        this.streak = new StreakPlate(this);
         this.sceneKey = new SceneKey(this);
         this.syncControls();
 

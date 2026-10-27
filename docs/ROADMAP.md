@@ -28,6 +28,7 @@ three serial sessions, and parallel lanes (subagents, worktrees) fit a whole ver
 
 | Date | Decision |
 |---|---|
+| 2026-10-27 | **Seen is a third choice beside Lab and Observer** (a9), with the streak plate as a band under the scene (§6.3, §6.5). |
 | 2026-10-27 | **No bitwise determinism** (a9): it was for replay, which is gone. The model's step 1 is the state-driven step schedule, sub-tick subdivision and time slowing (a figure behaves the same at any frame rate and never loses accuracy silently); reproducibility to the bit isn't pursued (§5). |
 | 2026-10-27 | **3.0 is a causal, observational sandbox** (a9): the live run is the experiment. No checkpoints, replay, recipes, side-by-side runs or provenance, and no apparatus objects (beacons, detectors, mirrors); a visitor acts through the hand, prescribed bodies, editing and composing, and reads the history through events and their cones (§7). Supersedes the record (2026-10-24). |
 | 2026-10-27 | **The list of figures grows by acceptance criteria** (§1.3, §4): §4's two dozen are candidates; a figure ships when its measured number meets its prediction, and earns its place by putting a question no other figure puts; variants share a figure. |
@@ -63,9 +64,7 @@ through 2.5, the 2026-10-24 version order) are in git history.
    the Peccei–Quinn term and the Higgs-modulated Yukawa range (recommended there: drop both);
    whether photons stay diagnostic or come to act; relativistic or Newtonian kinetics near
    Paczyński–Wiita holes. The model's step 2 ratifies its regimes once these are settled.
-2. **Where Seen lives** (§6.3): a third choice beside Lab and Observer, with the streak plate as a
-   band under the scene (recommended), or an inset.
-3. **The first other spacetime** (§8): a static cosmic string, exact and drawn whole by the plate,
+2. **The first other spacetime** (§8): a static cosmic string, exact and drawn whole by the plate,
    then a moving one, with Gott's pair as a separate geometric explorer (recommended); or the
    black-hole metric first.
 
@@ -345,6 +344,9 @@ future drawn, and the twin rebuilt on them with turns of finite duration.
 
 ### 6.3 The cone as a slice
 
+Landed 2026-10-27 (§14; `AGENTS.md`, Frames): Seen as the figure bar's third word, the slicer's
+cone, the tilted cone with its pierces and the light in flight, unavailable history left undrawn.
+
 - **An observer** is a world line: the selected body, the boost observer, the accelerated observer
   (§6.6), or a prescribed or held body.
 - At each moment of its proper time, its past light cone meets every world line once (for
@@ -356,7 +358,7 @@ future drawn, and the twin rebuilt on them with turns of finite duration.
 - **In the plane:** each body is drawn at the emission event's position in the observer's
   coordinates, which puts it in its aberrated direction at the distance its light travelled. A fast
   body shows where it was, at its seen speed.
-- Seen is a third choice beside Lab and Observer (open decision 2), with the streak plate (§6.5)
+- Seen is a third choice beside Lab and Observer (a9, 2026-10-27), with the streak plate (§6.5)
   under the scene.
 - **Model boundaries:** sight uses straight null lines; with gravity on, light bends (lensing, boson
   deflection) and sight doesn't, and the backdrop's lens map doesn't change that, which the key says.
@@ -387,6 +389,10 @@ prescribed receiver's receptions found in its known future. Radar is open.
   none of this wait. The rest frame's lag (frames' lagged view) is not enough for radar.
 
 ### 6.5 The seen sky and the streak plate
+
+Landed 2026-10-27 (§14): the streak plate with aberration, Doppler, D⁴ weights and the
+approaching/receding pattern, and its oracle. Still open: real light (pool photons arriving) and
+apparent superluminal motion as a figure.
 
 - **Doppler** [standard]: `ν_o/ν_s = (k·u_o)/(k·u_s)`, for any source and observer.
 - **Aberration** [standard]: a source at angle θ from the observer's velocity is seen at

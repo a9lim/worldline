@@ -21,6 +21,10 @@ const WORDS = {
         light: 'Light',
         cone: 'Past light cone',
         tick: 'Light of its ticks, arriving',
+        seenCone: 'Observer’s past light cone',
+        seenLight: 'Light seen now, in flight',
+        approaching: 'Seen track · approaching',
+        receding: 'Seen track · receding',
         future: 'Known future',
         event: 'Event',
         gravity: 'Gravitational potential',
@@ -46,6 +50,10 @@ const WORDS = {
         light: '光',
         cone: '過去光円錐',
         tick: '刻みの光、到着',
+        seenCone: '観測者の過去光円錐',
+        seenLight: '今見える光、伝播中',
+        approaching: '見えた軌跡・接近',
+        receding: '見えた軌跡・後退',
         future: '既知の未来',
         event: '事象',
         gravity: '重力ポテンシャル',
@@ -107,7 +115,17 @@ export default class SceneKey {
         // Every body's outline is its clock, drawn once it is 5 px in radius (particle.wgsl)
         const clocks = bodies.some((b) => b.alive && Math.cbrt(b.m) * sim.camera.zoom >= 5);
         if (clocks && !ph.blackHoleEnabled) rows.push(['clock', L.clock(CLOCK_PERIOD)]);
-        if (tilted && sim.selectedIdx >= 0) rows.push(['cone', L.cone]);
+        const seen = sim.frames.seeing;
+        // The streak plate's tracks, under the scene (src/streak.js)
+        if (seen && bodies.length > 1) {
+            rows.push(['track', L.approaching, {}]);
+            rows.push(['track', L.receding, { receding: true }]);
+        }
+        if (tilted && seen) {
+            // The observer's cone, in the accent only when the observer is the red body
+            rows.push(['cone', L.seenCone, { ink: sim.frames.kind !== 2 }]);
+            if (any) rows.push(['seenLight', L.seenLight]);
+        } else if (tilted && sim.selectedIdx >= 0) rows.push(['cone', L.cone]);
         // The selected body's ticks' light, and its rays where the scene is small enough
         // (GPURenderer TICK_RECEIVERS); a prescribed body's known future (src/prescribed.js)
         if (tilted && sim.selectedIdx >= 0 && bodies.length > 1 && bodies.length <= 24) rows.push(['tick', L.tick]);

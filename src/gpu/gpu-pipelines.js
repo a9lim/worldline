@@ -9,7 +9,7 @@
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 208;
+const SHADER_VERSION = 212;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -1981,7 +1981,18 @@ export async function createFrameSlicePipelines(device, wgslConstants = '') {
     const make = (entryPoint) => device.createComputePipeline({
         label: entryPoint, layout, compute: { module, entryPoint },
     });
-    return { frameAnchor: make('frameAnchor'), sliceWorldLines: make('sliceWorldLines'), bindGroupLayouts: [g0, g1] };
+    // The streak plate's pass has its own layout: the slicer's group 0, then its parameters and
+    // output at bindings 4 and 5 of group 1, clear of the view buffers'
+    const gStreak = device.createBindGroupLayout({
+        label: 'streak_g1',
+        entries: [{ binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }, rw(5)],
+    });
+    const streakRows = device.createComputePipeline({
+        label: 'streakRows', layout: device.createPipelineLayout({ bindGroupLayouts: [g0, gStreak] }),
+        compute: { module, entryPoint: 'streakRows' },
+    });
+    return { frameAnchor: make('frameAnchor'), sliceWorldLines: make('sliceWorldLines'), streakRows,
+             bindGroupLayouts: [g0, g1], streakLayout: gStreak };
 }
 
 /**
@@ -2079,6 +2090,7 @@ export async function createSpacetimeRenderPipelines(device, format, wgslConstan
         boson: make('spacetimeBosons', 'vs_boson'),
         pierce: make('spacetimePierce', 'vs_pierce', 'fs_pierce'),
         future: make('spacetimeFuture', 'vs_future', 'fs_future', 'triangle-list'),
+        seenRay: make('spacetimeSeenRay', 'vs_seenRay'),
         tickRing: make('spacetimeTickRing', 'vs_tickRing'),
         tickRay: make('spacetimeTickRay', 'vs_tickRay'),
         tickMark: make('spacetimeTickMark', 'vs_tickMark', 'fs_pierce'),

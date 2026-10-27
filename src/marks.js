@@ -75,6 +75,13 @@ function body(c, mark) {
     return out;
 }
 
+/** A past light cone: its two generators and a ring, the far half dashed. */
+function cone(c) {
+    return path('M13,1.5 L4,11.5 M13,1.5 L22,11.5', c, 1)
+        + path('M4,11.5 A9,2 0 0 0 22,11.5', c, 1)
+        + path('M4,11.5 A9,2 0 0 1 22,11.5', c, 1, ' stroke-dasharray="1.5 2"');
+}
+
 const SWATCH = {
     pos: () => body(ink('sienna'), '+'),
     neg: () => body(ink('prussian'), '-'),
@@ -87,10 +94,13 @@ const SWATCH = {
     // A body whose outline is its clock, swept heavier from the top (particle.wgsl)
     clock: () => body(MUTED, 'spoke') + path('M13,2.75 A4.25,4.25 0 1 1 8.75,7', markOf(MUTED), 1.7),
     light: () => packet(ink('ochre')),
-    cone: () => path('M13,1.5 L4,11.5 M13,1.5 L22,11.5', ACCENT, 1)
-        + path('M4,11.5 A9,2 0 0 0 22,11.5', ACCENT, 1)
-        + path('M4,11.5 A9,2 0 0 1 22,11.5', ACCENT, 1, ' stroke-dasharray="1.5 2"'),
+    cone: (o) => cone(o?.ink ? MUTED : ACCENT),
     event: () => line(13, 0, 13, 14, MUTED, 1) + circle(13, 7, 3.3, TEXT, GROUND, 1),
+    // The streak plate's tracks: solid approaching, dashed receding (src/streak.js)
+    track: (o) => path('M2,11 C9,10 15,6 24,3', MUTED, o?.receding ? 1 : 1.8, o?.receding ? ' stroke-dasharray="3 2.5"' : ''),
+    // Under Seen: a world line pierced by the observer's cone, its light running to the apex
+    seenLight: () => line(6, 0, 6, 14, MUTED, 1) + circle(6, 9, 2.6, MUTED, GROUND, 1)
+        + line(8, 7.5, 22, 1.5, MUTED, 0.8, ' stroke-opacity="0.6"'),
     // A tick's light: the ray from a bead to where it arrives on another line, marked
     tick: () => line(4, 0, 4, 14, ACCENT, 1) + circle(4, 10, 1.7, 'none', ACCENT, 0)
         + line(4, 10, 20, 2, ACCENT, 0.8, ' stroke-opacity="0.6"') + line(20, 0, 20, 14, MUTED, 1)

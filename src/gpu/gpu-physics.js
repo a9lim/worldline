@@ -143,6 +143,12 @@ const _addParticleMetaF32 = new Float32Array(_addParticleMetaBuf);
 const _zeroU32 = new Uint32Array([0]);                // reusable zero for counter resets
 const _retiredFlagU32 = new Uint32Array([2]);         // FLAG_RETIRED for removeParticle
 const _frameParamsData = new ArrayBuffer(FRAME_PARAMS_SIZE);
+// The streak plate: rows (the observer's proper time) × sources (the first slots)
+export const STREAK_ROWS = 128;
+export const STREAK_SOURCES = 128;
+const _streakParamsData = new ArrayBuffer(32);
+const _streakParamsF32 = new Float32Array(_streakParamsData);
+const _streakParamsU32 = new Uint32Array(_streakParamsData);
 const _frameParamsF32 = new Float32Array(_frameParamsData);
 const _frameParamsU32 = new Uint32Array(_frameParamsData);
 const _rebaseUniformData = new ArrayBuffer(16);           // shift (f32), slots (u32), pad
@@ -798,7 +804,61 @@ export default class GPUPhysics {
             entries: [fb.viewState, fb.viewAux, fb.viewDerived, fb.viewClocks]
                 .map((buffer, i) => ({ binding: i, resource: { buffer } })),
         });
+        // The streak plate (frame-slice.wgsl streakRows): its parameters, rows × sources entries
+        // and their staging
+        if (!this._streak) {
+            const bytes = STREAK_ROWS * STREAK_SOURCES * 16;
+            this._streak = {
+                params: this.device.createBuffer({ label: 'streakParams', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
+                out: this.device.createBuffer({ label: 'streak', size: bytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC }),
+                staging: this.device.createBuffer({ label: 'streakStaging', size: bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
+                pending: false,
+                latest: null,
+            };
+        }
+        this._streakBG = this.device.createBindGroup({
+            label: 'streak_g1', layout: pl.streakLayout,
+            entries: [{ binding: 4, resource: { buffer: this._streak.params } },
+                      { binding: 5, resource: { buffer: this._streak.out } }],
+        });
     }
+
+    /**
+     * The streak plate (roadmap §6.5): after sliceFrame() under Seen, what the observer saw over
+     * its last rows·dTau of proper time (frame-slice.wgsl streakRows), read back for
+     * StreakPlate; `forward` is the plate's reference direction. Skipped while a readback is out.
+     */
+    requestStreak({ dTau, forward }) {
+        const sk = this._streak;
+        if (!sk || sk.pending || !this._framePipelines || this.aliveCount === 0) return;
+        _streakParamsU32[0] = STREAK_ROWS;
+        _streakParamsU32[1] = STREAK_SOURCES;
+        _streakParamsF32[2] = dTau;
+        _streakParamsF32[4] = forward[0];
+        _streakParamsF32[5] = forward[1];
+        this.device.queue.writeBuffer(sk.params, 0, _streakParamsData);
+        const encoder = this.device.createCommandEncoder({ label: 'streak' });
+        const pass = encoder.beginComputePass({ label: 'streakRows' });
+        pass.setPipeline(this._framePipelines.streakRows);
+        pass.setBindGroup(0, this._frameBG0);
+        pass.setBindGroup(1, this._streakBG);
+        pass.dispatchWorkgroups(Math.ceil(STREAK_ROWS * STREAK_SOURCES / 64));
+        pass.end();
+        encoder.copyBufferToBuffer(sk.out, 0, sk.staging, 0, sk.staging.size);
+        this.device.queue.submit([encoder.finish()]);
+        sk.pending = true;
+        const gen = this.resetGen;
+        sk.staging.mapAsync(GPUMapMode.READ).then(() => {
+            const data = new Float32Array(sk.staging.getMappedRange().slice(0));
+            sk.staging.unmap();
+            if (gen === this.resetGen) {
+                sk.latest = { rows: STREAK_ROWS, sources: STREAK_SOURCES, dTau, data, seq: (sk.latest?.seq ?? 0) + 1 };
+            }
+        }).catch(() => {}).finally(() => { sk.pending = false; });
+    }
+
+    /** The latest streak plate readback: { rows, sources, dTau, data, seq }, or null. */
+    readStreak() { return this._streak?.latest ?? null; }
 
     /**
      * Slice every world line on the observer's hyperplane (frames.js builds `p`), writing the
@@ -814,7 +874,7 @@ export default class GPUPhysics {
         u[16] = this.aliveCount; f[17] = this.domainW; f[18] = this.domainH;
         u[19] = this.boundaryMode === BOUND_LOOP ? 1 : 0; u[20] = this.topologyMode;
         f[21] = WORLDLINE_LEN * WORLDLINE_DT - 1;   // lag cap: the recorded history
-        f[22] = 0; f[23] = 0;
+        u[22] = p.seen ? 1 : 0; f[23] = 0;
         this.device.queue.writeBuffer(this.frameBuffers.frameParams, 0, _frameParamsData);
 
         const encoder = this.device.createCommandEncoder({ label: 'frameSlice' });
