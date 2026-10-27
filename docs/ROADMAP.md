@@ -890,3 +890,5 @@ colour-vision and benchmark harnesses are in `docs/second-pass/tools/`.
 | 2.6 | 2026-10-27 | `e2d56c2` | Prescribed world lines (§6.2): five curves, the pass that keeps a body on its curve, the agent's books, a figure's known past in the ring and the known future drawn above the present; the twin on prescribed bodies with turns of finite duration. |
 | 2.6 | 2026-10-27 | `653d83b` | The hand (§6.7): grab, pursuit under 0.75c, throw; field lines kink in bands running outward at c. |
 | 2.6 | 2026-10-27 | `ed88573` | Ticks' light (§6.4): rings at the present, rays and reception marks; the k-calculus on the twin. |
+| 2.6 | 2026-10-27 | `2234bba` | Seen (§6.3; a9: a third choice beside Lab and Observer) and the streak plate (§6.5): the slicer's cone, the tilted cone with pierces and light in flight, unavailable history undrawn; the observer's sky stacked over its proper time with D⁴ weights, solid approaching and dashed receding. |
+| 2.6 | 2026-10-27 | `328130f` | The accelerated observer (§6.6) with its horizons and corner line; radar for observers whose future is known (§6.4); the agent's torque booked; the sheet's edges as a handle on the boost (§6.8). |
