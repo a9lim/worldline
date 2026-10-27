@@ -1,6 +1,6 @@
 // ─── Boson pools in the energy ledger ───
 // The pools are particles too: their energy and momentum count toward the totals, and the
-// pool culls (which only bound memory) hand what they remove to an escaped-radiation
+// pool culls hand what they remove to an escaped-radiation
 // account instead of deleting it.
 //
 // Entry points:
@@ -21,7 +21,7 @@
 @group(0) @binding(1) var<storage, read_write> pions: array<Pion>;
 @group(0) @binding(2) var<storage, read_write> cosmoAccum: array<atomic<u32>>;
 @group(0) @binding(3) var<storage, read_write> stats: array<f32>;
-// The pools' high-water marks: entries past them are stale (a reset only zeroes the counts)
+// The pools' counts, live once boson-compact.wgsl has packed them; entries past them are stale
 @group(0) @binding(4) var<storage, read_write> phCount: atomic<u32>;
 @group(0) @binding(5) var<storage, read_write> piCount: atomic<u32>;
 @group(0) @binding(6) var<storage, read_write> particles: array<ParticleState>;

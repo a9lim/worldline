@@ -9,7 +9,7 @@
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 201;
+const SHADER_VERSION = 203;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -1916,7 +1916,24 @@ export async function createComputeStatsPipeline(device, wgslConstants = '') {
         compute: { module: fieldLedgerModule, entryPoint: 'fieldLedger' },
     });
 
-    return { pipelines, group0Layout, group1Layout, ledger };
+    // Boson pool compaction (boson-compact.wgsl): both pools, both counts, a scratch pool each
+    const compactModule = device.createShaderModule({
+        label: 'bosonCompact', code: await fetchShader('boson-compact.wgsl', prefix),
+    });
+    const compactLayout = device.createBindGroupLayout({
+        label: 'bosonCompact_g0',
+        entries: [0, 1, 2, 3, 4, 5].map(binding => ({ binding, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } })),
+    });
+    const compact = {
+        layout: compactLayout,
+        pipeline: device.createComputePipeline({
+            label: 'compactBosons',
+            layout: device.createPipelineLayout({ bindGroupLayouts: [compactLayout] }),
+            compute: { module: compactModule, entryPoint: 'compactBosons' },
+        }),
+    };
+
+    return { pipelines, group0Layout, group1Layout, ledger, compact };
 }
 
 /**

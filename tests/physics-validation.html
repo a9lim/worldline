@@ -58,7 +58,7 @@ import {
     PION_HALF_LIFE, CHARGED_PION_HALF_LIFE, MIN_MASS, BOSON_CHARGE,
     SHEET_THICKNESS, SHEET_THICKNESS_SQ, SOFTENING_SQ, BOUND_LOOP, GPU_SCALAR_GRID, PHYSICS_DT,
     WORLDLINE_LEN, WORLDLINE_DT, INERTIA_K, ELECTRON_MASS, GPU_MAX_PIONS, GPU_MAX_LEPTONS, COL_MERGE, COL_BOUNCE,
-    BOSON_SOFTENING_SQ,
+    BOSON_SOFTENING_SQ, GPU_MAX_PHOTONS, PHOTON_CULL_AGE,
     GPU_MAX_PARTICLES, TREE_ON, TREE_OFF, TREE_FULL, THETA_MIN, THETA_MAX, treeTheta,
 } from './src/config.js';
 import { WL_STRIDE } from './src/gpu/gpu-constants.js';
@@ -2185,6 +2185,96 @@ cases.push({
             measured: `J = ${fmt(st1.spinAngMom)}, mass ×${fmt(grew)}`,
             metric: `${fmt((st1.spinAngMom / st0.spinAngMom - 1) * 100, 3)}%`,
             pass: grew > 1.2 && Math.abs(st1.spinAngMom / st0.spinAngMom - 1) < 1e-4,
+        };
+    },
+});
+
+// The stats' field energy took centred differences, which vanish on a checkerboard, while the
+// field step's 5-point Laplacian is stiffest there (docs/MODEL.md §2, bug 12). Now it sums
+// ½(Δφ)²/h² over every edge, the energy whose derivative is that Laplacian. A checkerboard of
+// amplitude A has (Δφ)² = 4A² on every edge; a long wave matches ½∫|∇φ|² to O((kh)²).
+cases.push({
+    name: 'Field energy sees every mode: a checkerboard’s gradient energy is exact, a long wave’s matches the continuum',
+    async run() {
+        const W = 64, N = GPU_SCALAR_GRID, h = W / N, A = 0.5, m = 0.05;
+        const measure = async (fill) => {
+            const gp = await makeSim({ on: ['axionEnabled'], params: { axionMass: m, fieldDamping: 0 },
+                                       domainW: W, domainH: W, boundary: BOUND_LOOP });
+            gp.addParticle({ x: 32, y: 32, mass: 0.05 });
+            gp.update(1e-4);
+            gp.setField('axion', fill);
+            const st = await statsNow(gp);
+            gp.destroy();
+            return st.axionFieldEnergy;
+        };
+        let pot = 0;
+        for (let iy = 0; iy < N; iy++) for (let ix = 0; ix < N; ix++) pot += 0.5 * m * m * (A * Math.cos(2 * Math.PI * ix / N)) ** 2;
+        const cellArea = h * h;
+        const checker = await measure((ix, iy) => ((ix + iy) & 1 ? -A : A));
+        const wantChecker = N * N * cellArea * (0.5 * 4 * A * A * (2 / (h * h)) + 0.5 * m * m * A * A);
+        const wave = await measure((ix) => A * Math.cos(2 * Math.PI * ix / N));
+        const k = 2 * Math.PI / W;
+        const wantWave = 0.5 * (A * A / 2) * k * k * W * W + pot * cellArea;
+        const e1 = checker / wantChecker - 1, e2 = wave / wantWave - 1;
+        return {
+            expected: `checkerboard ${fmt(wantChecker, 6)}, long wave ${fmt(wantWave, 5)}`,
+            measured: `${fmt(checker, 6)}, ${fmt(wave, 5)}`,
+            metric: `${fmt(e1 * 100, 3)}%, ${fmt(e2 * 100, 3)}%`,
+            pass: Math.abs(e1) < 1e-4 && Math.abs(e2) < 2e-3,
+        };
+    },
+});
+
+// The pools only appended: a cull, absorption or decay cleared a flag and the count stayed a
+// high-water mark, so after a pool's capacity in emissions every emission failed (docs/MODEL.md
+// §2, bug 1). Once a frame boson-compact.wgsl packs each pool in order and sets its count live.
+cases.push({
+    name: 'Boson pools are packed each frame: dead entries free their slots, a full pool recovers',
+    async run() {
+        const photonBuf = (list) => {
+            const buf = new ArrayBuffer(list.length * 32);
+            const f = new Float32Array(buf), u = new Uint32Array(buf);
+            list.forEach((p, i) => {
+                const b = i * 8;
+                f[b] = p.x; f[b + 1] = p.y; f[b + 2] = 1; f[b + 3] = 0; f[b + 4] = p.energy;
+                u[b + 5] = 0xFFFFFFFF; f[b + 6] = p.lifetime ?? 0; u[b + 7] = p.alive ? 1 : 0;
+            });
+            return buf;
+        };
+        // 1. Every other photon dead: 500 live ones, packed to the front in order
+        let gp = await makeSim({ domainW: 512, domainH: 512 });
+        gp.addParticle({ x: 2, y: 2, mass: 0.05 });
+        const list = Array.from({ length: 1000 }, (_, i) => ({ x: 100, y: 100 + (i % 200), energy: i + 1, alive: i % 2 === 0 }));
+        gp.device.queue.writeBuffer(gp.buffers.photonPool, 0, photonBuf(list));
+        gp.device.queue.writeBuffer(gp.buffers.phCount, 0, new Uint32Array([list.length]));
+        gp.update(1e-3);
+        await gp.device.queue.onSubmittedWorkDone();
+        const n1 = new Uint32Array(await readBuffer(gp, gp.buffers.phCount, 4))[0];
+        const packed = new Float32Array(await readBuffer(gp, gp.buffers.photonPool, 500 * 32));
+        let inOrder = true;
+        for (let k = 0; k < 500; k++) if (packed[k * 8 + 4] !== 2 * k + 1) inOrder = false;
+        gp.destroy();
+        // 2. A pool full of photons past their cull age, and a π⁺π⁻ pair that annihilates the same frame
+        gp = await makeSim({ on: ['gravityEnabled', 'bosonInterEnabled'], domainW: 512, domainH: 512 });
+        gp.addParticle({ x: 2, y: 2, mass: 0.01 });
+        const old = Array.from({ length: GPU_MAX_PHOTONS }, (_, i) => ({ x: 300 + (i % 100), y: 300 + Math.floor(i / 100) % 100,
+                                                                          energy: 1e-3, lifetime: PHOTON_CULL_AGE + 1, alive: true }));
+        gp.device.queue.writeBuffer(gp.buffers.photonPool, 0, photonBuf(old));
+        gp.device.queue.writeBuffer(gp.buffers.phCount, 0, new Uint32Array([old.length]));
+        addPions(gp, [{ x: 50, y: 50, wx: 0, wy: 0, mass: 0.15, charge: 0.1 }, { x: 51, y: 50, wx: 0, wy: 0, mass: 0.15, charge: -0.1 }]);
+        gp.update(1 / 1024);
+        gp.update(1 / 1024);
+        await gp.device.queue.onSubmittedWorkDone();
+        const n2 = new Uint32Array(await readBuffer(gp, gp.buffers.phCount, 4))[0];
+        const ph = new Float32Array(await readBuffer(gp, gp.buffers.photonPool, Math.max(n2, 1) * 32));
+        let E = 0;
+        for (let i = 0; i < n2; i++) if (new Uint32Array(ph.buffer)[i * 8 + 7] & 1) E += ph[i * 8 + 4];
+        gp.destroy();
+        return {
+            expected: `500 live of 1000, in order; after a full pool culls, 2 annihilation photons of E = 0.3`,
+            measured: `${n1} live, ${inOrder ? 'in order' : 'out of order'}; ${n2} photons, E = ${fmt(E, 4)}`,
+            metric: '',
+            pass: n1 === 500 && inOrder && n2 === 2 && Math.abs(E - 0.3) < 1e-4,
         };
     },
 });

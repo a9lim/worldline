@@ -43,18 +43,23 @@ fn wrapIdx(ix: i32, iy: i32) -> u32 {
     return u32(((iy % g) + g) % g) * GRID + u32(((ix % g) + g) % g);
 }
 
-/** ½|∇φ|² by central differences (periodic: expansion always runs in loop mode). */
+/**
+ * ½|∇φ|² over the cell's east and south edges: summed over the grid, the energy whose derivative
+ * is the field step's 5-point Laplacian (periodic: expansion always runs on the torus).
+ */
 fn gradEnergy(ix: i32, iy: i32, isHiggs: bool) -> f32 {
     var dx: f32;
     var dy: f32;
     if (isHiggs) {
-        dx = higgsField[wrapIdx(ix + 1, iy)] - higgsField[wrapIdx(ix - 1, iy)];
-        dy = higgsField[wrapIdx(ix, iy + 1)] - higgsField[wrapIdx(ix, iy - 1)];
+        let f0 = higgsField[wrapIdx(ix, iy)];
+        dx = higgsField[wrapIdx(ix + 1, iy)] - f0;
+        dy = higgsField[wrapIdx(ix, iy + 1)] - f0;
     } else {
-        dx = axionField[wrapIdx(ix + 1, iy)] - axionField[wrapIdx(ix - 1, iy)];
-        dy = axionField[wrapIdx(ix, iy + 1)] - axionField[wrapIdx(ix, iy - 1)];
+        let f0 = axionField[wrapIdx(ix, iy)];
+        dx = axionField[wrapIdx(ix + 1, iy)] - f0;
+        dy = axionField[wrapIdx(ix, iy + 1)] - f0;
     }
-    return 0.125 * (dx * dx * lu.invCellWSq + dy * dy * lu.invCellHSq);
+    return 0.5 * (dx * dx * lu.invCellWSq + dy * dy * lu.invCellHSq);
 }
 
 @compute @workgroup_size(FL_WG)

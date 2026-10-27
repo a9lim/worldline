@@ -498,6 +498,58 @@ fn statsPE(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) l
 
 const FLD_WG: u32 = 256u;
 
+/**
+ * The cell across an edge, as the field step's Laplacian takes it (field-common.wgsl nbIndex):
+ * wrapped by topology on a loop, the cell itself across a bounce wall (Neumann), and −1, the
+ * vacuum, past a despawn edge (Dirichlet).
+ */
+fn fieldNb(nx: i32, ny: i32, G: i32) -> i32 {
+    var cx = nx;
+    var cy = ny;
+    if (params.boundaryMode == BOUND_LOOP) {
+        let topo = params.topologyMode;
+        if (topo == TOPO_TORUS) {
+            if (cx < 0) { cx += G; } else if (cx >= G) { cx -= G; }
+            if (cy < 0) { cy += G; } else if (cy >= G) { cy -= G; }
+        } else if (topo == TOPO_KLEIN) {
+            if (cx < 0) { cx += G; } else if (cx >= G) { cx -= G; }
+            if (cy < 0) { cy += G; cx = G - 1 - cx; } else if (cy >= G) { cy -= G; cx = G - 1 - cx; }
+        } else {
+            if (cx < 0) { cx += G; cy = G - 1 - cy; } else if (cx >= G) { cx -= G; cy = G - 1 - cy; }
+            if (cy < 0) { cy += G; cx = G - 1 - cx; } else if (cy >= G) { cy -= G; cx = G - 1 - cx; }
+        }
+        return cy * G + cx;
+    }
+    if (params.boundaryMode == BOUND_BOUNCE) { return clamp(cy, 0, G - 1) * G + clamp(cx, 0, G - 1); }
+    if (cx < 0 || cx >= G || cy < 0 || cy >= G) { return -1; }
+    return cy * G + cx;
+}
+
+fn fieldValue(isHiggs: bool, i: i32, vac: f32) -> f32 {
+    if (i < 0) { return vac; }
+    if (isHiggs) { return higgsField[u32(i)]; }
+    return axionField[u32(i)];
+}
+
+/**
+ * The cell's gradient energy density, ½|∇φ|² over its east and south edges (and, past a despawn
+ * edge, its west and north ones to the vacuum): summed over the grid, the energy whose derivative
+ * is the field step's 5-point Laplacian, so it sees every mode the evolution does, a
+ * checkerboard's included.
+ */
+fn edgeGradEnergy(isHiggs: bool, ix: i32, iy: i32, G: i32, invCWsq: f32, invCHsq: f32) -> f32 {
+    let vac = select(0.0, 1.0, isHiggs);
+    let f0 = fieldValue(isHiggs, iy * G + ix, vac);
+    let dE = fieldValue(isHiggs, fieldNb(ix + 1, iy, G), vac) - f0;
+    let dS = fieldValue(isHiggs, fieldNb(ix, iy + 1, G), vac) - f0;
+    var e = dE * dE * invCWsq + dS * dS * invCHsq;
+    if (params.boundaryMode != BOUND_LOOP && params.boundaryMode != BOUND_BOUNCE) {
+        if (ix == 0) { e += (vac - f0) * (vac - f0) * invCWsq; }
+        if (iy == 0) { e += (vac - f0) * (vac - f0) * invCHsq; }
+    }
+    return 0.5 * e;
+}
+
 @compute @workgroup_size(FLD_WG)
 fn statsField(@builtin(global_invocation_id) gid: vec3u, @builtin(workgroup_id) wid: vec3u,
               @builtin(local_invocation_index) lid: u32) {
@@ -541,7 +593,7 @@ fn statsField(@builtin(global_invocation_id) gid: vec3u, @builtin(workgroup_id) 
                 let dfx = higgsField[iyp * FGRID + ix] - higgsField[iym * FGRID + ix];
                 let dfy = higgsField[iy * FGRID + ixp] - higgsField[iy * FGRID + ixm];
                 let ke = 0.5 * phiDot * phiDot;
-                let grad = 0.5 * (dfx * dfx * invCellHSq + dfy * dfy * invCellWSq) * 0.25;
+                let grad = edgeGradEnergy(true, i32(ix), i32(iy), i32(FGRID), invCellWSq, invCellHSq);
                 let pot = muSqH * (-0.5 * phi * phi + 0.25 * phi * phi * phi * phi) + vacOffsetH;
                 localHiggsE += (ke + grad + pot) * cellArea;
                 localFmx -= phiDot * dfy * scaleX;
@@ -555,7 +607,7 @@ fn statsField(@builtin(global_invocation_id) gid: vec3u, @builtin(workgroup_id) 
                 let dfx = axionField[iyp * FGRID + ix] - axionField[iym * FGRID + ix];
                 let dfy = axionField[iy * FGRID + ixp] - axionField[iy * FGRID + ixm];
                 let ke = 0.5 * aDot * aDot;
-                let grad = 0.5 * (dfx * dfx * invCellHSq + dfy * dfy * invCellWSq) * 0.25;
+                let grad = edgeGradEnergy(false, i32(ix), i32(iy), i32(FGRID), invCellWSq, invCellHSq);
                 let pot = 0.5 * mASq * a * a;
                 localAxionE += (ke + grad + pot) * cellArea;
                 localFmx -= aDot * dfy * scaleX;

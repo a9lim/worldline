@@ -91,7 +91,9 @@ axion field with `axMod` = 1.25 left the Coulomb kick unchanged to 0.5%). Each s
 **Bugs that don't wait for 2.5.** Status, 2026-10-27: 2, 3 and 4 are disabled (the pair
 modulations, the quadrupole sink and the bodies' pull from the bosons removed, since each fix
 alone would have switched on a coupling with no consistent action); 5–11 are fixed, each with an
-oracle in `tests/physics-validation.html`; 1 and 12 are next. Bug 6's fix went past the sign: the
+oracle in `tests/physics-validation.html`; so is 12, and 1's compaction (the pools pack each
+frame), while 1's transactional saturation (a pool full of *live* bosons dropping a decay's or
+annihilation's products) is still open. Bug 6's fix went past the sign: the
 contact torques also take their lever from the mid-overlap contact point (r_i − δ/2), which makes
 orbital plus spin angular momentum exact; bug 8's dead bodies emit their balance as a photon
 (the collision pass is at its ten storage buffers, so it can't hand it to the survivor).

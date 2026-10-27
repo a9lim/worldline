@@ -636,6 +636,26 @@ export default class GPUPhysics {
                     { binding: 8, resource: { buffer: this._ledgerAUniform } },
                 ],
             });
+            // Pool compaction packs into scratch pools the size of the pools, then copies back
+            this._compactPipeline = computeStats.compact.pipeline;
+            this._photonScratch = this.device.createBuffer({
+                label: 'photonScratch', size: this.buffers.photonPool.size, usage: GPUBufferUsage.STORAGE,
+            });
+            this._pionScratch = this.device.createBuffer({
+                label: 'pionScratch', size: this.buffers.pionPool.size, usage: GPUBufferUsage.STORAGE,
+            });
+            this._compactBindGroup = this.device.createBindGroup({
+                label: 'bosonCompact',
+                layout: computeStats.compact.layout,
+                entries: [
+                    { binding: 0, resource: { buffer: this.buffers.photonPool } },
+                    { binding: 1, resource: { buffer: this.buffers.pionPool } },
+                    { binding: 2, resource: { buffer: this.buffers.phCount } },
+                    { binding: 3, resource: { buffer: this.buffers.piCount } },
+                    { binding: 4, resource: { buffer: this._photonScratch } },
+                    { binding: 5, resource: { buffer: this._pionScratch } },
+                ],
+            });
         }
 
         await this._initFrames(wgslConstants);
@@ -2672,6 +2692,17 @@ export default class GPUPhysics {
                 p.end();
             }
 
+            // Pack the boson pools so their counts are live and freed slots reusable before this
+            // frame's decays, annihilations and emissions append (boson-compact.wgsl); what dies
+            // later in the frame is packed the next one
+            if (this._compactPipeline) {
+                const p = encoder.beginComputePass({ label: 'compactBosons' });
+                p.setPipeline(this._compactPipeline);
+                p.setBindGroup(0, this._compactBindGroup);
+                p.dispatchWorkgroups(1);
+                p.end();
+            }
+
             // Heatmap compute (every HEATMAP_INTERVAL=4 frames)
             this._heatmapFrame++;
             if (this._heatmapEnabled && (this._heatmapFrame & HEATMAP_INTERVAL_MASK) === 0) {
@@ -2689,6 +2720,7 @@ export default class GPUPhysics {
             // Pending radiation of bodies that died, then dead-slot garbage collection
             this._dispatchFlushRetiredRadiation(encoder);
             this._dispatchDeadGC(encoder);
+
 
             // Update particle colors from charge/mass/antimatter state
             this._dispatchUpdateColors(encoder);
@@ -3693,6 +3725,8 @@ export default class GPUPhysics {
         // Stats
         _d(this._statsUniformBuffer);
         _d(this._statsDummyBuffer);
+        _d(this._photonScratch);
+        _d(this._pionScratch);
 
         // Null out references
         this._higgsBuffers = null;

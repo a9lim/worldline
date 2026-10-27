@@ -196,7 +196,7 @@ radiation, drift, clocks, the 1PN velocity-Verlet correction, the field step,
 collisions, extremal shedding, bosons, the boundary, and the world lines (a sample whenever
 the world-line clock crosses the next `WORLDLINE_DT` mark, else merge breaks and death
 snapshots only). After the substeps, once per frame: the expansion (below), the pool
-culls, pion decay, boson interaction, the pending radiation of bodies that died
+culls, the pools' compaction, pion decay, boson interaction, the pending radiation of bodies that died
 (`flushRetiredRadiation`), dead-slot GC and colors.
 The scheme is the staggered Boris pusher:
 both half-kicks precede the drift, so velocities sit half a kick from positions, and
@@ -670,7 +670,11 @@ placed, or black holes, whose capture disks it draws); it adds about 0.25 ms to 
 
 - Pool caps live in `config.js`: 4096 bodies, 16384 photons, 4096 pions + 4096
   leptons. Leptons share the pion buffer, told apart by `Pion.kind` (0 pion, 1 lepton).
-  Every boson pass, the boson tree and its sort are sized by the live counts.
+  Emitters append and a dying boson only clears its flag; once a frame, right after the
+  culls, `boson-compact.wgsl` packs each pool's live entries to its front in order and sets
+  its count live, so every boson pass, the boson tree and its sort are sized by the live
+  counts and freed slots are reused. A pool full of live bosons still drops a multi-product
+  event's products (transactional saturation is open, `docs/MODEL.md` §2, bug 1).
 - A body's Larmor radiation accumulates until it reaches `PHOTON_QUANTUM` (0.02) and leaves
   as one photon (`MIN_MASS`, 0.05, stays the Hawking threshold and the evaporation floor);
   pion emission takes its energy from the body as it accrues, so pending energy is energy
@@ -740,6 +744,11 @@ kinetic energy enters `fieldDot` as impulses solved against the existing `fieldD
 term, so field kinetic energy rises by exactly the event energy, shared among the active
 fields (`field-excitation.wgsl`); annihilation energy is all in its photons. Each event is
 consumed once.
+
+**The fields' energy** in the stats and the expansion ledger sums ½(Δφ)²/h² over every cell
+edge, as the field step's 5-point Laplacian takes its neighbours, so its derivative is that
+Laplacian and it sees every mode the evolution does (centred differences missed the
+checkerboard). Field momentum keeps centred differences.
 
 **Damping and the bath.** The fields' ether damping (Higgs `2m_H`, axion `g·m_a`) is the
 `fieldDamping` setting, on by default. `setHiggsQuench(τ_Q, T)` (the Kibble–Zurek preset)
