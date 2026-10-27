@@ -23,7 +23,6 @@
 @group(1) @binding(2) var<storage, read_write> derived: array<ParticleDerived>;
 @group(1) @binding(3) var<storage, read_write> allForces: array<AllForces>;
 @group(1) @binding(4) var<storage, read_write> radState: array<RadiationState>;
-@group(1) @binding(5) var<storage, read_write> axYukMod: array<vec4<f32>>;
 
 // Group 2: photon pool
 @group(2) @binding(0) var<storage, read_write> photons: array<Photon>;
@@ -236,8 +235,7 @@ fn hawkingRadiation(@builtin(global_invocation_id) gid: vec3u) {
     let M = particles[i].mass;
     let bodyRSq = pow(M, 2.0 / 3.0); // cbrt(M)^2
     let angw = particles[i].angW;
-    let angvel = angw / sqrt(1.0 + angw * angw * bodyRSq);
-    let a = INERTIA_K * bodyRSq * abs(angvel); // I_K * r² * |ω|
+    let a = INERTIA_K * bodyRSq * abs(angw); // a = J/M, J = I·angW
     let Q = particles[i].charge;
     let disc = M * M - a * a - Q * Q;
 
@@ -310,7 +308,7 @@ fn hawkingRadiation(@builtin(global_invocation_id) gid: vec3u) {
         particles[i].flags = (particles[i].flags & ~FLAG_ALIVE) | FLAG_RETIRED;
         particleAux[i].deathTime = u.simTime;
         particleAux[i].deathMass = preMass;
-        particleAux[i].deathAngVel = angvel;
+        particleAux[i].deathAngVel = angw / sqrt(1.0 + angw * angw * bodyRSq);
         return;
     }
 
@@ -378,10 +376,26 @@ fn pionEmission(@builtin(global_invocation_id) gid: vec3u) {
     let coupling = u.yukawaCoupling;
     var dE = coupling / 3.0 * fYukSq * dt;   // invariant power × lab dt
 
+    // Take the radiated energy from the body's kinetic energy as it radiates (as Larmor does), so
+    // the pending accumulator only ever holds energy the body has already lost; the kinetic
+    // energy is the stats' own, (γ − 1)m with Relativity and ½mw² without
     var rs = radState[i];
-    rs.yukawaRadAccum += dE;
-    let higgsOn = (u.toggles0 & HIGGS_BIT) != 0u;
-    let pionMass = select(u.yukawaMu, u.yukawaMu * axYukMod[i].z, higgsOn);
+    let relOn = (u.toggles0 & RELATIVITY_BIT) != 0u;
+    let mB = particles[i].mass;
+    let wB = vec2<f32>(particles[i].velWX, particles[i].velWY);
+    let wBSq = dot(wB, wB);
+    let keBody = select(0.5 * mB * wBSq, wBSq / (sqrt(1.0 + wBSq) + 1.0) * mB, relOn);
+    let taken = min(dE, keBody);
+    if (taken > 0.0 && wBSq > EPSILON * EPSILON) {
+        let keNew = keBody - taken;
+        let gNew = 1.0 + keNew / mB;
+        let wSqNew = select(2.0 * keNew / mB, gNew * gNew - 1.0, relOn);
+        let sc = sqrt(max(wSqNew, 0.0) / wBSq);
+        particles[i].velWX *= sc;
+        particles[i].velWY *= sc;
+    }
+    rs.yukawaRadAccum += taken;
+    let pionMass = u.yukawaMu;
 
     if (rs.yukawaRadAccum >= pionMass + MIN_MASS) {
         let ke = rs.yukawaRadAccum - pionMass;
@@ -453,28 +467,34 @@ fn pionEmission(@builtin(global_invocation_id) gid: vec3u) {
                 pi.kind = 0u; pi._pad1 = 0u;
                 pions[piIdx] = pi;
 
-                // Radiation reaction: rescale emitter w
-                let rrWx = particles[i].velWX; let rrWy = particles[i].velWY;
-                let wSq = rrWx * rrWx + rrWy * rrWy;
-                if (wSq > EPSILON * EPSILON) {
-                    let gam = sqrt(1.0 + wSq);
-                    let pKE = (gam - 1.0) * particles[i].mass;
-                    if (pKE > rs.yukawaRadAccum) {
-                        let keNew = pKE - rs.yukawaRadAccum;
-                        let gammaNew = 1.0 + keNew / particles[i].mass;
-                        let wSqNew = gammaNew * gammaNew - 1.0;
-                        if (wSqNew > EPSILON * EPSILON) {
-                            let sc = sqrt(wSqNew / wSq);
-                            particles[i].velWX *= sc;
-                            particles[i].velWY *= sc;
-                        }
-                    }
-                }
-
                 rs.yukawaRadAccum = 0.0;
             } else { atomicSub(&piCount, 1u); }
         }
     }
+    radState[i] = rs;
+}
+
+// ─── Pending radiation of a body that died ───
+// A body that merges, is captured, annihilates, evaporates or leaves the domain takes with it
+// the radiation it had lost but not yet emitted, and the ledger sums pending energy over live
+// bodies only. Once a frame, every retired slot still holding some emits it as one photon from
+// where the body ended, unboosted, so the photon's lab energy is the energy the ledger booked.
+// A full pool leaves it for the next frame.
+@compute @workgroup_size(64)
+fn flushRetiredRadiation(@builtin(global_invocation_id) gid: vec3u) {
+    let i = gid.x;
+    if (i >= u.aliveCount) { return; }
+    if ((particles[i].flags & FLAG_ALIVE) != 0u) { return; }
+    var rs = radState[i];
+    let e = rs.radAccum + rs.hawkAccum + rs.yukawaRadAccum;
+    if (e <= 0.0) { return; }
+    let ang = pcgRand((i * 2654435761u) ^ (u.frameCount * 40503u)) * TWO_PI;
+    let p = emitBoostedPhoton(vec2<f32>(particles[i].posX, particles[i].posY), vec2<f32>(0.0),
+                              e, vec2<f32>(cos(ang), sin(ang)), 0.0, particleAux[i].particleId);
+    if (p.x == 0.0 && p.y == 0.0) { return; }
+    rs.radAccum = 0.0;
+    rs.hawkAccum = 0.0;
+    rs.yukawaRadAccum = 0.0;
     radState[i] = rs;
 }
 
@@ -503,8 +523,7 @@ fn schwingerDischarge(@builtin(global_invocation_id) gid: vec3u) {
 
     let bodyRSq = pow(M, 2.0 / 3.0);
     let angw = particles[i].angW;
-    let angvel = angw / sqrt(1.0 + angw * angw * bodyRSq);
-    let a = INERTIA_K * bodyRSq * abs(angvel);
+    let a = INERTIA_K * bodyRSq * abs(angw);   // a = J/M
     let disc = M * M - a * a - Q * Q;
     // Clamp super-extremal inputs to M as a toy effective radius for discharge.
     let rPlus = select(M, M + sqrt(max(0.0, disc)), disc >= 0.0);

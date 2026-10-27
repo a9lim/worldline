@@ -2,7 +2,7 @@
 name: Worldline
 title: Worldline — Interactive Particle Physics Simulator
 description: Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in six curated presets, and tilt the plane into spacetime to see the world lines they trace.
-updated: 2026-10-26
+updated: 2026-10-27
 ---
 
 # Worldline
@@ -69,7 +69,7 @@ The spoke is a transported axis, so it precesses even without spin:
 With Radiation on, three kinds of radiation carry energy away:
 
 - Accelerating charges radiate by Larmor's formula, with its Landau–Lifshitz reaction force.
-- Orbiting masses and charges radiate by the gravitational and electric quadrupole formulas.
+- Quadrupole radiation, gravitational and electric, is withdrawn while its radiation reaction is rebuilt.
 - Bodies under Yukawa emit pions by the scalar analogue of Larmor's formula.
 
 The energy leaves in quanta of 0.02. Photons are a surrogate. The rates are the 3D formulas, and each quantum then travels in the plane at c, in a direction drawn from the in-plane slice of the angular pattern (sin²θ about the acceleration, beamed forward at high γ). They carry the energy and beaming of 3D emission, but they are not planar electrodynamics. Gravitational quanta are drawn in madder, electromagnetic ones in ochre.

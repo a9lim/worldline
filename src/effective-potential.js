@@ -43,8 +43,8 @@ export default class EffectivePotentialPlot {
 
     /**
      * @param {Object} sel - selected body from the stats readback (index, posX, posY,
-     *   velX, velY, mass, charge, angVel, magMoment, angMomentum, axMod, yukMod, higgsMod)
-     * @param {Object|null} ref - reference body (index, the same kinematics, radius, higgsMod)
+     *   velX, velY, mass, charge, angVel, magMoment, angMomentum)
+     * @param {Object|null} ref - reference body (index, the same kinematics, radius)
      * @param {Object} settings - physics toggles and parameters
      * @param {Object} geom - domainW, domainH, boundaryMode, topology
      */
@@ -95,8 +95,6 @@ export default class EffectivePotentialPlot {
         const gm = physics.gravitomagEnabled;
         const yuk = physics.yukawaEnabled;
         const softSq = physics.blackHoleEnabled ? BH_SOFTENING_SQ : SOFTENING_SQ;
-        const axMod = sel.axMod;
-        const yukMod = sel.yukMod;
 
         // Magnetic/GM moments (cached per-substep in computeAllForces)
         const selMu = sel.magMoment;
@@ -115,19 +113,19 @@ export default class EffectivePotentialPlot {
             const ri = rMin + t * (rMax - rMin);
             this._rBuf[i] = ri;
             this._vBuf[i] = this._vEff(ri, sel, ref, mu, Lz, grav, coul, mag, gm, yuk,
-                softSq, axMod, yukMod, selMu, refMu, selL, refL, physics);
+                softSq, selMu, refMu, selL, refL, physics);
         }
 
         // Current position on curve
         this.currentR = r;
         this.currentV = this._vEff(r, sel, ref, mu, Lz, grav, coul, mag, gm, yuk,
-            softSq, axMod, yukMod, selMu, refMu, selL, refL, physics);
+            softSq, selMu, refMu, selL, refL, physics);
         this._valid = true;
         this._rMin = rMin;
         this._rMax = rMax;
     }
 
-    _vEff(r, sel, ref, mu, Lz, grav, coul, mag, gm, yuk, softSq, axMod, yukMod, selMu, refMu, selL, refL, physics) {
+    _vEff(r, sel, ref, mu, Lz, grav, coul, mag, gm, yuk, softSq, selMu, refMu, selL, refL, physics) {
         const rEff = Math.sqrt(r * r + softSq);
         const invR = 1 / rEff;
         const invR3 = invR * invR * invR;
@@ -140,26 +138,23 @@ export default class EffectivePotentialPlot {
         // Gravitational: Newtonian normally; Paczynski-Wiita in BH mode.
         if (grav) {
             if (physics.blackHoleEnabled) {
-                v -= sel.mass * ref.mass * blackHoleRadialTerms(r * r, ref.mass, ref.charge, ref.angVel, ref.angMomentum).invPotential;
+                v -= sel.mass * ref.mass * blackHoleRadialTerms(r * r, ref.mass, ref.charge, ref.angMomentum).invPotential;
             } else {
                 v -= sel.mass * ref.mass * invR;
             }
         }
 
-        // Coulomb: +q₁q₂/r (with axion modulation)
-        if (coul) v += sel.charge * ref.charge * invR * axMod;
+        // Coulomb: +q₁q₂/r
+        if (coul) v += sel.charge * ref.charge * invR;
 
         // Magnetic dipole: +μ₁μ₂/r³
-        if (mag) v += selMu * refMu * invR3 * axMod;
+        if (mag) v += selMu * refMu * invR3;
 
         // GM dipole: -L₁L₂/r³
         if (gm) v -= selL * refL * invR3;
 
-        // Yukawa: -g²m₁m₂·exp(-μr)/r (with PQ modulation)
-        if (yuk) {
-            const muEff = physics.higgsEnabled ? physics.yukawaMu * Math.sqrt(sel.higgsMod * ref.higgsMod) : physics.yukawaMu;
-            v -= YUKAWA_COUPLING * yukMod * sel.mass * ref.mass * Math.exp(-muEff * r) * invR;
-        }
+        // Yukawa: -g²m₁m₂·exp(-μρ)/ρ, softened as the force is
+        if (yuk) v -= YUKAWA_COUPLING * sel.mass * ref.mass * Math.exp(-physics.yukawaMu * rEff) * invR;
 
         return v;
     }

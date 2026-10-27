@@ -57,7 +57,8 @@ import { PION_SIZE, PARTICLE_STATE_SIZE } from './src/gpu/gpu-buffers.js';
 import {
     PION_HALF_LIFE, CHARGED_PION_HALF_LIFE, MIN_MASS, BOSON_CHARGE,
     SHEET_THICKNESS, SHEET_THICKNESS_SQ, SOFTENING_SQ, BOUND_LOOP, GPU_SCALAR_GRID, PHYSICS_DT,
-    WORLDLINE_LEN, WORLDLINE_DT, INERTIA_K, ELECTRON_MASS, GPU_MAX_PIONS, GPU_MAX_LEPTONS, COL_MERGE,
+    WORLDLINE_LEN, WORLDLINE_DT, INERTIA_K, ELECTRON_MASS, GPU_MAX_PIONS, GPU_MAX_LEPTONS, COL_MERGE, COL_BOUNCE,
+    BOSON_SOFTENING_SQ,
     GPU_MAX_PARTICLES, TREE_ON, TREE_OFF, TREE_FULL, THETA_MIN, THETA_MAX, treeTheta,
 } from './src/config.js';
 import { WL_STRIDE } from './src/gpu/gpu-constants.js';
@@ -147,7 +148,7 @@ async function readParticles(gp) {
     return out;
 }
 
-/** Write pions straight into the pool: [{x, y, wx, wy, mass, charge}]. */
+/** Write pions straight into the pool: [{x, y, wx, wy, mass, charge, kind}] (kind 1: a lepton). */
 function addPions(gp, list) {
     const buf = new ArrayBuffer(list.length * PION_SIZE);
     const f = new Float32Array(buf), u = new Uint32Array(buf);
@@ -155,7 +156,7 @@ function addPions(gp, list) {
         const b = i * 12;
         f[b] = p.x; f[b + 1] = p.y; f[b + 2] = p.wx; f[b + 3] = p.wy;
         f[b + 4] = p.mass; f[b + 5] = p.charge; f[b + 6] = 0;
-        u[b + 7] = 0xFFFFFFFF; u[b + 8] = 100; u[b + 9] = 1; u[b + 10] = 0; u[b + 11] = 0;
+        u[b + 7] = 0xFFFFFFFF; u[b + 8] = 100; u[b + 9] = 1; u[b + 10] = p.kind ?? 0; u[b + 11] = 0;
     });
     gp.device.queue.writeBuffer(gp.buffers.pionPool, 0, buf);
     gp.device.queue.writeBuffer(gp.buffers.piCount, 0, new Uint32Array([list.length]));
@@ -1954,6 +1955,236 @@ cases.push({
             measured: `worst error ${worst.toExponential(2)}, mean ${(sum / n).toExponential(2)} over ${n} cells`,
             metric: `${(worst / top * 100).toFixed(3)}% of max |α|`,
             pass: worst / top < 0.003 && n > 100,
+        };
+    },
+});
+
+// The pair modulations (axMod on the EM pair laws, yukMod and the Higgs-modulated range on
+// Yukawa) were removed until they have an action (docs/MODEL.md §2, bug 2): the forces never
+// applied them (a pass-order fault) while the stats booked them. With the axion on, a pair of
+// charges must feel plain Coulomb and the stats must book plain Coulomb, the two agreeing.
+cases.push({
+    name: 'Axion on: the Coulomb pair force and its booked energy are both unmodulated',
+    async run() {
+        const gp = await makeSim({ on: ['coulombEnabled', 'axionEnabled'], params: { fieldDamping: 0 },
+                                   domainW: 128, domainH: 128 });
+        const M = 1000, r = 20, dt = 1 / 64;
+        gp.addParticle({ x: 54, y: 64, mass: M, charge: 1 });
+        gp.addParticle({ x: 54 + r, y: 64, mass: M, charge: 1 });
+        gp.setField('axion', 1);
+        gp.update(dt);
+        await gp.device.queue.onSubmittedWorkDone();
+        const [, b] = await readParticles(gp);
+        const st = await statsNow(gp);
+        gp.destroy();
+        const rho2 = r * r + SOFTENING_SQ;
+        const fWant = r / Math.pow(rho2, 1.5);
+        const fGot = b.wx * M / dt;
+        const peWant = 1 / Math.sqrt(rho2);
+        const fErr = fGot / fWant - 1, peErr = st.pe / peWant - 1;
+        return {
+            expected: `F = ${fmt(fWant)}, PE = ${fmt(peWant)} (no factor of 1 + g·a)`,
+            measured: `F = ${fmt(fGot)}, PE = ${fmt(st.pe)}`,
+            metric: `F ${fmt(fErr * 100, 2)}%, PE ${fmt(peErr * 100, 2)}%`,
+            pass: Math.abs(fErr) < 1e-3 && Math.abs(peErr) < 1e-4,
+        };
+    },
+});
+
+// Bounce mode's friction torque on the second body had the wrong sign (docs/MODEL.md §2, bug 6):
+// both its lever arm and its force reverse, so τ₂ has τ₁'s sign. With the contact point
+// mid-overlap the levers sum to the separation, and orbital plus spin angular momentum is kept.
+cases.push({
+    name: 'Bounce with friction: orbital plus spin angular momentum survives a glancing contact',
+    async run() {
+        const gp = await makeSim({ params: { collisionMode: COL_BOUNCE, bounceFriction: 0.4 },
+                                   domainW: 128, domainH: 128 });
+        gp.addParticle({ x: 52, y: 64, vx: 0.3, mass: 8, angw: 0.05 });
+        gp.addParticle({ x: 76, y: 65.5, vx: -0.3, mass: 1 });
+        const L = (st) => st.orbitalAngMom + st.spinAngMom;
+        gp.update(1e-3);   // the stats read spin from derived state, which the first step fills
+        const st0 = await statsNow(gp);
+        await run(gp, 60, 0.05);
+        const st1 = await statsNow(gp);
+        gp.destroy();
+        const dL = L(st1) - L(st0), spin = st1.spinAngMom - st0.spinAngMom;
+        return {
+            expected: `L = ${fmt(L(st0))} kept (spin moves ${fmt(spin)})`,
+            measured: `L = ${fmt(L(st1))}`,
+            metric: `ΔL ${fmt(dL / Math.abs(spin) * 100, 2)}% of the spin exchanged`,
+            pass: Math.abs(spin) > 0.05 && Math.abs(dL) < 0.003 * Math.abs(spin),
+        };
+    },
+});
+
+// Charged bosons' Coulomb kicks went straight into their proper velocity without 1/m (docs/
+// MODEL.md §2, bug 5), 100× weak for a lepton. A lepton held 20 from a heavy fixed charge
+// accelerates at qQ/(m(r² + ε_b²)^{3/2})·r.
+cases.push({
+    name: 'A lepton near a fixed charge accelerates at qQr/(m(r² + ε²)^{3/2}): the Coulomb kick divides by its mass',
+    async run() {
+        const gp = await makeSim({ on: ['coulombEnabled'], domainW: 256, domainH: 256 });
+        gp.addParticle({ x: 128, y: 128, mass: 1e6, charge: 1 });
+        const m = ELECTRON_MASS, q = -BOSON_CHARGE, r = 20, T = 0.25;
+        addPions(gp, [{ x: 128 + r, y: 128, wx: 0, wy: 0, mass: m, charge: q, kind: 1 }]);
+        gp.update(T);
+        await gp.device.queue.onSubmittedWorkDone();
+        const f = new Float32Array(await readBuffer(gp, gp.buffers.pionPool, PION_SIZE));
+        gp.destroy();
+        // attractive: the lepton moves toward −x; w is small enough that γ ≈ 1 over the frame
+        const want = q * 1 * r / (m * Math.pow(r * r + BOSON_SOFTENING_SQ, 1.5)) * T;
+        const got = f[2];
+        return { expected: `Δw_x = ${fmt(want)}`, measured: `Δw_x = ${fmt(got)}`,
+                 metric: `${fmt((got / want - 1) * 100, 2)}%`, pass: Math.abs(got / want - 1) < 0.01 };
+    },
+});
+
+// The 1PN velocity-Verlet recompute skipped retired sources, which the force pass includes under
+// signal delay until their light has passed (docs/MODEL.md §2, bug 7): a removed source's 1PN
+// force vanished from the recompute alone. Its 1PN force on a body 100 away must carry on.
+cases.push({
+    name: '1PN under signal delay: a removed source keeps its 1PN force in the recompute until its light passes',
+    async run() {
+        const gp = await makeSim({ on: ['gravityEnabled', 'gravitomagEnabled', 'relativityEnabled', 'onePNEnabled'],
+                                   domainW: 512, domainH: 512 });
+        gp.addParticle({ x: 206, y: 256, vy: 0.2, mass: 5, bornAt: -Infinity });
+        gp.addParticle({ x: 306, y: 256, vy: -0.2, mass: 5, bornAt: -Infinity });
+        await run(gp, 20, 0.25);
+        const f2 = async () => {
+            const a = new Float32Array(await readBuffer(gp, gp.buffers.allForces, 160));
+            return Math.hypot(a[8], a[9]);   // body 0's f2.xy, the recompute's 1PN force
+        };
+        const before = await f2();
+        gp.removeParticle(1, 5, 0);
+        await run(gp, 1, 0.25);
+        const after = await f2();
+        gp.destroy();
+        return { expected: `|F_1PN| ≈ ${fmt(before)} (the source's light hasn't passed)`, measured: `${fmt(after)}`,
+                 metric: `${fmt((after / before - 1) * 100, 2)}%`, pass: before > 0 && Math.abs(after / before - 1) < 0.05 };
+    },
+});
+
+/** The ledger's booked energy: bodies, potentials, Darwin, fields and their couplings, radiation. */
+const bookedEnergy = (st) => st.totalMass + st.linearKE + st.spinKE + st.pe + st.fieldEnergy
+    + (st.higgsFieldEnergy + st.axionFieldEnergy) * st.scaleA + st.pfiEnergy
+    + st.photonE + st.pionE + st.pendingRadiation;
+
+// Pion emission booked its energy as pending before taking it from the body, and took it at
+// emission only if the body's kinetic energy covered it (docs/MODEL.md §2, bug 9): the ledger
+// counted the pending energy twice. Now the body pays as it radiates. At Yukawa's coupling the
+// reaction is strong enough to drain each kick before its drift, which leaves a small
+// leapfrog bias (the staggered half-step kinetic energy, MODEL.md §3.5's stiff regime); the
+// fault being guarded against is a drift the size of the radiated energy.
+cases.push({
+    name: 'Pion emission is paid as it accrues: a radiating Yukawa pair books its radiation once',
+    async run() {
+        const gp = await makeSim({ on: ['yukawaEnabled', 'radiationEnabled'], domainW: 256, domainH: 256 });
+        gp.addParticle({ x: 120, y: 128, vy: 0.3, mass: 6 });
+        gp.addParticle({ x: 136, y: 128, vy: -0.3, mass: 6 });
+        gp.update(1e-3);
+        const e0 = bookedEnergy(await statsNow(gp));
+        await run(gp, 60, 1 / 128);   // the bias goes as dt²
+        const st1 = await statsNow(gp);
+        const piN = new Uint32Array(await readBuffer(gp, gp.buffers.piCount, 4))[0];
+        gp.destroy();
+        const radiated = st1.pionE + st1.photonE + st1.pendingRadiation;
+        const dE = bookedEnergy(st1) - e0;
+        return {
+            expected: `E = ${fmt(e0, 6)}, the radiation counted once`,
+            measured: `${piN} pions; radiated ${fmt(radiated)} (pions ${fmt(st1.pionE)}, pending ${fmt(st1.pendingRadiation)}); ΔE ${fmt(dE)}`,
+            metric: `ΔE ${fmt(dE / radiated * 100, 2)}% of the radiated energy`,
+            pass: piN > 0 && Math.abs(dE) < 0.03 * radiated,
+        };
+    },
+});
+
+// A hole's mass already holds its rotation (Kerr), but the stats added its spin kinetic energy
+// on top (docs/MODEL.md §2, bug 10), so superradiance, which takes dM = dE and dJ = dE/μ_a, read
+// as a large loss. The hole's mass plus the axion field's energy must now hold.
+cases.push({
+    name: 'Superradiance: a spinning hole’s mass plus the axion field’s energy is booked whole',
+    async run() {
+        const gp = await makeSim({ on: ['blackHoleEnabled', 'axionEnabled', 'coulombEnabled'],
+                                   params: { fieldDamping: 0 }, domainW: 64, domainH: 64, boundary: BOUND_LOOP });
+        gp.addParticle({ x: 32, y: 32, mass: 0.5, angw: 1.19 });
+        gp.setField('axion', 1e-3);
+        gp.update(1e-3);
+        const st0 = await statsNow(gp);
+        await run(gp, 80, 1 / 16);
+        const st1 = await statsNow(gp);
+        gp.destroy();
+        const e0 = bookedEnergy(st0), e1 = bookedEnergy(st1);
+        const dM = st0.totalMass - st1.totalMass, dJ = st0.spinAngMom - st1.spinAngMom;
+        const muA = 0.05;   // physicsWith's axionMass
+        const jErr = Math.abs(dJ * muA - dM) / dM;
+        return {
+            expected: `E = ${fmt(e0, 6)} kept as the hole loses mass to the field; dJ = dM/μ_a`,
+            measured: `E = ${fmt(e1, 6)}; the hole lost ${fmt(dM)} and J ${fmt(dJ)}, spin energy booked ${fmt(st1.spinKE)}`,
+            metric: `ΔE ${fmt((e1 - e0) / e0 * 100, 2)}%, μ_a·dJ/dM − 1 ${fmt(jErr * 100, 2)}%`,
+            pass: dM > 1e-3 && st1.spinKE === 0 && Math.abs(e1 - e0) < 0.5 * dM && jErr < 0.01,
+        };
+    },
+});
+
+// A body that died took its pending radiation with it: the ledger sums pending energy over live
+// bodies only, and nothing carried the loser's balance on (docs/MODEL.md §2, bug 8). Now a dead
+// slot's balance leaves as a photon. Two opposite charges fall together radiating Larmor and
+// merge (into a neutral body, which radiates no more): the radiation booked must survive it, as
+// pending, photons, or the survivor's mass when it absorbs the photon.
+cases.push({
+    name: 'Pending radiation survives a merge: the loser’s balance leaves as a photon',
+    async run() {
+        const gp = await makeSim({ on: ['coulombEnabled', 'radiationEnabled'], params: { collisionMode: COL_MERGE },
+                                   domainW: 128, domainH: 128 });
+        gp.addParticle({ x: 62, y: 64, mass: 1, charge: 3 });
+        gp.addParticle({ x: 65, y: 64, mass: 1, charge: -3 });
+        // the photon starts where the loser ended, inside the merged body, which may absorb it
+        const radiated = (st) => st.pendingRadiation + st.photonE + (st.totalMass - 2);
+        let before = 0, after = 0, merged = false;
+        // short frames, so the merge frame's own radiation (before its collision pass) is small
+        for (let k = 0; k < 3200 && !merged; k++) {
+            gp.update(1 / 32);
+            await gp.device.queue.onSubmittedWorkDone();
+            const alive = (await readParticles(gp)).filter(p => p.alive).length;
+            const st = await statsNow(gp);
+            if (alive === 2) before = radiated(st);
+            else { merged = true; gp.update(1 / 32); after = radiated(await statsNow(gp)); }
+        }
+        gp.destroy();
+        return {
+            expected: `radiated ${fmt(before)} kept through the merge`,
+            measured: merged ? `${fmt(after)}` : 'no merge',
+            metric: `${fmt((after / before - 1) * 100, 2)}%`,
+            pass: merged && before > 0 && Math.abs(after / before - 1) < 0.02,
+        };
+    },
+});
+
+// One canonical spin, J = I·angW (docs/MODEL.md §2, bug 11): absorption grows a body's mass and
+// so its moment of inertia (∝ m^{5/3}); without the spin rescaled, J grew with it. Photons hit a
+// spinning body head-on from both sides (no orbital angular momentum), under Relativity, where
+// the rotation rate and angW differ.
+cases.push({
+    name: 'One canonical spin: a spinning body keeps J = I·angW as it absorbs head-on photons',
+    async run() {
+        const gp = await makeSim({ on: ['relativityEnabled'], domainW: 64, domainH: 64 });
+        gp.addParticle({ x: 32, y: 32, mass: 8, angw: 0.4, bornAt: -Infinity });
+        const photons = [];
+        for (const s of [-1, 1]) for (let k = 0; k < 4; k++) {
+            photons.push({ x: 32 - s * (5 + k), y: 32, vx: s, vy: 0, energy: 0.5 });
+        }
+        addPhotons(gp, photons);
+        gp.update(1e-3);
+        const st0 = await statsNow(gp);
+        await run(gp, 12, 0.25);
+        const st1 = await statsNow(gp);
+        gp.destroy();
+        const grew = st1.totalMass / st0.totalMass;
+        return {
+            expected: `J = ${fmt(st0.spinAngMom)} kept while the mass grows`,
+            measured: `J = ${fmt(st1.spinAngMom)}, mass ×${fmt(grew)}`,
+            metric: `${fmt((st1.spinAngMom / st0.spinAngMom - 1) * 100, 3)}%`,
+            pass: grew > 1.2 && Math.abs(st1.spinAngMom / st0.spinAngMom - 1) < 1e-4,
         };
     },
 });

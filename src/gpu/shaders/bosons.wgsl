@@ -111,9 +111,9 @@ fn updatePions(@builtin(global_invocation_id) gid: vec3u) {
         let invR3 = invRSq2 * sqrt(invRSq2);
         piWX += grFactor * pj.mass * dx * invR3 * dt;
         piWY += grFactor * pj.mass * dy * invR3 * dt;
-        // Coulomb: F = -q_pion * q_particle / r² (like-charges repel)
+        // Coulomb: F = -q_pion * q_particle / r² (like-charges repel), dw/dt = F/m
         if (coulombOn && abs(piCharge) > EPSILON && abs(pj.charge) > EPSILON) {
-            let fC = -piCharge * pj.charge * invR3 * dt;
+            let fC = -piCharge * pj.charge * invR3 * dt / max(pi.mass, EPSILON);
             piWX += fC * dx;
             piWY += fC * dy;
         }

@@ -196,7 +196,8 @@ radiation, drift, clocks, the 1PN velocity-Verlet correction, the field step,
 collisions, extremal shedding, bosons, the boundary, and the world lines (a sample whenever
 the world-line clock crosses the next `WORLDLINE_DT` mark, else merge breaks and death
 snapshots only). After the substeps, once per frame: the expansion (below), the pool
-culls, pion decay, boson interaction, dead-slot GC, quadrupole radiation and colors.
+culls, pion decay, boson interaction, the pending radiation of bodies that died
+(`flushRetiredRadiation`), dead-slot GC and colors.
 The scheme is the staggered Boris pusher:
 both half-kicks precede the drift, so velocities sit half a kick from positions, and
 spin-orbit kicks change `w` directly rather than through `totalForce`.
@@ -343,8 +344,10 @@ is written by its smaller body (the lower slot of two alike), which looks only u
 whose largest radius reaches its own, so a small body deep inside a large horizon is found
 and a grown body's own walk stays short. The tree is from before the substep's drift, so the
 collision search reaches c·dt further and tests the bodies where they are. The largest radius widens the hit test, which
-ignores ghosts. With Higgs on, the Yukawa range is `yukawaMu·√(higgsMod_i·higgsMod_j)`,
-`higgsMod = max(|φ|, HIGGS_MASS_FLOOR)` cached per particle in `axYukMod.z`.
+ignores ghosts. The fields don't modulate the pair laws: the Higgs-modulated Yukawa range, the
+axion's scaling of the EM pair laws and the Peccei–Quinn Yukawa factor were removed until they
+have an action (`docs/MODEL.md` §2, bug 2; a pass-order fault had kept them out of the forces
+since 2026-03-14 while the stats booked them).
 
 Signal delay finds each source's retarded state, `retardedState()` in
 `shared-worldline.wgsl`: the image nearest the observer now fixes which copy of the world
@@ -358,8 +361,10 @@ result carries position, velocity, acceleration, angw, mass and charge at the re
 time. Charges act through their Liénard–Wiechert fields, E = q[(n̂ − β)(1 − β²)/(κ³R²) +
 n̂ × ((n̂ − β) × β̇)/(κ³R)] and B = n̂ × E, both scaled by σ³ with σ = R/√(R² + ε²) so that
 a charge at rest gives the softened Coulomb field, and κ floored at `LW_KAPPA_MIN`
-(1/κ³ ≤ 100). Every other law is its static form at the retarded position times the toy
-aberration factor (1 − n̂·v)⁻³. The heatmap's electric potential is q/(κR). Removed
+(1/κ³ ≤ 100). Gravity (Paczyński–Wiita included), Yukawa and the two dipole forces are their
+static forms at the retarded position times the toy aberration factor (1 − n̂·v)⁻³; the
+moving-mass and spin Bg, frame drag, tidal torque, the spin–orbit gradients and 1PN take the
+retarded state without it. The heatmap's electric potential is q/(κR). Removed
 particles keep sourcing forces until the light from their world line's end has passed:
 retired slots keep their death snapshot. A source's past before its first sample is
 extrapolated as uniform motion back to its creation time and is invalid before it, so a
@@ -621,13 +626,14 @@ placed, or black holes, whose capture disks it draws); it adds about 0.25 ms to 
 
 ### Black holes
 
-- **Horizon.** `kerrNewmanRadius()` (`config.js`): `r₊ = M + √(M² − a² − Q²)`,
-  `a = INERTIA_K·bodyRadiusSq·|ω|`. Super-extremal inputs clamp to `r₊ = M`, an
+- **Horizon.** `kerrNewmanRadius()` (`config.js`): `r₊ = M + √(M² − a² − Q²)`, with
+  `a = J/M` from the one canonical spin `J = I·angW` (`I = INERTIA_K·m·bodyRadiusSq`; the
+  rotation rate `angVel` is for drawing and the magnetic moment only). Super-extremal inputs clamp to `r₊ = M`, an
   effective radius for stable evolution, not a naked-singularity model. WGSL repeats
   the clamp in many shaders (grep `disc >= 0.0`).
-- **Gravity.** Paczyński–Wiita, `Φ = −M / max(r − r₊, BH_PW_MIN_GAP)`, with
-  `BH_SOFTENING`: `bhSourceRadius()` copies in `pair-force`, `forces-tree`,
-  `compute-stats`, and `heatmap.wgsl` (the heatmap's ignores spin);
+- **Gravity.** Paczyński–Wiita, `Φ = −M / max(r − r₊, BH_PW_MIN_GAP)`, unsoftened
+  (`BH_SOFTENING` softens the other laws): `bhSourceRadius(m, q, J)` copies in `pair-force`,
+  `forces-tree` and `compute-stats`, and `heatmap.wgsl`'s (which ignores spin);
   `blackHoleRadialTerms()` in `config.js` for the effective-potential plot.
   Phenomenological, not a geodesic solve.
 - **Capture.** In Merge mode a particle whose centre is inside another's horizon is
@@ -652,8 +658,10 @@ placed, or black holes, whose capture disks it draws); it adds about 0.25 ms to 
   energy; subtracting that too makes the discharge run away.
 - **Superradiance** (Black hole + Axion): the rate scales as α² instead of the real
   α⁸, which is too steep to see. Accepted dE enters axion `fieldDot` as an
-  energy-normalized impulse and the hole loses `dM = dE`, `dJ = dE/μ_a`, so it
-  saturates at `Ω_H ≤ μ_a`. The rate uses `dt/γ`, valid for slow holes (`Ω_H > μ` is
+  energy-normalized impulse and the hole loses `dM = dE` and exactly `dJ = dE/μ_a` (the new
+  spin from the new mass's moment of inertia), so it saturates at `Ω_H ≤ μ_a`. A hole's mass
+  is its whole energy, rotation included, so the stats book no separate spin kinetic energy
+  for holes. The rate uses `dt/γ`, valid for slow holes (`Ω_H > μ` is
   frame-dependent for a hole crossing the lab grid). `depositSuperradiance`
   (`field-deposit.wgsl`) reads φ² from `axYukMod[pid].w`, written earlier in the substep
   by `applyAxionForces`, and has its own three-group layout.
@@ -663,10 +671,14 @@ placed, or black holes, whose capture disks it draws); it adds about 0.25 ms to 
 - Pool caps live in `config.js`: 4096 bodies, 16384 photons, 4096 pions + 4096
   leptons. Leptons share the pion buffer, told apart by `Pion.kind` (0 pion, 1 lepton).
   Every boson pass, the boson tree and its sort are sized by the live counts.
-- A body's Larmor and quadrupole radiation accumulates until it reaches `PHOTON_QUANTUM`
-  (0.02) and leaves as one photon (`MIN_MASS`, 0.05, stays the Hawking threshold and the
-  evaporation floor); quadrupole gravitational radiation leaves as gravitational quanta
-  (`FLAG_GRAV`), drawn in madder. A photon is drawn as a wave packet in ochre (`boson-render.wgsl`
+- A body's Larmor radiation accumulates until it reaches `PHOTON_QUANTUM` (0.02) and leaves
+  as one photon (`MIN_MASS`, 0.05, stays the Hawking threshold and the evaporation floor);
+  pion emission takes its energy from the body as it accrues, so pending energy is energy
+  already lost. A body that dies with radiation pending (merged, captured, annihilated,
+  evaporated, despawned) emits it as one unboosted photon the next frame
+  (`flushRetiredRadiation`). The quadrupole sink (gravitational and electric) was removed
+  until a radiation reaction replaces it (`docs/MODEL.md` §2, bug 3); the renderer still
+  draws gravitational quanta (`FLAG_GRAV`) in madder, for when they return. A photon is drawn as a wave packet in ochre (`boson-render.wgsl`
   `fragmentPhoton`): a sinusoid 2.6 px high under a Gaussian envelope 22 px long, its
   wavelength `clamp(6·√(0.05/E′), 3.5, 12)` px reading the energy E′ it has in the frame
   drawn (Doppler-shifted in a non-lab frame, with the Doppler hue).
@@ -686,7 +698,10 @@ placed, or black holes, whose capture disks it draws); it adds about 0.25 ms to 
   since they always carry true proper velocity). `restFrameDt()` and `boostToLab()`
   live in `shared-relativity.wgsl`.
 - `PHOTON_CULL_AGE` and `LEPTON_CULL_AGE` are pool culls in lab time, not lifetimes.
-- Boson lensing (photons 2× Newtonian, pions `1 + v²`) follows the Gravity toggle.
+- Boson lensing (photons 2× Newtonian, pions `1 + v²`) follows the Gravity toggle. The bodies
+  don't feel the bosons' gravity: a pull answering the lensing reciprocally needs each boson's
+  projected impulse (`docs/MODEL.md` §3.12), and the old pass's force was cleared unread. Charged
+  bosons' Coulomb kicks divide by their mass.
 - Leptons come from Schwinger discharge, extremal shedding, evaporation remnants, and
   charged-pion decay. Photon → pair conversion is deliberately absent.
 - **Pion annihilation** (Boson interaction): an opposite-charge pair of the same kind within
@@ -718,9 +733,9 @@ portal and the shared metric are evaluated at matching times.
 
 **Couplings** (`field-forces.wgsl`, `field-deposit.wgsl`). Higgs: particle mass is
 `baseMass·max(|φ|, HIGGS_MASS_FLOOR)`, and particles source the field with
-`HIGGS_COUPLING·baseMass`. Axion: `axMod = 1 + g·a` scales EM couplings and charges
-source it with `g·q²`; a Peccei–Quinn `yukMod` scales Yukawa and flips sign for
-antimatter. Scalar sources couple through proper time (`× 1/γ`). An inelastic merge's lost
+`HIGGS_COUPLING·baseMass`; the mass changes at fixed momentum and fixed spin J. Axion:
+charges source it with `g·q²` and feel `g·(q² + s·m)∇a` (`s` the Peccei–Quinn sign, flipped
+for antimatter); it no longer scales the pair laws (Forces and toggles). Scalar sources couple through proper time (`× 1/γ`). An inelastic merge's lost
 kinetic energy enters `fieldDot` as impulses solved against the existing `fieldDot` cross
 term, so field kinetic energy rises by exactly the event energy, shared among the active
 fields (`field-excitation.wgsl`); annihilation energy is all in its photons. Each event is
@@ -1001,9 +1016,8 @@ canvas text needs no font-load redraw.
   at 0). The quick-save key `nohair-quicksave` and download name `nohair-state.json`
   are stored names; renaming them orphans saves.
 - **GPU slots.** `GPUPhysics.addParticle()` initializes every per-particle buffer.
-  `axYukMod` starts at `(1, 1, 1, 0)` because its components are multiplicative
-  modulations (EM coupling, Yukawa coupling, Higgs range factor) that zeros would switch
-  off. The alive sentinel for `deathTime` is `FLT_MAX` (3.4028235e38), not `Infinity`.
+  `axYukMod` starts at `(1, 1, 1, 0)`; only `.w` (φ_a² at a hole, for superradiance) is
+  read now that the pair modulations are gone. The alive sentinel for `deathTime` is `FLT_MAX` (3.4028235e38), not `Infinity`.
   Slots are recycled through the free stack, so a slot index names a particle only
   while it lives.
 - **Command ordering.** `queue.writeBuffer()` lands at submit, before any of the

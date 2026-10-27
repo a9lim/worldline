@@ -204,16 +204,10 @@ fn claimPionsTree(@builtin(global_invocation_id) gid: vec3u) { claimPion(gid.x, 
 fn absorptionRadius(m: f32, q: f32, angW: f32) -> f32 {
     let bodyR = pow(m, 1.0 / 3.0);
     let bodyRSq = bodyR * bodyR;
-    var angVel = angW;
-    if ((u.toggles0 & RELATIVITY_BIT) != 0u) {
-        let sr = angW * bodyR;
-        angVel = angW / sqrt(1.0 + sr * sr);
-    }
-
     if ((u.toggles0 & BLACK_HOLE_BIT) == 0u) {
         return bodyR;
     }
-    let a = INERTIA_K * bodyRSq * abs(angVel);
+    let a = INERTIA_K * bodyRSq * abs(angW);   // a = J/M, J = I·angW
     let disc = m * m - a * a - q * q;
     return select(m, m + sqrt(max(0.0, disc)), disc >= 0.0);
 }
@@ -265,6 +259,8 @@ fn applyAbsorption(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_
     if (!(newMass > MIN_MASS)) { return; }
 
     p.baseMass = p.baseMass * (newMass / p.mass);
+    // The spin J = I·angW is kept as the moment of inertia (∝ m^{5/3}) grows
+    p.angW = p.angW * pow(p.mass / newMass, 5.0 / 3.0);
     p.mass = newMass;
     p.charge += sum.w;
     p.velWX = px1 / newMass;

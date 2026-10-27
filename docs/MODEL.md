@@ -88,7 +88,15 @@ reaction were each confirmed by reading the code again, and the pass order also 
 axion field with `axMod` = 1.25 left the Coulomb kick unchanged to 0.5%). Each section's
 **Now** has its detail; the headlines:
 
-**Bugs that don't wait for 2.5.** Codex confirmed each of 1–10 by reading the code. Its
+**Bugs that don't wait for 2.5.** Status, 2026-10-27: 2, 3 and 4 are disabled (the pair
+modulations, the quadrupole sink and the bodies' pull from the bosons removed, since each fix
+alone would have switched on a coupling with no consistent action); 5–11 are fixed, each with an
+oracle in `tests/physics-validation.html`; 1 and 12 are next. Bug 6's fix went past the sign: the
+contact torques also take their lever from the mid-overlap contact point (r_i − δ/2), which makes
+orbital plus spin angular momentum exact; bug 8's dead bodies emit their balance as a photon
+(the collision pass is at its ten storage buffers, so it can't hand it to the survivor).
+
+Codex confirmed each of 1–10 by reading the code. Its
 caution governs the list: a wiring fix that switches on a defective coupling makes things
 worse, so where the coupling behind a bug is itself wrong, the immediate fix *disables* it
 until its model correction lands.
@@ -467,8 +475,8 @@ multipole included (Codex agrees). The fixes:
   absorbed packet would deposit it again. First, photons are drawn representations of an
   explicitly defined flux and don't act. A field-to-packet conversion with an absorption
   model that doesn't double count is a decision of its own (Question 6).
-- **Pending radiation outlives its body:** a merge carries it to the survivor, a death or
-  absorption emits it.
+- **Pending radiation outlives its body:** a body that dies, merged or not, emits it (done,
+  §2 bug 8).
 - **No EM quadrupole sink under signal delay:** with ideal mutual retarded fields it counts the
   system's quadrupole radiation twice (Codex agrees). Without signal delay (Relativity off,
   instantaneous Coulomb) a sink stays, fixed: Q_ij = Σq(3x_i x_j − r²δ_ij), P = (1/180)Σ(Q⃛_ij)²

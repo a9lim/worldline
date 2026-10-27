@@ -48,21 +48,13 @@ struct StatsUniforms {
 
 // Struct definitions (ParticleState, ParticleDerived, AllForces) provided by shared-structs.wgsl.
 
-struct AxYukMod {
-    axMod: f32,
-    yukMod: f32,
-    higgsMod: f32,
-    _pad: f32,
-};
-
 // Group 0: particle data
 @group(0) @binding(0) var<uniform> params: StatsUniforms;
 @group(0) @binding(1) var<storage, read> particles: array<ParticleState>;
 @group(0) @binding(2) var<storage, read> derived: array<ParticleDerived>;
 @group(0) @binding(3) var<storage, read> forces: array<AllForces>;
 @group(0) @binding(4) var<storage, read_write> stats: array<f32>;
-@group(0) @binding(5) var<storage, read> axYukMod: array<AxYukMod>;
-@group(0) @binding(6) var<storage, read> clocks: array<vec4<f32>>;   // τ, ring phase, θ, dτ/dt
+@group(0) @binding(5) var<storage, read> clocks: array<vec4<f32>>;   // τ, ring phase, θ, dτ/dt
 
 // Group 1: scalar field grids (optional — bound to dummy 4-byte buffers when field inactive)
 @group(1) @binding(0) var<storage, read> higgsField: array<f32>;
@@ -83,29 +75,21 @@ struct AxYukMod {
 // [96-103] cosmoAccum since the last readback: [96] expansion work; [97] escaped energy that
 //          redshifts (photons, leptons' kinetic), [98-100] its comoving a·(E, px, py) with all
 //          escaped momentum; [101] escaped leptons' rest mass
-// Selected particle [32-75]: [32] posX .. [69] axion force, [70-72] axMod, yukMod, higgsMod,
-//   [73-75] τ, dτ/dt, θ
+// Selected particle [32-75]: [32] posX .. [69] axion force, [70-72] unused, [73-75] τ, dτ/dt, θ
 // Reference body [80-91]: heaviest other alive particle (mass [84] = -1 when none)
 
 fn toggle(bit: u32) -> bool { return (params.toggles0 & bit) != 0u; }
 
-fn bhSourceRadius(m: f32, charge: f32, angVel: f32, angMomentum: f32) -> f32 {
+fn bhSourceRadius(m: f32, charge: f32, angMomentum: f32) -> f32 {
     if (m <= EPSILON) { return 0.0; }
-    let bodyR = pow(m, 1.0 / 3.0);
-    let bodyRSq = bodyR * bodyR;
-    var omega = angVel;
-    if (abs(omega) < EPSILON && abs(angMomentum) > EPSILON) {
-        let denom = INERTIA_K * m * bodyRSq;
-        if (denom > EPSILON) { omega = angMomentum / denom; }
-    }
-    let a = INERTIA_K * bodyRSq * abs(omega);
+    let a = abs(angMomentum) / m;   // the Kerr parameter a = J/M, J = I·angW
     let disc = m * m - a * a - charge * charge;
     return select(m, m + sqrt(max(0.0, disc)), disc >= 0.0);
 }
 
-fn bhInvPotential(rawRSq: f32, m: f32, charge: f32, angVel: f32, angMomentum: f32) -> f32 {
+fn bhInvPotential(rawRSq: f32, m: f32, charge: f32, angMomentum: f32) -> f32 {
     let rawR = sqrt(max(rawRSq, EPSILON));
-    let gap = max(rawR - bhSourceRadius(m, charge, angVel, angMomentum), BH_PW_MIN_GAP);
+    let gap = max(rawR - bhSourceRadius(m, charge, angMomentum), BH_PW_MIN_GAP);
     return 1.0 / gap;
 }
 
@@ -224,6 +208,7 @@ fn statsBodies(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_inde
     let relOn = toggle(RELATIVITY_BIT);
     // Without Relativity, EIH's kinetic energy carries its ⅜mv⁴ (statsPE)
     let eihKinetic = !relOn && toggle(ONE_PN_BIT) && toggle(GRAVITOMAG_BIT);
+    let holes = toggle(BLACK_HOLE_BIT);
     let higgsOn = toggle(HIGGS_BIT);
     let axionOn = toggle(AXION_BIT);
     let FGRID = params.fieldGridRes;
@@ -254,6 +239,9 @@ fn statsBodies(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_inde
                 if (eihKinetic) { kin.x += 0.375 * m * vSq * vSq; }
                 kin.y = 0.5 * INERTIA_K * m * d.bodyRSq * d.angVel * d.angVel;
             }
+            // A hole's mass is its whole energy, its rotation included (Kerr), so its spin
+            // adds no kinetic energy of its own
+            if (holes) { kin.y = 0.0; }
             kin.z = m * p.velWX;
             kin.w = m * p.velWY;
             mom = vec4(m, m * p.posX, m * p.posY, INERTIA_K * m * d.bodyRSq * p.angW);
@@ -301,7 +289,7 @@ const PE_TILE: u32 = 128u;   // at most PE_WG
 struct PEBody {
     posX: f32, posY: f32, mass: f32, charge: f32,
     velX: f32, velY: f32, angVel: f32, angMomentum: f32,
-    magMoment: f32, axMod: f32, yukMod: f32, higgsMod: f32,
+    magMoment: f32,
     alive: u32,
 };
 
@@ -313,13 +301,11 @@ fn loadPEBody(i: u32, n: u32) -> PEBody {
     let p = particles[i];
     if ((p.flags & FLAG_ALIVE) == 0u) { return b; }
     let d = derived[i];
-    let mods = axYukMod[i];
     b.posX = p.posX;          b.posY = p.posY;
     b.mass = p.mass;          b.charge = p.charge;
     b.velX = d.velX;          b.velY = d.velY;
     b.angVel = d.angVel;      b.angMomentum = d.angMomentum;
     b.magMoment = d.magMoment;
-    b.axMod = mods.axMod;     b.yukMod = mods.yukMod;    b.higgsMod = mods.higgsMod;
     b.alive = 1u;
     return b;
 }
@@ -333,7 +319,6 @@ fn statsPE(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) l
     let gmOn = toggle(GRAVITOMAG_BIT);
     let onePNOn = toggle(ONE_PN_BIT);
     let yukOn = toggle(YUKAWA_BIT);
-    let higgsOn = toggle(HIGGS_BIT);
     let bhOn = toggle(BLACK_HOLE_BIT);
     let softeningSq = select(SOFTENING_SQ, BH_SOFTENING_SQ, bhOn);
     let yukMu = params.yukawaMu;
@@ -389,14 +374,11 @@ fn statsPE(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) l
             // d·∂/∂d of a (d² + ε²)^(−n/2) potential is −n·V·d²/(d² + ε²)
             let stretch = rawRSq * invR * invR;
 
-            let axModPair = sqrt(max(pi.axMod * pj.axMod, 0.0));
-            let yukModPair = sqrt(max(pi.yukMod * pj.yukMod, 0.0));
-
             // Gravity PE
             if (gravOn) {
                 if (bhOn) {
-                    let invPi = bhInvPotential(rawRSq, pi.mass, pi.charge, pi.angVel, pi.angMomentum);
-                    let invPj = bhInvPotential(rawRSq, pj.mass, pj.charge, pj.angVel, pj.angMomentum);
+                    let invPi = bhInvPotential(rawRSq, pi.mass, pi.charge, pi.angMomentum);
+                    let invPj = bhInvPotential(rawRSq, pj.mass, pj.charge, pj.angMomentum);
                     pe -= 0.5 * pi.mass * pj.mass * (invPi + invPj);
                     peScale += 0.5 * pi.mass * pj.mass * (invPi + invPj) * stretch;
                 } else {
@@ -407,14 +389,14 @@ fn statsPE(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) l
 
             // Coulomb PE
             if (coulOn) {
-                let v = pi.charge * pj.charge * invR * axModPair;
+                let v = pi.charge * pj.charge * invR;
                 pe += v;
                 peScale -= v * stretch;
             }
 
             // Magnetic dipole PE
             if (magOn) {
-                let v = pi.magMoment * pj.magMoment * invR3 * axModPair;
+                let v = pi.magMoment * pj.magMoment * invR3;
                 pe += v;
                 peScale -= 3.0 * v * stretch;
             }
@@ -443,7 +425,7 @@ fn statsPE(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) l
             // source-acceleration terms cancel in dE/dt identically). The field momentum
             // q₁A₂(x₁) + q₂A₁(x₂) goes with it.
             if (darwinOn) {
-                let qqInvR = pi.charge * pj.charge * invR * axModPair;
+                let qqInvR = pi.charge * pj.charge * invR;
                 let e2 = 0.5 * qqInvR * (viDotVj + viDotN * vjDotN);
                 darwinE += e2;
                 peScale -= (stretch + 2.0) * e2;
@@ -477,12 +459,11 @@ fn statsPE(@builtin(workgroup_id) wid: vec3u, @builtin(local_invocation_index) l
                 peScale -= 2.0 * stretch * e0;
             }
 
-            // Yukawa PE (Higgs-modulated μ when both enabled)
+            // Yukawa PE
             if (yukOn) {
-                let muEff = select(yukMu, yukMu * sqrt(pi.higgsMod * pj.higgsMod), higgsOn);
-                let mur = muEff * r;
+                let mur = yukMu * r;
                 if (mur < 6.0) {
-                    let yukPE = -YUKAWA_COUPLING * yukModPair * pi.mass * pj.mass * exp(-mur) * invR;
+                    let yukPE = -YUKAWA_COUPLING * pi.mass * pj.mass * exp(-mur) * invR;
                     pe += yukPE;
                     peScale -= yukPE * (1.0 + mur) * stretch;
                     // Scalar Breit (Yukawa + 1PN), from shared-1pn.wgsl's Lagrangian
@@ -719,8 +700,6 @@ fn statsReduce(@builtin(local_invocation_index) lid: u32) {
         stats[64] = af.f4.x; stats[65] = af.f4.y;
         stats[66] = af.f4.z; stats[67] = af.f4.w;
         stats[68] = af.f5.x; stats[69] = af.f5.y;
-        let mods = axYukMod[si];
-        stats[70] = mods.axMod; stats[71] = mods.yukMod; stats[72] = mods.higgsMod;
         let clk = clocks[si];
         stats[73] = clk.x; stats[74] = clk.w; stats[75] = clk.z;   // τ, dτ/dt, θ
     } else {
@@ -740,7 +719,6 @@ fn statsReduce(@builtin(local_invocation_index) lid: u32) {
         stats[87] = d.magMoment;
         stats[88] = d.angMomentum;
         stats[89] = sqrt(d.radiusSq);
-        stats[90] = axYukMod[ri].higgsMod;
         stats[91] = bitcast<f32>(ri);
     } else {
         stats[84] = -1.0; // no reference body

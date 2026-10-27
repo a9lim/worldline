@@ -41,8 +41,7 @@ const LIST_MAX: u32 = 512u;        // list entries summed at a time
 @group(1) @binding(0) var<storage, read_write> particleState: array<ParticleState>;
 @group(1) @binding(1) var<storage, read_write> treeKeys: array<vec2<u32>>;
 @group(1) @binding(2) var<storage, read_write> derived_in: array<ParticleDerived>;
-@group(1) @binding(3) var<storage, read_write> axYukMod_in: array<vec4<f32>>; // packed: axMod, yukMod, higgsMod, pad
-@group(1) @binding(4) var<storage, read_write> treeCount: array<u32>;
+@group(1) @binding(3) var<storage, read_write> treeCount: array<u32>;
 
 // Group 2: force accumulators + maxAccel — 2 bindings (radiationState removed, jerk now in AllForces)
 @group(2) @binding(0) var<storage, read_write> allForces: array<AllForces>;
@@ -60,23 +59,16 @@ const LIST_MAX: u32 = 512u;        // list entries summed at a time
 
 // Inline the core force accumulation (matches pairForce in forces.js):
 // jerkOut: function-scope pointer for accumulating analytical jerk (radiation)
-fn bhSourceRadius(m: f32, charge: f32, angVel: f32, angMomentum: f32) -> f32 {
+fn bhSourceRadius(m: f32, charge: f32, angMomentum: f32) -> f32 {
     if (m <= EPSILON) { return 0.0; }
-    let bodyR = pow(m, 1.0 / 3.0);
-    let bodyRSq = bodyR * bodyR;
-    var omega = angVel;
-    if (abs(omega) < EPSILON && abs(angMomentum) > EPSILON) {
-        let denom = INERTIA_K * m * bodyRSq;
-        if (denom > EPSILON) { omega = angMomentum / denom; }
-    }
-    let a = INERTIA_K * bodyRSq * abs(omega);
+    let a = abs(angMomentum) / m;   // the Kerr parameter a = J/M, J = I·angW
     let disc = m * m - a * a - charge * charge;
     return select(m, m + sqrt(max(0.0, disc)), disc >= 0.0);
 }
 
-fn bhInvPotential(rawRSq: f32, m: f32, charge: f32, angVel: f32, angMomentum: f32) -> f32 {
+fn bhInvPotential(rawRSq: f32, m: f32, charge: f32, angMomentum: f32) -> f32 {
     let rawR = sqrt(max(rawRSq, EPSILON));
-    let gap = max(rawR - bhSourceRadius(m, charge, angVel, angMomentum), BH_PW_MIN_GAP);
+    let gap = max(rawR - bhSourceRadius(m, charge, angMomentum), BH_PW_MIN_GAP);
     return 1.0 / gap;
 }
 
@@ -86,18 +78,16 @@ fn accumulateForce(
     pMass: f32, pCharge: f32,
     pMagMoment: f32, pAngMomentum: f32,
     pAngVel: f32, pVelX: f32, pVelY: f32,
-    pAxMod: f32, pYukMod: f32, pHiggsMod: f32,
     svx: f32, svy: f32,
     sMass: f32, sCharge: f32,
     sAngVel: f32, sMagMoment: f32, sAngMomentum: f32,
-    sAxMod: f32, sYukMod: f32, sHiggsMod: f32,
     pRi5: f32,
     jerkOut: ptr<function, vec2<f32>>,
     useAberration: bool,
     // Hoisted toggle booleans (G9: avoids re-reading uniforms.toggles0 per call)
     gravOn: bool, coulOn: bool, magOn: bool, gmOn: bool,
-    yukOn: bool, onePNOn: bool, bazOn: bool, higgsOn: bool, radOn: bool, bhOn: bool,
-    relOn: bool, needAxMod: bool,
+    yukOn: bool, onePNOn: bool, bazOn: bool, radOn: bool, bhOn: bool,
+    relOn: bool,
 ) {
     let softeningSq = uniforms.softeningSq;
     let rawRSq = rx * rx + ry * ry;
@@ -117,11 +107,6 @@ fn accumulateForce(
     let invR3a = invR3 * aberr;
     let invR5a = invR5 * aberr;
 
-    var axModPair: f32 = 1.0;
-    if (needAxMod) {
-        axModPair = sqrt(max(pAxMod * sAxMod, 0.0));
-    }
-
     // Relative velocity for jerk computation
     let vrx = svx - pVelX;
     let vry = svy - pVelY;
@@ -135,7 +120,7 @@ fn accumulateForce(
         if (bhOn) {
             let rawR = sqrt(max(rawRSq, EPSILON));
             let invRawR = 1.0 / rawR;
-            let invGap = bhInvPotential(rawRSq, sMass, sCharge, sAngVel, sAngMomentum);
+            let invGap = bhInvPotential(rawRSq, sMass, sCharge, sAngMomentum);
             let pwForceScale = invRawR * invGap * invGap;
             fDir = k * pwForceScale * aberr;
             pwJerkFactor = pwForceScale * (invRawR * invRawR + 2.0 * invRawR * invGap) * aberr;
@@ -170,7 +155,7 @@ fn accumulateForce(
 
     // Coulomb: -q1*q2/r^2 (like repels)
     if (coulOn) {
-        let k = -(pCharge * sCharge) * axModPair;
+        let k = -(pCharge * sCharge);
         let fDir = k * invR3;
         let fx = rx * fDir;
         let fy = ry * fDir;
@@ -192,9 +177,8 @@ fn accumulateForce(
 
     // Magnetic: dipole-dipole + Bz field
     if (magOn) {
-        let axMod = axModPair;
         // Dipole-dipole radial: F = -3*mu1*mu2/r^4 (aligned dipoles repel)
-        let fDir = -3.0 * (pMagMoment * sMagMoment) * invR5a * axMod;
+        let fDir = -3.0 * (pMagMoment * sMagMoment) * invR5a;
         let fx = rx * fDir;
         let fy = ry * fDir;
         (*af).f1.x += fx;
@@ -205,20 +189,20 @@ fn accumulateForce(
         // Analytical jerk: F = 3μ₁μ₂·r/r⁵, d/dt(1/r⁵) = -5·rDotVr/r⁷
         if (radOn) {
             let invR7a = invR5a * invRSq;
-            let jRadial = 15.0 * (pMagMoment * sMagMoment) * rDotVr * invR7a * axMod;
+            let jRadial = 15.0 * (pMagMoment * sMagMoment) * rDotVr * invR7a;
             (*jerkOut).x += vrx * fDir + rx * jRadial;
             (*jerkOut).y += vry * fDir + ry * jRadial;
         }
 
         // Biot–Savart from the moving charge, Bz = −q (v_s × r)_z/r³, and its gradient
-        let cq = -sCharge * axMod;
+        let cq = -sCharge;
         let BzMoving = cq * crossSV * invR3;
         (*af).bFields.x += BzMoving;
         (*af).bFieldGrads.x += 3.0 * BzMoving * rx * invRSq + cq * svy * invR3;
         (*af).bFieldGrads.y += 3.0 * BzMoving * ry * invRSq - cq * svx * invR3;
 
         // In-plane dipole field, −μ/r³ (no gradient: spin-spin is the direct term above)
-        (*af).bFields.x -= sMagMoment * invR3 * axMod;
+        (*af).bFields.x -= sMagMoment * invR3;
     }
 
     // Gravitomagnetic: dipole + Bgz field (F = 4m v × Bg; parallel mass currents repel)
@@ -253,21 +237,18 @@ fn accumulateForce(
         (*af).torques.y += fdTorque;
     }
 
-    // Yukawa (Higgs-modulated μ when both enabled)
-    var mu = uniforms.yukawaMu;
-    var yukModPair = 1.0;
+    // Yukawa
+    let mu = uniforms.yukawaMu;
     var yukInRange = false;
     if (yukOn) {
-        mu = select(uniforms.yukawaMu, uniforms.yukawaMu * sqrt(pHiggsMod * sHiggsMod), higgsOn);
-        let cutoffSq = select((6.0 / uniforms.yukawaMu) * (6.0 / uniforms.yukawaMu), (6.0 / max(mu, EPSILON)) * (6.0 / max(mu, EPSILON)), higgsOn);
+        let cutoffSq = (6.0 / max(mu, EPSILON)) * (6.0 / max(mu, EPSILON));
         yukInRange = rawRSq < cutoffSq;
         if (yukInRange) {
             let r = 1.0 / invR;
             let muR = mu * r;
             let expMuR = select(0.0, exp(-muR), muR < 80.0);
-            yukModPair = sqrt(max(pYukMod * sYukMod, 0.0));
             let yukInvRa = invR * aberr;
-            let fDir = uniforms.yukawaCoupling * yukModPair * pMass * sMass * expMuR * (invRSq + mu * invR) * yukInvRa;
+            let fDir = uniforms.yukawaCoupling * pMass * sMass * expMuR * (invRSq + mu * invR) * yukInvRa;
             let fx = rx * fDir;
             let fy = ry * fDir;
             (*af).f3.z += fx;
@@ -278,7 +259,7 @@ fn accumulateForce(
             // Analytical jerk for pion emission radiation
             if (radOn) {
                 let jRadial = -(3.0 * invRSq + 3.0 * mu * invR + mu * mu)
-                              * rDotVr * uniforms.yukawaCoupling * yukModPair * pMass * sMass
+                              * rDotVr * uniforms.yukawaCoupling * pMass * sMass
                               * expMuR * invRSq * yukInvRa;
                 (*jerkOut).x += vrx * fDir + rx * jRadial;
                 (*jerkOut).y += vry * fDir + ry * jRadial;
@@ -292,7 +273,7 @@ fn accumulateForce(
                         vec2(pVelX, pVelY), vec2(svx, svy),
                         pMass, sMass, pCharge, sCharge,
                         gmOn, bazOn, yukInRange, relOn,
-                        mu, uniforms.yukawaCoupling * yukModPair);
+                        mu, uniforms.yukawaCoupling);
         (*af).f2.x += f.x;
         (*af).f2.y += f.y;
         (*af).totalForce.x += f.x;
@@ -323,9 +304,6 @@ struct TileSource {
     angVel: f32,
     magMoment: f32,
     angMomentum: f32,
-    axMod: f32,
-    yukMod: f32,
-    higgsMod: f32,
     slot: u32,          // the body's slot, or NO_SLOT for a node (and for none)
     _p0: u32, _p1: u32, _p2: u32,
 };
@@ -342,16 +320,13 @@ struct Observer {
     magMoment: f32,
     angMomentum: f32,
     angVel: f32,
-    axMod: f32,
-    yukMod: f32,
-    higgsMod: f32,
     ri5: f32,
 };
 
 /** The toggles, read once. */
 struct Laws {
     gravOn: bool, coulOn: bool, magOn: bool, gmOn: bool, yukOn: bool, onePNOn: bool,
-    bazOn: bool, higgsOn: bool, radOn: bool, bhOn: bool, needAxMod: bool,
+    bazOn: bool, radOn: bool, bhOn: bool,
     periodic: bool, domW: f32, domH: f32, topo: u32,
 };
 
@@ -362,7 +337,6 @@ fn loadSource(nodeIdx: u32) -> TileSource {
         let sIdx = u32(getParticleIndex(nodeIdx));
         let sPs = particleState[sIdx];
         let sD = derived_in[sIdx];
-        let sAYM = axYukMod_in[sIdx];
         t.pos = vec2(sPs.posX, sPs.posY);
         t.vel = vec2(sD.velX, sD.velY);
         t.mass = sPs.mass;
@@ -370,9 +344,6 @@ fn loadSource(nodeIdx: u32) -> TileSource {
         t.angVel = sD.angVel;
         t.magMoment = sD.magMoment;
         t.angMomentum = sD.angMomentum;
-        t.axMod = sAYM.x;
-        t.yukMod = sAYM.y;
-        t.higgsMod = sAYM.z;
         t.slot = sIdx;
         return t;
     }
@@ -384,9 +355,6 @@ fn loadSource(nodeIdx: u32) -> TileSource {
     t.angVel = 0.0;   // for aggregate
     t.magMoment = getTotalMagMoment(nodeIdx);
     t.angMomentum = getTotalAngMomentum(nodeIdx);
-    t.axMod = 1.0;    // axMod/yukMod/higgsMod = 1 for aggregate
-    t.yukMod = 1.0;
-    t.higgsMod = 1.0;
     t.slot = NO_SLOT;
     return t;
 }
@@ -411,16 +379,14 @@ fn sumList(lid: u32, lane: u32, count: u32, o: Observer, L: Laws,
                 accumulateForce(
                     af, d.x, d.y, o.mass, o.charge,
                     o.magMoment, o.angMomentum, o.angVel, o.vel.x, o.vel.y,
-                    o.axMod, o.yukMod, o.higgsMod,
                     t.vel.x, t.vel.y,
                     t.mass, t.charge,
                     t.angVel, t.magMoment, t.angMomentum,
-                    t.axMod, t.yukMod, t.higgsMod,
                     o.ri5,
                     jerk,
                     false, // no aberration: the walk runs without Relativity
-                    L.gravOn, L.coulOn, L.magOn, L.gmOn, L.yukOn, L.onePNOn, L.bazOn, L.higgsOn, L.radOn, L.bhOn,
-                    false, L.needAxMod,
+                    L.gravOn, L.coulOn, L.magOn, L.gmOn, L.yukOn, L.onePNOn, L.bazOn, L.radOn, L.bhOn,
+                    false,
                 );
             }
         }
@@ -483,10 +449,6 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
             // Pre-hoist ri5 = mass^(5/3) for tidal locking (avoids pow() per pair in accumulateForce)
             let pBodyRadiusSq = pDerived.bodyRSq;
             o.ri5 = pBodyRadiusSq * pBodyRadiusSq * sqrt(pBodyRadiusSq);
-            let pAym = axYukMod_in[pIdx];
-            o.axMod = pAym.x;
-            o.yukMod = pAym.y;
-            o.higgsMod = pAym.z;
         }
     }
 
@@ -500,10 +462,8 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     L.yukOn   = (t0 & YUKAWA_BIT)      != 0u;
     L.onePNOn = (t0 & ONE_PN_BIT)      != 0u;
     L.bazOn   = L.gmOn && L.coulOn;
-    L.higgsOn = (t0 & HIGGS_BIT)       != 0u;
     L.radOn   = (t0 & RADIATION_BIT)   != 0u;
     L.bhOn    = (t0 & BLACK_HOLE_BIT)  != 0u;
-    L.needAxMod = (L.coulOn || L.magOn) && (t0 & AXION_BIT) != 0u;
     L.periodic = uniforms.boundaryMode == BOUND_LOOP;
     L.domW = uniforms.domainW;
     L.domH = uniforms.domainH;

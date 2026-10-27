@@ -12,7 +12,7 @@
  *   4a-d. treeBuild           (Phase 3 — if BH enabled)
  *   5. computeForces          (Phase 2 pairwise OR Phase 3 tree walk)
  *   5b. externalFields
- *   5c. scalarFieldForces      (Phase 5 — gradient forces + mass/axMod modulation, before Boris)
+ *   5c. scalarFieldForces      (Phase 5 — gradient forces + Higgs mass modulation, before Boris)
  *   6-8. borisFused            (halfKick + rotate + halfKick in one pass)
  *   9. spinOrbit
  *  10. applyTorques
@@ -612,8 +612,7 @@ export default class GPUPhysics {
                     { binding: 2, resource: { buffer: this.buffers.derived } },
                     { binding: 3, resource: { buffer: this.buffers.allForces } },
                     { binding: 4, resource: { buffer: this.buffers.statsBuffer } },
-                    { binding: 5, resource: { buffer: this.buffers.axYukMod } },
-                    { binding: 6, resource: { buffer: this.buffers.clocks } },
+                    { binding: 5, resource: { buffer: this.buffers.clocks } },
                 ],
             });
             this._statsBindGroup1 = null;
@@ -895,7 +894,7 @@ export default class GPUPhysics {
         this._bg_pairForce0 = bg('pairForce_g0', p2.pairForce.bindGroupLayouts[0],
             [this.uniformBuffer]);
         this._bg_pairForce1 = bg('pairForce_g1', p2.pairForce.bindGroupLayouts[1],
-            [b.particleState, b.derived, b.axYukMod, b.particleAux]);
+            [b.particleState, b.derived, b.particleAux]);
         this._bg_pairForce2 = bg('pairForce_g2', p2.pairForce.bindGroupLayouts[2],
             [b.allForces, b.maxAccelBuffer]);
         // Group 3: world lines (signal delay) and the per-pair light-cone hints
@@ -1129,8 +1128,7 @@ export default class GPUPhysics {
                 { binding: 0, resource: { buffer: b.particleState } },
                 { binding: 1, resource: { buffer: b.treeKeys } },
                 { binding: 2, resource: { buffer: b.derived } },
-                { binding: 3, resource: { buffer: b.axYukMod } },
-                { binding: 4, resource: { buffer: b.qtNodeCounter } },
+                { binding: 3, resource: { buffer: b.qtNodeCounter } },
             ],
         });
 
@@ -1261,7 +1259,7 @@ export default class GPUPhysics {
         this._phase4BindGroups.onePNG0 = bg('onePN_g0', p4.compute1PN.bindGroupLayouts[0],
             [this.uniformBuffer]);
         this._phase4BindGroups.onePNG1 = bg('onePN_g1', p4.compute1PN.bindGroupLayouts[1],
-            [b.particleState, b.derived, b.axYukMod]);
+            [b.particleState, b.derived]);
         this._phase4BindGroups.onePNG2 = bg('onePN_g2', p4.compute1PN.bindGroupLayouts[2],
             [b.allForces, b.f1pnOld]);
         this._phase4BindGroups.onePNG3 = bg('onePN_g3', p4.compute1PN.bindGroupLayouts[3],
@@ -1269,32 +1267,22 @@ export default class GPUPhysics {
 
         // ── 1PN Tree Walk (compute1PNTree — shares G0, G2 with pairwise) ──
         this._phase4BindGroups.onePNTreeG1 = bg('onePNTree_g1', p4.compute1PNTree.bindGroupLayouts[1],
-            [b.particleState, b.derived, b.axYukMod, b.ghostOriginalIdx]);
+            [b.particleState, b.derived]);
         this._phase4BindGroups.onePNTreeG3 = bg('onePNTree_g3', p4.compute1PNTree.bindGroupLayouts[3],
             [b.wlData, b.wlMeta, b.qtNodeBuffer]);
 
         // ── Radiation (larmorRadiation, hawkingRadiation, pionEmission share bind groups) ──
         this._phase4BindGroups.radG0 = bg('radiation_g0', p4.larmorRadiation.bindGroupLayouts[0],
             [this.uniformBuffer]);
-        // Group 1: packed particle state + aux + derived + allForces + radiationState + axYukMod
+        // Group 1: packed particle state + aux + derived + allForces + radiationState
         this._phase4BindGroups.radG1 = bg('radiation_g1', p4.larmorRadiation.bindGroupLayouts[1],
-            [b.particleState, b.particleAux, b.derived, b.allForces, b.radiationState, b.axYukMod]);
+            [b.particleState, b.particleAux, b.derived, b.allForces, b.radiationState]);
         // Group 2: photon pool (packed) + phCount
         this._phase4BindGroups.radG2 = bg('radiation_g2', p4.larmorRadiation.bindGroupLayouts[2],
             [b.photonPool, b.phCount]);
         // Group 3: pion pool (packed) + piCount
         this._phase4BindGroups.radG3 = bg('radiation_g3', p4.larmorRadiation.bindGroupLayouts[3],
             [b.pionPool, b.piCount]);
-
-        // ── Quadrupole radiation (quadrupoleCoM, quadrupoleContrib, quadrupoleApply share bind groups) ──
-        this._phase4BindGroups.quadG0 = bg('quadrupole_g0', p4.quadrupoleCoM.bindGroupLayouts[0],
-            [this.uniformBuffer]);
-        this._phase4BindGroups.quadG1 = bg('quadrupole_g1', p4.quadrupoleCoM.bindGroupLayouts[1],
-            [b.particleState, b.particleAux, b.derived, b.allForces, b.radiationState]);
-        this._phase4BindGroups.quadG2 = bg('quadrupole_g2', p4.quadrupoleCoM.bindGroupLayouts[2],
-            [b.photonPool, b.phCount]);
-        this._phase4BindGroups.quadG3 = bg('quadrupole_g3', p4.quadrupoleCoM.bindGroupLayouts[3],
-            [b.quadReductionBuf]);
 
         // ── Bosons (updatePhotons, updatePions, decayPions) ──
         this._phase4BindGroups.bosG0 = bg('bosons_g0', p4.updatePhotons.bindGroupLayouts[0],
@@ -1318,16 +1306,14 @@ export default class GPUPhysics {
         this._phase4BindGroups.absorbG1 = bg('bosonAbsorb_g1', p4.applyAbsorption.bindGroupLayouts[1],
             [b.particleState, b.particleAux, b.qtNodeBuffer, b.ghostOriginalIdx]);
 
-        // ── Boson tree walks (computeBosonGravity, applyBosonBosonGravity, applyPionPionCoulomb, annihilatePions) ──
+        // ── Boson tree walks (applyBosonBosonGravity, applyPionPionCoulomb, annihilatePions) ──
         // Group 0: uniforms + tree nodes (atomic) + counter + visitor flags
-        this._phase4BindGroups.btG0 = bg('bosonTree_g0', p4.computeBosonGravity.bindGroupLayouts[0],
+        this._phase4BindGroups.btG0 = bg('bosonTree_g0', p4.applyBosonBosonGravity.bindGroupLayouts[0],
             [this.uniformBuffer, b.bosonTreeNodes, b.bosonTreeCounter, b.bosonVisitorFlags]);
-        this._phase4BindGroups.btG1 = bg('bosonTree_g1', p4.computeBosonGravity.bindGroupLayouts[1],
+        this._phase4BindGroups.btG1 = bg('bosonTree_g1', p4.applyBosonBosonGravity.bindGroupLayouts[1],
             [b.photonPool, b.phCount]);
-        this._phase4BindGroups.btG2 = bg('bosonTree_g2', p4.computeBosonGravity.bindGroupLayouts[2],
+        this._phase4BindGroups.btG2 = bg('bosonTree_g2', p4.applyBosonBosonGravity.bindGroupLayouts[2],
             [b.pionPool, b.piCount, b.pionClaims]);
-        this._phase4BindGroups.btG3 = bg('bosonTree_g3', p4.computeBosonGravity.bindGroupLayouts[3],
-            [b.particleState, b.allForces]);
 
         // ── Kugelblitz Collapse ──
         // Groups 0-2 reuse boson tree bind groups; group 3 is kugelblitz event output
@@ -1401,48 +1387,20 @@ export default class GPUPhysics {
     }
 
     /**
-     * Dispatch quadrupole radiation passes (once per frame, after all substeps).
-     * Requires Radiation + (Gravity or Coulomb) + at least 2 particles.
-     * Three dispatches: CoM reduction → d³ contribution reduction → apply + emit.
+     * Emit the pending radiation of every slot whose body died this frame (radiation.wgsl
+     * flushRetiredRadiation), before dead-slot GC can hand the slot to a new body.
      */
-    _dispatchQuadrupole(encoder) {
-        if (!this._radiationEnabled) return;
-        if (this.aliveCount < 2) return;
-        // Requires gravity or coulomb (same guard as CPU)
-        const t0 = this._toggles0;
-        if (!(t0 & GRAVITY_BIT) && !(t0 & COULOMB_BIT)) return; // neither gravity nor coulomb
-
-        const workgroups = Math.ceil(this.aliveCount / 64);
+    _dispatchFlushRetiredRadiation(encoder) {
+        if (this.aliveCount === 0 || !this._phase4?.flushRetiredRadiation) return;
         const bgs = this._phase4BindGroups;
-        const p4 = this._phase4;
-
-        function setBindGroups(pass) {
-            pass.setBindGroup(0, bgs.quadG0);
-            pass.setBindGroup(1, bgs.quadG1);
-            pass.setBindGroup(2, bgs.quadG2);
-            pass.setBindGroup(3, bgs.quadG3);
-        }
-
-        // Pass 1: Reduce CoM + totalKE
-        const p1 = encoder.beginComputePass({ label: 'quadrupoleCoM' });
-        p1.setPipeline(p4.quadrupoleCoM.pipeline);
-        setBindGroups(p1);
-        p1.dispatchWorkgroups(workgroups);
-        p1.end();
-
-        // Pass 2: Compute d³I/d³Q contributions + reduce
-        const p2 = encoder.beginComputePass({ label: 'quadrupoleContrib' });
-        p2.setPipeline(p4.quadrupoleContrib.pipeline);
-        setBindGroups(p2);
-        p2.dispatchWorkgroups(workgroups);
-        p2.end();
-
-        // Pass 3: Apply drag + accumulate + emit photons/gravitons
-        const p3 = encoder.beginComputePass({ label: 'quadrupoleApply' });
-        p3.setPipeline(p4.quadrupoleApply.pipeline);
-        setBindGroups(p3);
-        p3.dispatchWorkgroups(workgroups);
-        p3.end();
+        const pass = encoder.beginComputePass({ label: 'flushRetiredRadiation' });
+        pass.setPipeline(this._phase4.flushRetiredRadiation.pipeline);
+        pass.setBindGroup(0, bgs.radG0);
+        pass.setBindGroup(1, bgs.radG1);
+        pass.setBindGroup(2, bgs.radG2);
+        pass.setBindGroup(3, bgs.radG3);
+        pass.dispatchWorkgroups(Math.ceil(this.aliveCount / 64));
+        pass.end();
     }
 
     /**
@@ -1609,27 +1567,15 @@ export default class GPUPhysics {
         this._buildTree(encoder, 'bosonTree', this._bosonTreeBuild, this._bosonTreeBuildBGs, b.bosonTreeBounds,
             b.bosonTreePlan, totalBosons);
 
-        // computeBosonGravity: particle <- boson gravity (only when gravity enabled)
+        // Bodies don't feel the bosons' gravity: a pull that answered the lensing reciprocally
+        // needs each boson's projected impulse (docs/MODEL.md §3.12)
         if (this._gravityEnabled) {
-            const particleWG = Math.ceil(this.aliveCount / 64);
-            if (particleWG > 0) {
-                const passGrav = encoder.beginComputePass({ label: 'computeBosonGravity' });
-                passGrav.setPipeline(p4.computeBosonGravity.pipeline);
-                passGrav.setBindGroup(0, bgs.btG0);
-                passGrav.setBindGroup(1, bgs.btG1);
-                passGrav.setBindGroup(2, bgs.btG2);
-                passGrav.setBindGroup(3, bgs.btG3);
-                passGrav.dispatchWorkgroups(particleWG);
-                passGrav.end();
-            }
-
             // applyBosonBosonGravity: boson <-> boson mutual gravity
             const passBosonBoson = encoder.beginComputePass({ label: 'applyBosonBosonGravity' });
             passBosonBoson.setPipeline(p4.applyBosonBosonGravity.pipeline);
             passBosonBoson.setBindGroup(0, bgs.btG0);
             passBosonBoson.setBindGroup(1, bgs.btG1);
             passBosonBoson.setBindGroup(2, bgs.btG2);
-            passBosonBoson.setBindGroup(3, bgs.btG3);
             if (useIndirect) passBosonBoson.dispatchWorkgroupsIndirect(this._bosonDispatchArgs, BOSON_ARGS_TOTAL);
             else passBosonBoson.dispatchWorkgroups(bosonWG);
             passBosonBoson.end();
@@ -1642,7 +1588,6 @@ export default class GPUPhysics {
             passPiCoulomb.setBindGroup(0, bgs.btG0);
             passPiCoulomb.setBindGroup(1, bgs.btG1);
             passPiCoulomb.setBindGroup(2, bgs.btG2);
-            passPiCoulomb.setBindGroup(3, bgs.btG3);
             if (useIndirect) passPiCoulomb.dispatchWorkgroupsIndirect(this._bosonDispatchArgs, BOSON_ARGS_PION);
             else passPiCoulomb.dispatchWorkgroups(Math.ceil(PION_POOL_CAP / 64));
             passPiCoulomb.end();
@@ -1658,7 +1603,6 @@ export default class GPUPhysics {
                 passAnnihilate.setBindGroup(0, bgs.btG0);
                 passAnnihilate.setBindGroup(1, bgs.btG1);
                 passAnnihilate.setBindGroup(2, bgs.btG2);
-                passAnnihilate.setBindGroup(3, bgs.btG3);
                 if (useIndirect) passAnnihilate.dispatchWorkgroupsIndirect(this._bosonDispatchArgs, BOSON_ARGS_PION);
                 else passAnnihilate.dispatchWorkgroups(Math.ceil(PION_POOL_CAP / 64));
             }
@@ -1948,11 +1892,11 @@ export default class GPUPhysics {
         this.device.queue.writeBuffer(this.buffers.color, idx * 4, _addParticleColorData);
 
         // cacheDerived shader computes derived state before forces each substep.
-        // No need to initialize derived here — but axYukMod must be set to (1, 1).
-        _addParticleModData[0] = 1.0; // axMod
-        _addParticleModData[1] = 1.0; // yukMod
-        _addParticleModData[2] = 1.0; // higgsMod
-        _addParticleModData[3] = 0.0; // pad
+        // No need to initialize derived here; axYukMod starts as cacheDerived resets it.
+        _addParticleModData[0] = 1.0;
+        _addParticleModData[1] = 1.0;
+        _addParticleModData[2] = 1.0;
+        _addParticleModData[3] = 0.0; // φ_a²
         this.device.queue.writeBuffer(this.buffers.axYukMod, idx * 16, _addParticleModData);
 
         // Initialize radiationState to zero (jerk, accumulators, display force)
@@ -2742,12 +2686,9 @@ export default class GPUPhysics {
             // Boson interaction (if enabled): build boson tree + particle<-boson + boson<->boson + pion Coulomb + annihilation
             this._dispatchBosonInteraction(encoder, this._dispatchPlan);
 
-            // Dead particle garbage collection
+            // Pending radiation of bodies that died, then dead-slot garbage collection
+            this._dispatchFlushRetiredRadiation(encoder);
             this._dispatchDeadGC(encoder);
-
-            // Quadrupole radiation (once per frame)
-            // Uses PHYSICS_DT constant in shader (not u.dt which holds dtSub from last substep)
-            this._dispatchQuadrupole(encoder);
 
             // Update particle colors from charge/mass/antimatter state
             this._dispatchUpdateColors(encoder);
@@ -2988,7 +2929,7 @@ export default class GPUPhysics {
             pass5b.end();
         }
 
-        // Pass 5c: scalar field forces (Higgs gradient + mass mod, Axion gradient + axMod/yukMod)
+        // Pass 5c: scalar field forces (Higgs gradient + mass mod, axion gradient, φ_a² at holes)
         // Must run BEFORE Boris so gradient forces are included in totalForce for half-kicks.
         // Uses previous substep's field gradients (computed at end of field evolve).
         if (this._fieldDeposit && (this._higgsEnabled || this._axionEnabled)) {
@@ -3261,7 +3202,7 @@ export default class GPUPhysics {
             // Pack color (1 u32)
             _dsColorData[idx] = _DEFAULT_SLATE_ABGR; // default slate (update-colors will refresh)
 
-            // Pack axYukMod (4 f32 = 16 bytes): axMod, yukMod, higgsMod, _pad
+            // Pack axYukMod (4 f32 = 16 bytes), as cacheDerived resets it
             const mBase = idx * 4;
             _dsModData[mBase + 0] = 1.0;
             _dsModData[mBase + 1] = 1.0;
@@ -3680,7 +3621,6 @@ export default class GPUPhysics {
                 forceExternal:   { x: d[64], y: d[65] },
                 forceHiggs:      { x: d[66], y: d[67] },
                 forceAxion:      { x: d[68], y: d[69] },
-                axMod: d[70], yukMod: d[71], higgsMod: d[72],
                 tau: d[73], lapse: d[74], theta: d[75],
             };
         }
@@ -3691,7 +3631,7 @@ export default class GPUPhysics {
                 velX: d[82], velY: d[83],
                 mass: d[84], charge: d[85],
                 angVel: d[86], magMoment: d[87], angMomentum: d[88],
-                radius: d[89], higgsMod: d[90],
+                radius: d[89],
             };
         }
         return result;

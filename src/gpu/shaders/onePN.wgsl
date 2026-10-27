@@ -22,7 +22,6 @@ const MAX_STACK: u32 = 48u;
 // Group 1: particle state (read_write for encoder compat)
 @group(1) @binding(0) var<storage, read_write> particles: array<ParticleState>;
 @group(1) @binding(1) var<storage, read_write> derived: array<ParticleDerived>;
-@group(1) @binding(2) var<storage, read_write> axYukMod: array<vec4<f32>>;  // packed: axMod, yukMod, higgsMod, pad
 
 // Group 2: force outputs (particleState accessed via group 1 to avoid aliasing)
 @group(2) @binding(0) var<storage, read_write> allForces: array<AllForces>;
@@ -39,8 +38,6 @@ struct PNObserver {
     vel: vec2<f32>,
     mass: f32,
     charge: f32,
-    yukMod: f32,
-    higgsMod: f32,
 };
 
 fn pnObserver(i: u32, relOn: bool) -> PNObserver {
@@ -52,40 +49,43 @@ fn pnObserver(i: u32, relOn: bool) -> PNObserver {
     o.vel = select(w, w * inverseSqrt(1.0 + dot(w, w)), relOn);
     o.mass = p.mass;
     o.charge = p.charge;
-    o.yukMod = axYukMod[i].y;
-    o.higgsMod = axYukMod[i].z;
     return o;
 }
 
 /** 1PN force on observer o from a source at r = source − observer. */
 fn pnFromSource(o: PNObserver, r: vec2<f32>, sVel: vec2<f32>, sMass: f32, sCharge: f32,
-                sYukMod: f32, sHiggsMod: f32, relOn: bool) -> vec2<f32> {
+                relOn: bool) -> vec2<f32> {
     let gmOn = (u.toggles0 & GRAVITOMAG_BIT) != 0u;
     let coulOn = (u.toggles0 & COULOMB_BIT) != 0u;
-    let yukOn = (u.toggles0 & YUKAWA_BIT) != 0u;
-    let higgsOn = (u.toggles0 & HIGGS_BIT) != 0u;
+    // Scalar Breit within the force pass's Yukawa cutoff (μr < 6), so the recompute matches it
+    let yukMu = u.yukawaMu;
+    let yukIn = (u.toggles0 & YUKAWA_BIT) != 0u && yukMu > EPSILON && dot(r, r) * yukMu * yukMu < 36.0;
     let invRSq = 1.0 / (dot(r, r) + u.softeningSq);
     let invR = sqrt(invRSq);
-    let mu = select(u.yukawaMu, u.yukawaMu * sqrt(o.higgsMod * sHiggsMod), higgsOn);
     return pair1PN(r, invR, invRSq, o.vel, sVel, o.mass, sMass, o.charge, sCharge,
-                   gmOn, gmOn && coulOn, yukOn, relOn,
-                   mu, u.yukawaCoupling * sqrt(max(o.yukMod * sYukMod, 0.0)));
+                   gmOn, gmOn && coulOn, yukIn, relOn,
+                   u.yukawaMu, u.yukawaCoupling);
 }
 
-/** 1PN force on observer o from source j: retarded with Relativity on, else instantaneous. */
+/**
+ * 1PN force on observer o from source j: retarded with Relativity on, else instantaneous. A
+ * retired source (Relativity only) acts from its world line until the light from its end has
+ * passed, as in the force pass: its current state is its death snapshot, and nothing is alive.
+ */
 fn pnFromParticle(o: PNObserver, j: u32, relOn: bool, periodic: bool) -> vec2<f32> {
     let sp = particles[j];
-    let aym = axYukMod[j];
     if (relOn) {
+        let alive = (sp.flags & FLAG_ALIVE) != 0u;
         let ret = retardedState(j, o.pos.x, o.pos.y, u.simTime,
-                                vec2(sp.posX, sp.posY), vec2(sp.velWX, sp.velWY), sp.angW, sp.mass, sp.charge,
-                                true, periodic, u.domainW, u.domainH, u.topologyMode, u.scaleA);
+                                vec2(sp.posX, sp.posY), select(vec2(0.0), vec2(sp.velWX, sp.velWY), alive),
+                                select(0.0, sp.angW, alive), select(0.0, sp.mass, alive), sp.charge,
+                                alive, periodic, u.domainW, u.domainH, u.topologyMode, u.scaleA);
         if (!ret.valid) { return vec2(0.0); }
-        return pnFromSource(o, ret.rel, ret.vel, ret.mass, ret.charge, aym.y, aym.z, true);
+        return pnFromSource(o, ret.rel, ret.vel, ret.mass, ret.charge, true);
     }
     var d = vec2(sp.posX, sp.posY) - o.pos;
     if (periodic) { d = fullMinImageP(o.pos.x, o.pos.y, sp.posX, sp.posY, u.domainW, u.domainH, u.topologyMode); }
-    return pnFromSource(o, d, vec2(sp.velWX, sp.velWY), sp.mass, sp.charge, aym.y, aym.z, false);
+    return pnFromSource(o, d, vec2(sp.velWX, sp.velWY), sp.mass, sp.charge, false);
 }
 
 fn write1PN(i: u32, f: vec2<f32>) {
@@ -111,7 +111,9 @@ fn compute1PN(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id) li
         let o = pnObserver(i, relOn);
         for (var j = lane; j < u.aliveCount; j += PN_LANES) {
             if (j == i) { continue; }
-            if ((particles[j].flags & FLAG_ALIVE) == 0u) { continue; }
+            let flags = particles[j].flags;
+            let retired = relOn && (flags & FLAG_RETIRED) != 0u;
+            if ((flags & FLAG_ALIVE) == 0u && !retired) { continue; }
             f += pnFromParticle(o, j, relOn, periodic);
         }
     }
@@ -173,7 +175,7 @@ fn compute1PNTree(@builtin(global_invocation_id) gid: vec3u) {
             // Distant node: aggregate data at its current centre of mass
             let avgW = vec2(getTotalMomX(nodeIdx), getTotalMomY(nodeIdx)) / nodeMass;
             let avgV = select(avgW, avgW * inverseSqrt(1.0 + dot(avgW, avgW)), relOn);
-            f += pnFromSource(o, d, avgV, nodeMass, getTotalCharge(nodeIdx), 1.0, 1.0, relOn);
+            f += pnFromSource(o, d, avgV, nodeMass, getTotalCharge(nodeIdx), relOn);
         } else if (!isLeaf) {
             // Near field: push 4 children
             if (stackTop + 4u <= MAX_STACK) {

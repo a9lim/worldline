@@ -570,7 +570,8 @@ const FieldMethods = {
 
     /**
      * Dispatch scalar field force application (Pass 16).
-     * Applies Higgs mass modulation + gradient force, Axion axMod/yukMod + gradient force.
+     * Applies the Higgs mass modulation and gradient force, the axion gradient force, and
+     * stores φ_a² at each hole (axYukMod.w) for superradiance.
      */
     _dispatchFieldForces(encoder) {
         if (!this._fieldForces || this.aliveCount === 0) return;

@@ -193,9 +193,7 @@ fn depositSuperradiance(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let bodyRSq = pow(M, 2.0 / 3.0);
     let angw = p.angW;
-    let absAngw = abs(angw);
-    let angvel = angw / sqrt(1.0 + absAngw * absAngw * bodyRSq);
-    let a = INERTIA_K * bodyRSq * abs(angvel);
+    let a = INERTIA_K * bodyRSq * abs(angw);   // a = J/M, J = I·angW
     let disc = M * M - a * a - p.charge * p.charge;
     let rPlus = select(M, M + sqrt(max(0.0, disc)), disc >= 0.0);
     let rPlusSq = rPlus * rPlus;
@@ -242,10 +240,12 @@ fn depositSuperradiance(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // Back-reaction: BH loses mass and angular momentum
     // dJ = (m/ω)·dE ≈ dE/μ_a for the dominant m=1 mode (ω ≈ μ_a).
+    // J = I·angW loses exactly dJ, with the new mass's moment of inertia
     let dJ = acceptedE / muA;
     let newM = M - acceptedE;
     let signW = select(-1.0, 1.0, angw > 0.0);
-    let newAngW = angw - signW * dJ / I_bh;
+    let newI = INERTIA_K * pow(newM, 5.0 / 3.0);
+    let newAngW = (angw * I_bh - signW * dJ) / newI;
     var p2 = p;
     p2.mass = newM;
     p2.baseMass = p2.baseMass * (newM / M);
@@ -254,14 +254,9 @@ fn depositSuperradiance(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let newBodyR = pow(newM, 1.0 / 3.0);
     let newBodyRSq = newBodyR * newBodyR;
-    var newAngVel = newAngW;
-    if (uniforms.relativityEnabled != 0u) {
-        let sr = newAngW * newBodyR;
-        newAngVel = newAngW / sqrt(1.0 + sr * sr);
-    }
     var activeR = newBodyR;
     if (uniforms.blackHoleEnabled != 0u) {
-        let newA = INERTIA_K * newBodyRSq * abs(newAngVel);
+        let newA = INERTIA_K * newBodyRSq * abs(newAngW);
         let newDisc = newM * newM - newA * newA - p2.charge * p2.charge;
         activeR = select(newM, newM + sqrt(max(0.0, newDisc)), newDisc >= 0.0);
     }

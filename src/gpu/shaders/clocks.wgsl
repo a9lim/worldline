@@ -122,10 +122,10 @@ fn advanceClocks(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id)
     var omega = d.angVel;
     if (bhOn) {
         let M = p.mass;
-        let a = INERTIA_K * d.bodyRSq * abs(d.angVel);
+        let a = abs(d.angMomentum) / max(M, EPSILON);   // a = J/M
         let disc = M * M - a * a - p.charge * p.charge;
         let rPlus = select(M, M + sqrt(max(0.0, disc)), disc >= 0.0);
-        omega = sign(d.angVel) * a / max(rPlus * rPlus + a * a, EPSILON);
+        omega = sign(p.angW) * a / max(rPlus * rPlus + a * a, EPSILON);
     }
 
     let dTau = lapse * dt;

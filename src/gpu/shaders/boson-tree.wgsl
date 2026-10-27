@@ -46,9 +46,6 @@ const N_PARENT: u32 = 18u;
 @group(2) @binding(1) var<storage, read_write> piCount: atomic<u32>;
 @group(2) @binding(2) var<storage, read_write> pionClaims: array<atomic<u32>>;
 
-// Group 3: particle state + force accumulators (read_write for encoder compat)
-@group(3) @binding(0) var<storage, read_write> particles: array<ParticleState>;
-@group(3) @binding(1) var<storage, read_write> allForces: array<AllForces>;
 
 // ── Atomic node accessors ──
 
@@ -82,56 +79,6 @@ fn bhCoulombForce(dx: f32, dy: f32, nodeCharge: f32, scale: f32) -> vec2f {
     let invRSq = 1.0 / rSq;
     let f = scale * nodeCharge * sqrt(invRSq) * invRSq;
     return vec2f(dx * f, dy * f);
-}
-
-// Gravitational force from bosons onto particles via BH tree walk.
-@compute @workgroup_size(64)
-fn computeBosonGravity(@builtin(global_invocation_id) gid: vec3u) {
-    let i = gid.x;
-    if (i >= u.aliveCount) { return; }
-    if ((particles[i].flags & FLAG_ALIVE) == 0u) { return; }
-
-    let px = particles[i].posX; let py = particles[i].posY;
-    let pMass = particles[i].mass;
-
-    var force = vec2f(0.0);
-
-    // Stack-based BH tree walk (boson tree)
-    var stack: array<u32, 48>;
-    var top: i32 = 0;
-    stack[0] = 0u; // root
-    top = 1;
-
-    while (top > 0) {
-        top--;
-        let nIdx = stack[top];
-        let nodeMass = nodeF32(nIdx, N_TOTAL_MASS);
-        if (nodeMass < EPSILON) { continue; }
-
-        let cx = nodeF32(nIdx, N_COM_X);
-        let cy = nodeF32(nIdx, N_COM_Y);
-        let dx = cx - px;
-        let dy = cy - py;
-        let dSq = dx * dx + dy * dy;
-        let size = nodeF32(nIdx, N_MAX_X) - nodeF32(nIdx, N_MIN_X);
-        let isDivided = bitcast<i32>(nodeU32(nIdx, N_NW)) != NONE;
-
-        if (!isDivided || size * size < BOSON_THETA_SQ * dSq) {
-            force += bhGravForce(dx, dy, nodeMass, pMass);
-        } else if (top + 4 <= 48) {
-            // Two to four children fill the first slots (tree-build.wgsl)
-            for (var c = 0u; c < 4u; c++) {
-                let ch = nodeU32(nIdx, N_NW + c);
-                if (bitcast<i32>(ch) != NONE) { stack[top] = ch; top++; }
-            }
-        }
-    }
-
-    // Add to gravity force accumulators (allForces.f0.xy = gravity)
-    var af = allForces[i];
-    af.f0.x += force.x;
-    af.f0.y += force.y;
-    allForces[i] = af;
 }
 
 // Mutual gravitational interaction between bosons via BH tree walk.
@@ -232,7 +179,7 @@ fn applyPionPionCoulomb(@builtin(global_invocation_id) gid: vec3u) {
     let dt = u.dt;
     let bx = piState.posX;
     let by = piState.posY;
-    let scale = -piState.charge * dt;
+    let scale = -piState.charge * dt / max(piState.mass, EPSILON);   // dw/dt = F/m
 
     // BH tree walk of boson tree using charge aggregates
     var kick = vec2f(0.0);

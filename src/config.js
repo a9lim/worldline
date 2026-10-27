@@ -100,7 +100,7 @@ export const PION_HALF_LIFE = 32;         // pi0 rest-frame half-life (fast EM d
 export const CHARGED_PION_HALF_LIFE = 64; // pi+/- rest-frame half-life (slower weak decay)
 export const ELECTRON_MASS = 0.01;                // decay product mass for pi+/- -> e+/- + photon
 export const BOSON_CHARGE = 0.1;                  // magnitude of pion/lepton charge (tunable)
-export const MAX_REJECTION_SAMPLES = 32;     // quadrupole rejection sampling cap
+export const MAX_REJECTION_SAMPLES = 32;     // emission-direction rejection sampling cap
 export const ABERRATION_THRESHOLD = 1.001;   // min gamma for relativistic aberration
 
 // ── Yukawa ──
@@ -175,32 +175,31 @@ export const VELOCITY_VECTOR_SCALE = 32;
 
 // ── Helpers ──
 
-/** Kerr-Newman radius for sub-extremal parameters; super-extremal inputs clamp to M as a toy-model effective radius. */
-export function kerrNewmanRadius(M, radiusSq, angVel, charge) {
-    const a = INERTIA_K * radiusSq * Math.abs(angVel);
+/**
+ * Kerr-Newman radius for sub-extremal parameters; super-extremal inputs clamp to M as a toy-model
+ * effective radius. a = J/M with the one canonical spin J = I·angW.
+ */
+export function kerrNewmanRadius(M, radiusSq, angW, charge) {
+    const a = INERTIA_K * radiusSq * Math.abs(angW);
     const disc = M * M - a * a - charge * charge;
     return disc >= 0 ? M + Math.sqrt(Math.max(0, disc)) : M;
 }
 
-/** Source horizon for force/potential helpers, deriving angular velocity from L when needed. */
-export function blackHoleSourceRadius(M, charge = 0, angVel = 0, angMomentum = 0) {
+/** Source horizon for force/potential helpers, from the spin J (a = J/M). */
+export function blackHoleSourceRadius(M, charge = 0, angMomentum = 0) {
     if (!(M > EPSILON)) return 0;
-    const bodyRSq = Math.cbrt(M) ** 2;
-    let omega = angVel;
-    if (Math.abs(omega) < EPSILON && Math.abs(angMomentum) > EPSILON) {
-        const denom = INERTIA_K * M * bodyRSq;
-        if (denom > EPSILON) omega = angMomentum / denom;
-    }
-    return kerrNewmanRadius(M, bodyRSq, omega, charge);
+    const a = Math.abs(angMomentum) / M;
+    const disc = M * M - a * a - charge * charge;
+    return disc >= 0 ? M + Math.sqrt(Math.max(0, disc)) : M;
 }
 
 /** Paczynski-Wiita gravity terms for a source horizon. */
-export function blackHoleRadialTerms(rawRSq, sourceMass, sourceCharge = 0, sourceAngVel = 0, sourceAngMomentum = 0) {
+export function blackHoleRadialTerms(rawRSq, sourceMass, sourceCharge = 0, sourceAngMomentum = 0) {
     if (!(rawRSq > EPSILON) || !(sourceMass > EPSILON)) {
         return { invPotential: 1 / BH_PW_MIN_GAP, forceScale: 0, jerkFactor: 0 };
     }
     const r = Math.sqrt(rawRSq);
-    const gap = Math.max(r - blackHoleSourceRadius(sourceMass, sourceCharge, sourceAngVel, sourceAngMomentum), BH_PW_MIN_GAP);
+    const gap = Math.max(r - blackHoleSourceRadius(sourceMass, sourceCharge, sourceAngMomentum), BH_PW_MIN_GAP);
     const invR = 1 / r;
     const invGap = 1 / gap;
     const forceScale = invR * invGap * invGap;

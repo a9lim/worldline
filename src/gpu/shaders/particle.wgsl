@@ -91,7 +91,7 @@ fn vs_main(
 
     var omega = d.angVel;
     if (camera.blackHoleOn > 0.5) {
-        let a = INERTIA_K * d.bodyRSq * abs(d.angVel);
+        let a = abs(d.angMomentum) * d.invMass;   // a = J/M
         omega = sign(d.angVel) * a / max(r * r + a * a, EPSILON);
     }
 

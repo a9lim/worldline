@@ -110,7 +110,8 @@ fn updatePionsTree(@builtin(global_invocation_id) gid: vec3u) {
     let grFactor = select(0.0, 1.0 + vSq, (u.toggles0 & GRAVITY_BIT) != 0u);
     let coulombOn = (u.toggles0 & COULOMB_BIT) != 0u;
     let piCharge = pi.charge;
-    let coulombScale = select(0.0, -piCharge * dt, coulombOn && abs(piCharge) > EPSILON);
+    // dw/dt = F/m for the Coulomb force (gravity's pull is per unit mass already)
+    let coulombScale = select(0.0, -piCharge * dt / max(pi.mass, EPSILON), coulombOn && abs(piCharge) > EPSILON);
 
     var stack: array<u32, 48>;
     var top: i32 = 0;

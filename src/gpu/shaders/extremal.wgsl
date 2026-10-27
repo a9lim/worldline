@@ -35,7 +35,7 @@ fn shedExtremalCharge(@builtin(global_invocation_id) gid: vec3<u32>) {
     let absQ = abs(q0);
     if (absQ < BOSON_CHARGE - EPSILON) { return; }
 
-    let a = INERTIA_K * bodyRSq * abs(d.angVel);
+    let a = abs(d.angMomentum) / m;   // a = J/M
     let qLimit = sqrt(max(m * m - a * a, 0.0));
     let targetAbs = floor((qLimit + EPSILON) / BOSON_CHARGE) * BOSON_CHARGE;
     if (absQ <= targetAbs + EPSILON) { return; }

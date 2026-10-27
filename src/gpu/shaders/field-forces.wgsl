@@ -18,9 +18,9 @@
 @group(1) @binding(4) var<storage, read_write> axionGradX: array<f32>;
 @group(1) @binding(5) var<storage, read_write> axionGradY: array<f32>;
 
-// Packed force accumulators + axYukMod output
+// Packed force accumulators + axYukMod output (only .w, φ_a² at each hole, is used)
 @group(2) @binding(0) var<storage, read_write> allForces: array<AllForces>;
-@group(2) @binding(1) var<storage, read_write> axYukMod: array<vec4<f32>>; // packed: axMod, yukMod, higgsMod, pad
+@group(2) @binding(1) var<storage, read_write> axYukMod: array<vec4<f32>>; // .w: φ_a² for superradiance
 
 @group(3) @binding(0) var<uniform> uniforms: FieldUniforms;
 
@@ -112,14 +112,8 @@ fn applyHiggsForces(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Interpolate field value
     let phiLocal = pqsInterpolate(&higgsField, px, py, invCellW, invCellH, bcMode, topoMode, 1.0);
 
-    // Cache higgsMod = max(|φ(x)|, floor) for Yukawa μ modulation
-    let hmFloor = uniforms.higgsMassFloor;
-    var aym = axYukMod[pid];
-    aym.z = max(abs(phiLocal), hmFloor);
-    axYukMod[pid] = aym;
-
     // ── Mass modulation ──
-    let floor = hmFloor;
+    let floor = uniforms.higgsMassFloor;
     let targetMass = max(bm * abs(phiLocal), floor * bm);
     let maxDelta = uniforms.higgsMassMaxDelta * uniforms.dt;
     let currentMass = p.mass;
@@ -132,6 +126,8 @@ fn applyHiggsForces(@builtin(global_invocation_id) gid: vec3<u32>) {
     let massRatio = currentMass / newMass;
     p.velWX *= massRatio;
     p.velWY *= massRatio;
+    // and spin: J = I·angW is kept as the moment of inertia (∝ m^{5/3}) changes
+    p.angW *= pow(massRatio, 5.0 / 3.0);
 
     p.mass = newMass;
     particles[pid] = p;
@@ -163,7 +159,7 @@ fn applyHiggsForces(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     var activeR = bodyR;
     if (uniforms.blackHoleEnabled != 0u) {
-        let a = INERTIA_K * bodyRSq * abs(d.angVel);
+        let a = INERTIA_K * bodyRSq * abs(p.angW);   // a = J/M
         let disc = newMass * newMass - a * a - p.charge * p.charge;
         activeR = select(newMass, newMass + sqrt(max(0.0, disc)), disc >= 0.0);
     }
@@ -171,7 +167,7 @@ fn applyHiggsForces(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // Recompute cached dipole moments
     d.magMoment = MAG_MOMENT_K * p.charge * d.angVel * bodyRSq;
-    d.angMomentum = INERTIA_K * newMass * bodyRSq * d.angVel;
+    d.angMomentum = INERTIA_K * newMass * bodyRSq * p.angW;
     derived[pid] = d;
 
     // ── Gradient force: F = +g * baseMass * sign(phi) * grad(phi) ──
@@ -210,28 +206,8 @@ fn applyAxionForces(@builtin(global_invocation_id) gid: vec3<u32>) {
     let topoMode = uniforms.topologyMode;
     let g = uniforms.axionCoupling;
 
-    // Interpolate axion field for axMod/yukMod
     let aLocal = pqsInterpolate(&axionField, px, py, invCellW, invCellH, bcMode, topoMode, 0.0);
-    let ga = g * aLocal;
-
-    // Read existing axYukMod (preserves higgsMod written by applyHiggsForces)
     var aymVal = axYukMod[pid];
-    // axMod: scalar EM coupling
-    if (uniforms.coulombEnabled != 0u) {
-        aymVal.x = select(0.0, 1.0 + ga, ga > -1.0);
-    } else {
-        aymVal.x = 1.0;
-    }
-
-    // yukMod: pseudoscalar PQ coupling (flips for antimatter)
-    if (uniforms.yukawaEnabled != 0u) {
-        let isAnti = (flag & 4u) != 0u;
-        let sign = select(1.0, -1.0, isAnti);
-        let pq = sign * ga;
-        aymVal.y = select(0.0, 1.0 + pq, pq > -1.0);
-    } else {
-        aymVal.y = 1.0;
-    }
     // Gradient force
     var coupling: f32 = 0.0;
     if (uniforms.coulombEnabled != 0u) {
@@ -260,9 +236,7 @@ fn applyAxionForces(@builtin(global_invocation_id) gid: vec3<u32>) {
 
             let bodyRSq = pow(M, 2.0 / 3.0);
             let angw = p.angW;
-            let absAngw = abs(angw);
-            let angvel = angw / sqrt(1.0 + absAngw * absAngw * bodyRSq);
-            let a_sr = INERTIA_K * bodyRSq * abs(angvel);
+            let a_sr = INERTIA_K * bodyRSq * abs(angw);   // a = J/M
             let disc = M * M - a_sr * a_sr - p.charge * p.charge;
             let rPlus = select(M, M + sqrt(max(0.0, disc)), disc >= 0.0);
             let rPlusSq = rPlus * rPlus;

@@ -50,16 +50,12 @@ struct AllForces {
 };
 
 // Radiation accumulator state per particle.
-// 40 bytes = 10 × f32.
+// 24 bytes = 6 × f32.
 struct RadiationState {
     radAccum: f32,
     hawkAccum: f32,
     yukawaRadAccum: f32,
     radDisplayX: f32, radDisplayY: f32,
-    quadAccum: f32,
-    emQuadAccum: f32,
-    d3IContrib: f32,
-    d3QContrib: f32,
     schwingerAccum: f32,
 };
 

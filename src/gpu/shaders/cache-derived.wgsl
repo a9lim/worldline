@@ -38,10 +38,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var angVel = aw;
     if (relOn) { let sr = aw * bodyR; angVel = aw / sqrt(1.0 + sr * sr); }
 
-    // Dipole moments (always use body radius for I and mu)
+    // Dipole moments (always use body radius for I and mu): the magnetic moment from the rotation
+    // rate, the spin J = I·angW, the one canonical spin every law and event uses
     let q = particles[idx].charge;
     let magMom = MAG_MOMENT_K * q * angVel * bodyRSq;
-    let angMom = INERTIA_K * m * angVel * bodyRSq;
+    let angMom = INERTIA_K * m * aw * bodyRSq;
 
     // Compute effective radius: body radius normally, Kerr-Newman-inspired radius in BH mode
     let bhOn = hasToggle0(BLACK_HOLE_BIT);
@@ -50,7 +51,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (bhOn) {
         // kerrNewmanRadius: sub-extremal r+ = M + sqrt(M² - a² - Q²);
         // super-extremal inputs clamp to M as a toy effective radius.
-        let a = INERTIA_K * bodyRSq * abs(angVel);
+        let a = INERTIA_K * bodyRSq * abs(aw);   // a = J/M
         let disc = m * m - a * a - q * q;
         activeR = select(m, m + sqrt(max(0.0, disc)), disc >= 0.0);
         activeRSq = activeR * activeR;
@@ -73,7 +74,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     d.bodyRSq = bodyRSq;
     derived[idx] = d;
 
-    // Reset axYukMod to default (1,1,1,0) — recomputed by field-forces when fields enabled.
-    // Ensures newly spawned particles (e.g. from pion decay) get safe defaults.
+    // Reset axYukMod; field-forces writes .w (φ_a² at a hole) when the axion is on
     axYukMod[idx] = vec4<f32>(1.0, 1.0, 1.0, 0.0);
 }

@@ -416,7 +416,7 @@ fn sliceWorldLines(@builtin(global_invocation_id) gid: vec3u) {
     dv.radiusSq = a.radius * a.radius;
     dv.invMass = 1.0 / m;
     dv.magMoment = MAG_MOMENT_K * q.charge * angVel * bodyRSq;
-    dv.angMomentum = INERTIA_K * m * angVel * bodyRSq;
+    dv.angMomentum = INERTIA_K * m * angw * bodyRSq;
     viewDerived[k] = dv;
 
     let theta = atan2(L.y * sin(q.theta), L.x * cos(q.theta));

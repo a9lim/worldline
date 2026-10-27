@@ -208,7 +208,7 @@ const REF_EN = {
 
     'ref.radiation.title': 'Radiation',
     'ref.radiation.body': `
-<p>Accelerating charges radiate electromagnetic waves; orbiting masses radiate gravitational waves. Both carry energy and momentum out of the system, causing orbits to decay. Three radiation channels are modeled.</p>
+<p>Accelerating charges radiate electromagnetic waves, carrying energy and momentum out of the system and causing orbits to decay. Larmor radiation, pion emission under Yukawa and Hawking radiation from black holes are modeled; quadrupole radiation, gravitational and electric, is withdrawn while its radiation reaction is rebuilt.</p>
 
 <h3>Larmor dipole radiation</h3>
 <p>Requires Coulomb. An accelerating charge radiates power:</p>
@@ -217,23 +217,11 @@ const REF_EN = {
 <p>$$\\mathbf{F}_{\\text{rad}} = \\tau\\left[\\frac{\\dot{\\mathbf{F}}}{\\gamma^3} - \\frac{\\mathbf{v}F^2}{m\\gamma^2} + \\frac{\\mathbf{F}(\\mathbf{v}\\cdot\\mathbf{F})}{m\\gamma^4}\\right]$$</p>
 <p>where $\\tau = 2q^2/(3m)$ is the radiation timescale. The force is clamped to 50% of the external force for numerical stability. Emitted photons follow a dipole angular distribution with relativistic aberration beaming.</p>
 
-<h3>EM quadrupole radiation</h3>
-<p>Requires Coulomb. A system with a time-varying charge quadrupole moment radiates:</p>
-<p>$$P_{\\text{EM}} = \\frac{1}{180}\\left|\\dddot{Q}_{ij}\\right|^2, \\qquad Q_{ij} = \\sum_k q_k\\, x_i^{(k)} x_j^{(k)}$$</p>
-<p>This is the next multipole order above dipole, significant for binary charged systems. Photon emission uses a TT-projected angular pattern via rejection sampling.</p>
-
-<h3>Gravitational wave radiation</h3>
-<p>Requires Gravity. The mass quadrupole formula — the leading-order source of gravitational waves:</p>
-<p>$$P_{\\text{GW}} = \\frac{1}{5}\\left|\\dddot{I}_{ij}\\right|^2, \\qquad I_{ij} = \\sum_k m_k\\left(x_i^{(k)} x_j^{(k)} - \\frac{\\delta_{ij}}{3}r_k^2\\right)$$</p>
-<p>For a circular binary, this reduces to the Peters formula:</p>
-<p>$$P_{\\text{GW}} = \\frac{32}{5}\\frac{m_1^2 m_2^2(m_1+m_2)}{r^5}$$</p>
-<p>The steep $1/r^5$ dependence means power grows dramatically as the orbit shrinks, creating a runaway inspiral. This is exactly what LIGO detects: the final moments of a billion-year inspiral, as the frequency chirps up to merger.</p>
-
 <h3>Why no gravitational dipole?</h3>
 <p>The gravitational dipole moment $\\sum m_i\\mathbf{x}_i$ is the center of mass, which moves at constant velocity by momentum conservation. No time-varying dipole means no dipole radiation — gravitational waves require at least the quadrupole, making them intrinsically weaker than electromagnetic waves.</p>
 
 <h3>Energy extraction</h3>
-<p>Radiated energy is extracted from the emitter's kinetic energy by scaling the tangential velocity. Emitted photons (yellow for EM, red for gravitons) carry both energy and momentum, tracked by the simulation for conservation accounting.</p>
+<p>Radiated energy is extracted from the emitter's kinetic energy by scaling the tangential velocity. Emitted photons carry both energy and momentum, tracked by the simulation for conservation accounting.</p>
 `,
 
     'ref.onepn.title': '1PN corrections',
@@ -954,7 +942,7 @@ const REF_JA = {
 
     'ref.radiation.title': '放射',
     'ref.radiation.body': `
-<p>加速する電荷は電磁波を、軌道運動する質量は重力波を放出します。いずれも系からエネルギーと運動量を持ち去り、軌道を減衰させます。3つの放射チャネルをモデル化しています。</p>
+<p>加速する電荷は電磁波を放出し、系からエネルギーと運動量を持ち去って軌道を減衰させます。ラーモア放射、湯川相互作用によるパイオン放出、ブラックホールのホーキング放射をモデル化しています。重力と電気の四重極放射は、その放射反作用を作り直すあいだ取り下げています。</p>
 
 <h3>ラーモア双極子放射</h3>
 <p>クーロンが必要。加速する電荷は次のパワーで放射します：</p>
@@ -963,23 +951,11 @@ const REF_JA = {
 <p>$$\\mathbf{F}_{\\text{rad}} = \\tau\\left[\\frac{\\dot{\\mathbf{F}}}{\\gamma^3} - \\frac{\\mathbf{v}F^2}{m\\gamma^2} + \\frac{\\mathbf{F}(\\mathbf{v}\\cdot\\mathbf{F})}{m\\gamma^4}\\right]$$</p>
 <p>ここで $\\tau = 2q^2/(3m)$ は放射時間スケールです。数値安定性のため、この力は外力の50%にクランプされます。放出光子は相対論的なビーミングを伴う双極子角分布に従います。</p>
 
-<h3>EM 四重極放射</h3>
-<p>クーロンが必要。電荷四重極モーメントが時間変化する系は次を放射します：</p>
-<p>$$P_{\\text{EM}} = \\frac{1}{180}\\left|\\dddot{Q}_{ij}\\right|^2, \\qquad Q_{ij} = \\sum_k q_k\\, x_i^{(k)} x_j^{(k)}$$</p>
-<p>これは双極子の次のマルチポール次数で、荷電連星系で重要となります。光子放出はリジェクションサンプリングで TT 投影された角分布を用います。</p>
-
-<h3>重力波放射</h3>
-<p>重力が必要。質量四重極公式 — 重力波の最低次源：</p>
-<p>$$P_{\\text{GW}} = \\frac{1}{5}\\left|\\dddot{I}_{ij}\\right|^2, \\qquad I_{ij} = \\sum_k m_k\\left(x_i^{(k)} x_j^{(k)} - \\frac{\\delta_{ij}}{3}r_k^2\\right)$$</p>
-<p>円軌道連星では、ピーターズの公式に帰着します：</p>
-<p>$$P_{\\text{GW}} = \\frac{32}{5}\\frac{m_1^2 m_2^2(m_1+m_2)}{r^5}$$</p>
-<p>急峻な $1/r^5$ 依存性により、軌道が縮むとパワーは劇的に増し、暴走的なインスパイラルを引き起こします。これがまさに LIGO が検出するもの：10億年に及ぶインスパイラルの最後の瞬間に、周波数が合体に向けてチャープ上昇する様子です。</p>
-
 <h3>なぜ重力双極子はないのか</h3>
 <p>重力双極子モーメント $\\sum m_i\\mathbf{x}_i$ は重心であり、運動量保存則により等速で動きます。時間変化する双極子がなければ双極子放射もありません — 重力波には少なくとも四重極が必要であり、本質的に電磁波より弱いものになります。</p>
 
 <h3>エネルギー抽出</h3>
-<p>放射エネルギーは、放射元の運動エネルギーから接線速度をスケールすることで取り出されます。放出光子（EM は黄色、重力子は赤）はエネルギーと運動量を運び、保存量計算のためシミュレーションで追跡されます。</p>
+<p>放射エネルギーは、放射元の運動エネルギーから接線速度をスケールすることで取り出されます。放出光子はエネルギーと運動量を運び、保存量計算のためシミュレーションで追跡されます。</p>
 `,
 
     'ref.onepn.title': '1PN補正',

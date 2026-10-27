@@ -7,7 +7,7 @@
  * Packed struct buffers reduce storage buffer count per shader stage:
  *   ParticleState  (36 bytes) — posX,posY,velWX,velWY,mass,charge,angW,baseMass,flags
  *   ParticleAux    (20 bytes) — radius,particleId,deathTime,deathMass,deathAngVel
- *   RadiationState (40 bytes) — accumulators,display,quadrupole contrib
+ *   RadiationState (24 bytes) — accumulators, display
  *   Photon         (32 bytes) — pos,vel,energy,emitterId,lifetime,flags
  *   Pion           (48 bytes) — pos,w,mass,charge,energy,emitterId,age,flags,pad
  */
@@ -24,7 +24,7 @@ const QTNODE_SIZE_BYTES = 80;
 // Packed struct sizes (must match common.wgsl struct definitions)
 const PARTICLE_STATE_SIZE = 36;  // 9 × 4 bytes
 const PARTICLE_AUX_SIZE = 20;   // 5 × 4 bytes
-const RADIATION_STATE_SIZE = 40; // 10 × 4 bytes (accumulators + display + quadrupole scratch)
+const RADIATION_STATE_SIZE = 24; // 6 × 4 bytes (accumulators + display)
 const PHOTON_SIZE = 32;          // 8 × 4 bytes
 const PION_SIZE = 48;            // 12 × 4 bytes
 const MERGE_RESULT_SIZE = 32;    // 2 × vec4: x,y,energy,type + px,py,pad,pad
@@ -99,7 +99,7 @@ export function createParticleBuffers(device, maxParticles, storeCapacity = maxP
     // Replaces: magAngMom, invMassRadSq, vel, angVel (4 buffers → 1)
     const derived = storageBuffer('derived', DERIVED_SIZE, soaCapacity);
 
-    // Packed axMod + yukMod + higgsMod (vec4, 16 bytes per particle)
+    // φ_a² at each hole, for superradiance, in .w (vec4, 16 bytes per particle)
     const axYukMod = storageBuffer('axYukMod', VEC4_SIZE, soaCapacity);
 
     // Packed AllForces struct (160 bytes per particle)
@@ -119,15 +119,8 @@ export function createParticleBuffers(device, maxParticles, storeCapacity = maxP
     const wlMeta = storageBuffer('wlMeta', WL_META_STRIDE * 4, maxParticles);
 
     // ── Radiation state (packed struct) ──
-    // RadiationState (40 bytes): accumulators, display, quadrupole contrib
+    // RadiationState (24 bytes): accumulators, display
     const radiationState = storageBuffer('radiationState', RADIATION_STATE_SIZE, maxParticles);
-
-    // ── Quadrupole radiation reduction buffer ──
-    // Workgroup partial sums for 2-pass reduction. Layout:
-    //   [0 .. MAX_WG*4): CoM pass: {comXw, comYw, totalMass, totalKE} per workgroup
-    //   [MAX_WG*4 .. MAX_WG*12): Contrib pass: {d3Ixx,d3Ixy,d3Iyy, d3Qxx,d3Qxy,d3Qyy, totalD3I,totalD3Q} per wg
-    const MAX_QUAD_WG = Math.ceil(maxParticles / 64);
-    const quadReductionBuf = storageBuffer('quadReduction', 4, MAX_QUAD_WG * 12); // f32 elements
 
     // ── Ghost generation ──
     // Ghost particle counter (single atomic u32)
@@ -336,8 +329,6 @@ export function createParticleBuffers(device, maxParticles, storeCapacity = maxP
         allForces,
         // Radiation (packed RadiationState struct)
         radiationState,
-        // Quadrupole reduction (workgroup partial sums)
-        quadReductionBuf, MAX_QUAD_WG,
         // Pool
         poolMgmt,
         // Stats

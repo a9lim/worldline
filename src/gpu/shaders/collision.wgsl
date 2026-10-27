@@ -151,8 +151,8 @@ fn particleKE(ps: ParticleState) -> f32 {
     return wSq / (sqrt(1.0 + wSq) + 1.0) * ps.mass;
 }
 
-fn kerrNewmanRadiusLocal(m: f32, bodyRSq: f32, angVel: f32, charge: f32) -> f32 {
-    let a = INERTIA_K * bodyRSq * abs(angVel);
+fn kerrNewmanRadiusLocal(m: f32, bodyRSq: f32, angW: f32, charge: f32) -> f32 {
+    let a = INERTIA_K * bodyRSq * abs(angW);   // a = J/M, J = I·angW
     let disc = m * m - a * a - charge * charge;
     return select(m, m + sqrt(max(0.0, disc)), disc >= 0.0);
 }
@@ -251,7 +251,6 @@ fn resolveCollisions(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let newBodyRSq = newBodyR * newBodyR;
                 let newI = INERTIA_K * newMass * newBodyRSq;
                 let newAngW = select(0.0, (lOrb + lSpin) / newI, newI > EPSILON);
-                let newAngVel = select(newAngW, newAngW / sqrt(1.0 + newAngW * newAngW * newBodyRSq), relOn);
 
                 let vicMass = vic.mass;
                 let vicBodyR = pow(max(vicMass, EPSILON), 1.0 / 3.0);
@@ -267,7 +266,7 @@ fn resolveCollisions(@builtin(global_invocation_id) gid: vec3<u32>) {
                 cap.velWY = newWy;
                 cap.angW = newAngW;
                 cap.flags = (cap.flags | FLAG_ALIVE) & (0xffffffffu ^ FLAG_ANTIMATTER);
-                capAux.radius = kerrNewmanRadiusLocal(newMass, newBodyRSq, newAngVel, cap.charge);
+                capAux.radius = kerrNewmanRadiusLocal(newMass, newBodyRSq, newAngW, cap.charge);
 
                 vic.mass = 0.0;
                 vic.baseMass = 0.0;
@@ -386,7 +385,6 @@ fn resolveCollisions(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (newI > EPSILON) {
             newAngW = (Lorb + Lspin) / newI;
         }
-        let newAngVel = select(newAngW, newAngW / sqrt(1.0 + newAngW * newAngW * newRadius * newRadius), relOn);
 
         var newPs: ParticleState;
         newPs.posX = newX;
@@ -403,7 +401,7 @@ fn resolveCollisions(@builtin(global_invocation_id) gid: vec3<u32>) {
         newPs.flags = FLAG_ALIVE | FLAG_WL_BREAK | amFlag;
 
         // Fresh aux for new particle (unique ID, clean death state)
-        keepAux.radius = select(newRadius, kerrNewmanRadiusLocal(totalMass, newRadius * newRadius, newAngVel, newPs.charge), bhOn);
+        keepAux.radius = select(newRadius, kerrNewmanRadiusLocal(totalMass, newRadius * newRadius, newAngW, newPs.charge), bhOn);
         keepAux.particleId = 0x80000000u | (uniforms.frameCount * MAX_PARTICLES + keepIdx);
         keepAux.deathTime = 1e38; // sentinel > 1e30 threshold — alive
         keepAux.deathMass = 0.0;
@@ -611,10 +609,15 @@ fn resolveBouncePairwise(@builtin(global_invocation_id) gid: vec3<u32>) {
     let av1 = select(ps1.angW, ps1.angW / sqrt(1.0 + sr1 * sr1), relOn);
     let av2 = select(ps2.angW, ps2.angW / sqrt(1.0 + sr2 * sr2), relOn);
 
-    // Relative tangential velocity at contact point (surface velocity contribution)
-    // v1t = v1·t + av1·r1,  v2t = v2·t - av2·r2  (sign: CW spin adds to contact surface vel)
-    let v1t = v1x * tx + v1y * ty + av1 * r1;
-    let v2t = v2x * tx + v2y * ty - av2 * r2;
+    // The contact point sits mid-overlap, a1 = r1 − δ/2 from p1's centre and a2 = r2 − δ/2 from
+    // p2's, so a1 + a2 = d and the contact torques cancel the orbital torque of forces applied
+    // at the centres exactly (total angular momentum is kept)
+    let a1 = r1 - 0.5 * delta;
+    let a2 = r2 - 0.5 * delta;
+    // Relative tangential velocity at the contact point (surface velocity contribution)
+    // v1t = v1·t + av1·a1,  v2t = v2·t - av2·a2  (t = ẑ × n)
+    let v1t = v1x * tx + v1y * ty + av1 * a1;
+    let v2t = v2x * tx + v2y * ty - av2 * a2;
     let vRel = v1t - v2t;
 
     let friction = uniforms.bounceFriction;
@@ -635,13 +638,15 @@ fn resolveBouncePairwise(@builtin(global_invocation_id) gid: vec3<u32>) {
     ps2.velWX -= F1x * dt * invM2;  // Newton's 3rd law
     ps2.velWY -= F1y * dt * invM2;
 
-    // Angular impulse: τ = r × F_t → ΔangW ≈ τ·dt / I,  I = INERTIA_K·m·r²
-    // Contact torque on p1: +r1 * Ft,  on p2: -r2 * Ft
+    // Angular impulse: τ = a × F_t → ΔangW ≈ τ·dt / I,  I = INERTIA_K·m·r². The torque on p2 has
+    // p1's sign: its lever arm (−a2·n) and its force (−Ft·t) both reverse, so with t = ẑ × n,
+    // τ1 = (a1·n) × (Ft·t) = +a1·Ft and τ2 = (−a2·n) × (−Ft·t) = +a2·Ft, summing to d·Ft, which
+    // the centre forces' orbital torque −d·Ft cancels
     if (friction > 0.0) {
         let I1 = INERTIA_K * ps1.mass * r1 * r1;
         let I2 = INERTIA_K * ps2.mass * r2 * r2;
-        if (I1 > EPSILON) { ps1.angW += r1 * Ft * dt / I1; }
-        if (I2 > EPSILON) { ps2.angW -= r2 * Ft * dt / I2; }
+        if (I1 > EPSILON) { ps1.angW += a1 * Ft * dt / I1; }
+        if (I2 > EPSILON) { ps2.angW += a2 * Ft * dt / I2; }
     }
 
     // Record Hertz force + contact torque in allForces for display (external force arrow)
@@ -650,7 +655,7 @@ fn resolveBouncePairwise(@builtin(global_invocation_id) gid: vec3<u32>) {
     af1.f4.y += F1y;
     af1.totalForce.x += F1x;
     af1.totalForce.y += F1y;
-    if (friction > 0.0) { af1.torques.w += r1 * Ft; }
+    if (friction > 0.0) { af1.torques.w += a1 * Ft; }
     allForces[idx1] = af1;
 
     var af2 = allForces[idx2];
@@ -658,7 +663,7 @@ fn resolveBouncePairwise(@builtin(global_invocation_id) gid: vec3<u32>) {
     af2.f4.y -= F1y;
     af2.totalForce.x -= F1x;
     af2.totalForce.y -= F1y;
-    if (friction > 0.0) { af2.torques.w -= r2 * Ft; }
+    if (friction > 0.0) { af2.torques.w += a2 * Ft; }
     allForces[idx2] = af2;
 
     particleState[idx1] = ps1;

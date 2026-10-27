@@ -9,7 +9,7 @@
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 199;
+const SHADER_VERSION = 201;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -121,16 +121,16 @@ export async function createPhase2Pipelines(device, wgslConstants = '') {
 
     // --- pairForce (4 bind groups) ---
     // Group 0: uniforms
-    // Group 1: particleState (rw) + derived (rw) + axYukMod (rw) + particleAux (rw) = 4 storage
+    // Group 1: particleState (rw) + derived (rw) + particleAux (rw) = 3 storage
     // Group 2: allForces (rw) + maxAccel (rw) = 2 storage
     // Group 3: wlData (rw) + wlMeta (rw) + wlHints (rw) = 3 storage
-    // Total: 9 storage buffers per stage
+    // Total: 8 storage buffers per stage
     // Prepend the world-line readers (retardedState) and the 1PN pair forces
     const pairForceCode = commonWGSL + '\n' + forceIncludes + '\n'
         + await fetchShader('pair-force.wgsl');
     const pairForce = await (async () => {
         const module = device.createShaderModule({ label: 'pairForce', code: pairForceCode });
-        const layouts = [['uniform'], ['storage', 'storage', 'storage', 'storage'],
+        const layouts = [['uniform'], ['storage', 'storage', 'storage'],
             ['storage', 'storage'], ['storage', 'storage', 'storage']];
         const bindGroupLayouts = layouts.map((entries, groupIdx) =>
             device.createBindGroupLayout({
@@ -273,8 +273,7 @@ export async function createTreeForcePipeline(device, wgslConstants = '') {
             { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // particleState
             { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // the tree's sorted keys
             { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // derived
-            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // axYukMod
-            { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // the tree's body count
+            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // the tree's body count
         ],
     });
 
@@ -506,10 +505,10 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
 
     // ── 1PN (onePN.wgsl, entries: compute1PN, vvKick1PN) ──
     // Group 0: uniforms
-    // Group 1: particleState (rw) + derived (rw) + axYukMod (rw) = 3 storage
+    // Group 1: particleState (rw) + derived (rw) = 2 storage
     // Group 2: allForces (rw) + f1pnOld (rw) = 2 storage
     // Group 3: wlData (rw) + wlMeta (rw) = 2 storage
-    // Total: 7 storage + 1 uniform
+    // Total: 6 storage + 1 uniform
     const c = await _ensureSharedCache();
     // Both modules need tree-nodes prepended because onePN.wgsl contains
     // compute1PNTree which references tree accessor functions.
@@ -528,7 +527,6 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
         entries: [
             { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // particleState (rw for encoder compat)
             { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // derived (rw for encoder compat)
-            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // axYukMod (rw for encoder compat)
         ],
     });
     const onePNG2 = device.createBindGroupLayout({
@@ -568,7 +566,7 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
     // ── 1PN Tree Walk (onePN.wgsl, entry: compute1PNTree) ──
     // Same module (tree-nodes already prepended above), different bind group layouts.
     // Group 0: uniforms (same)
-    // Group 1: particleState (rw) + derived (rw) + axYukMod (rw) + ghostOriginalIdx (rw) = 4 storage
+    // Group 1: particleState (rw) + derived (rw) = 2 storage
     // Group 2: allForces (rw) + f1pnOld (rw) = 2 storage (same)
     // Group 3: wlData (rw) + wlMeta (rw) + treeNodes (rw) = 3 storage
 
@@ -577,8 +575,6 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
         entries: [
             { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // particleState
             { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // derived
-            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // axYukMod
-            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // ghostOriginalIdx
         ],
     });
     const onePNTreeG3 = device.createBindGroupLayout({
@@ -622,7 +618,6 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
             { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },           // derived (rw)
             { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },           // allForces (rw for encoder compat)
             { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },           // radiationState (rw)
-            { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },           // axYukMod (rw for encoder compat)
         ],
     });
     const radG2 = device.createBindGroupLayout({
@@ -664,76 +659,19 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
         }),
         bindGroupLayouts: radLayouts,
     };
+    const flushRetiredRadiation = {
+        pipeline: device.createComputePipeline({
+            label: 'flushRetiredRadiation', layout: radPipelineLayout,
+            compute: { module: radiationModule, entryPoint: 'flushRetiredRadiation' },
+        }),
+        bindGroupLayouts: radLayouts,
+    };
     const schwingerDischarge = {
         pipeline: device.createComputePipeline({
             label: 'schwingerDischarge', layout: radPipelineLayout,
             compute: { module: radiationModule, entryPoint: 'schwingerDischarge' },
         }),
         bindGroupLayouts: radLayouts,
-    };
-
-    // ── Quadrupole radiation (quadrupole.wgsl) ──
-    // Group 0: uniforms
-    // Group 1: particleState (rw) + particleAux (rw) + derived (rw) + allForces (rw) + radiationState (rw) = 5
-    // Group 2: photonPool (rw) + phCount (rw) = 2
-    // Group 3: quadReductionBuf (rw) = 1
-    // Total: 8 storage buffers per stage
-    const quadCode = await fetchShader('quadrupole.wgsl', prefix);
-    const quadModule = device.createShaderModule({ label: 'quadrupole', code: quadCode });
-
-    const quadG0 = device.createBindGroupLayout({
-        label: 'quadrupole_g0',
-        entries: [
-            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
-        ],
-    });
-    const quadG1 = device.createBindGroupLayout({
-        label: 'quadrupole_g1',
-        entries: [
-            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // particleState (rw)
-            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // particleAux (rw)
-            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // derived (rw)
-            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // allForces (rw)
-            { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // radiationState (rw)
-        ],
-    });
-    const quadG2 = device.createBindGroupLayout({
-        label: 'quadrupole_g2',
-        entries: [
-            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // photonPool
-            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // phCount
-        ],
-    });
-    const quadG3 = device.createBindGroupLayout({
-        label: 'quadrupole_g3',
-        entries: [
-            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // quadReductionBuf
-        ],
-    });
-
-    const quadLayouts = [quadG0, quadG1, quadG2, quadG3];
-    const quadPipelineLayout = device.createPipelineLayout({ bindGroupLayouts: quadLayouts });
-
-    const quadrupoleCoM = {
-        pipeline: device.createComputePipeline({
-            label: 'quadrupoleCoM', layout: quadPipelineLayout,
-            compute: { module: quadModule, entryPoint: 'quadrupoleCoM' },
-        }),
-        bindGroupLayouts: quadLayouts,
-    };
-    const quadrupoleContrib = {
-        pipeline: device.createComputePipeline({
-            label: 'quadrupoleContrib', layout: quadPipelineLayout,
-            compute: { module: quadModule, entryPoint: 'quadrupoleContrib' },
-        }),
-        bindGroupLayouts: quadLayouts,
-    };
-    const quadrupoleApply = {
-        pipeline: device.createComputePipeline({
-            label: 'quadrupoleApply', layout: quadPipelineLayout,
-            compute: { module: quadModule, entryPoint: 'quadrupoleApply' },
-        }),
-        bindGroupLayouts: quadLayouts,
     };
 
     // ── Bosons (bosons.wgsl) ──
@@ -853,8 +791,7 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
     // Group 0: uniforms + bosonTreeNodes (atomic) + bosonTreeCounter + bosonVisitorFlags = 4 (1 uniform + 3 storage)
     // Group 1: photonPool (rw) + phCount (rw) = 2
     // Group 2: pionPool (rw) + piCount (rw) = 2
-    // Group 3: particleState (ro) + allForces (rw) = 2
-    // Total: 4 groups, 9 storage buffers per stage
+    // Total: 3 groups, 7 storage buffers per stage
     const bosonTreeCode = await fetchShader('boson-tree.wgsl', prefix);
     const bosonTreeModule = device.createShaderModule({ label: 'bosonTree', code: bosonTreeCode });
 
@@ -882,18 +819,11 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
             { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }, // pionClaims (atomic, for annihilation race prevention)
         ],
     });
-    const btG3 = device.createBindGroupLayout({
-        label: 'bosonTree_g3',
-        entries: [
-            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },           // particleState (rw for encoder compat)
-            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },           // allForces
-        ],
-    });
-    const btLayouts = [btG0, btG1, btG2, btG3];
+    const btLayouts = [btG0, btG1, btG2];
     const btPipelineLayout = device.createPipelineLayout({ bindGroupLayouts: btLayouts });
 
     const bosonTreeEntries = [
-        'computeBosonGravity', 'applyBosonBosonGravity',
+        'applyBosonBosonGravity',
         'applyPionPionCoulomb', 'proposePions', 'annihilatePions',
     ];
     const bosonTreePipelines = {};
@@ -934,8 +864,7 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
         recordWorldLines, recordBreaks, rebaseWorldLines,
         advanceClocks,
         compute1PN, vvKick1PN, compute1PNTree,
-        larmorRadiation, hawkingRadiation, pionEmission, schwingerDischarge,
-        quadrupoleCoM, quadrupoleContrib, quadrupoleApply,
+        larmorRadiation, hawkingRadiation, pionEmission, schwingerDischarge, flushRetiredRadiation,
         ...bosonPipelines,
         ...bosonTreePipelines,
         checkKugelblitz,
@@ -1926,8 +1855,7 @@ export async function createComputeStatsPipeline(device, wgslConstants = '') {
             { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
             { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
             { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-            { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-            { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // clocks
+            { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // clocks
         ],
     });
 

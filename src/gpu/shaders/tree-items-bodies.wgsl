@@ -50,7 +50,7 @@ fn itemLeaf(i: u32) -> Leaf {
         l.mass = m;
         l.charge = ps.charge;
         l.magMoment = MAG_MOMENT_K * ps.charge * dAngVel * bodyRadSq;
-        l.angMomentum = INERTIA_K * m * dAngVel * bodyRadSq;
+        l.angMomentum = INERTIA_K * m * dAngW * bodyRadSq;   // J = I·angW
         return l;
     }
     let drvd = derived_in[i];

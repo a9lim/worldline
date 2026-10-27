@@ -110,13 +110,13 @@ fn statsBosons(@builtin(global_invocation_id) gid: vec3u, @builtin(workgroup_id)
             pi += p.mass * vec3(sqrt(1.0 + dot(w, w)), w);
         }
     }
-    // Energy taken from bodies and waiting for a whole boson: Larmor, Hawking (rest frame),
-    // pion emission, and both quadrupole channels
+    // Energy taken from bodies and waiting for a whole boson: Larmor, Hawking (rest frame)
+    // and pion emission
     var pending = 0.0;
     for (var i = gid.x; i < nBodies; i += stride) {
         if ((particles[i].flags & FLAG_ALIVE) == 0u) { continue; }
         let r = radState[i];
-        pending += r.radAccum + r.hawkAccum + r.yukawaRadAccum + r.quadAccum + r.emQuadAccum;
+        pending += r.radAccum + r.hawkAccum + r.yukawaRadAccum;
     }
     let phTotal = reduce3(lid, ph);
     let piTotal = reduce3(lid, pi);
