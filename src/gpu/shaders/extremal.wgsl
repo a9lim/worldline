@@ -24,7 +24,7 @@ fn shedExtremalCharge(@builtin(global_invocation_id) gid: vec3<u32>) {
     if ((u.toggles0 & BLACK_HOLE_BIT) == 0u) { return; }
 
     let p = particles[pid];
-    if ((p.flags & FLAG_ALIVE) == 0u) { return; }
+    if ((p.flags & (FLAG_ALIVE | FLAG_PRESCRIBED)) != FLAG_ALIVE) { return; }
 
     let m = p.mass;
     if (m <= MIN_MASS) { return; }

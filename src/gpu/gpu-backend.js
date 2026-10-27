@@ -62,6 +62,10 @@ export default class GPUBackend {
         return this.physics.addParticle(spec);
     }
 
+    addPrescribed(curve, spec) {
+        return this.physics.addPrescribed(curve, spec);
+    }
+
     reset() {
         this.physics.reset();
     }
@@ -219,6 +223,8 @@ export default class GPUBackend {
             st.selected = sim.selectedIdx;
             st.topology = sim.boundaryMode === BOUND_LOOP ? sim.topology : -1;
             st.scaleA = this.physics.scaleA;
+            st.prescribed = this.physics.prescribed.size;
+            st.future = view.future();
             renderOpts.spacetime = st;
         }
         // The lab box the tilted sheet and its outline show. On a torus any translate of the

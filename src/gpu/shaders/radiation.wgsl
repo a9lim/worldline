@@ -38,7 +38,7 @@
 fn larmorRadiation(@builtin(global_invocation_id) gid: vec3u) {
     let i = gid.x;
     if (i >= u.aliveCount) { return; }
-    if ((particles[i].flags & FLAG_ALIVE) == 0u) { return; }
+    if ((particles[i].flags & (FLAG_ALIVE | FLAG_PRESCRIBED)) != FLAG_ALIVE) { return; }
 
     let coulombOn = (u.toggles0 & COULOMB_BIT) != 0u;
     let radiationOn = (u.toggles0 & RADIATION_BIT) != 0u;
@@ -225,7 +225,7 @@ fn emitBoostedLepton(pos: vec2<f32>, w: vec2<f32>, restSpeed: f32, dir: vec2<f32
 fn hawkingRadiation(@builtin(global_invocation_id) gid: vec3u) {
     let i = gid.x;
     if (i >= u.aliveCount) { return; }
-    if ((particles[i].flags & FLAG_ALIVE) == 0u) { return; }
+    if ((particles[i].flags & (FLAG_ALIVE | FLAG_PRESCRIBED)) != FLAG_ALIVE) { return; }
 
     let blackHoleOn = (u.toggles0 & BLACK_HOLE_BIT) != 0u;
     let radiationOn = (u.toggles0 & RADIATION_BIT) != 0u;
@@ -351,7 +351,7 @@ fn hawkingRadiation(@builtin(global_invocation_id) gid: vec3u) {
 fn pionEmission(@builtin(global_invocation_id) gid: vec3u) {
     let i = gid.x;
     if (i >= u.aliveCount) { return; }
-    if ((particles[i].flags & FLAG_ALIVE) == 0u) { return; }
+    if ((particles[i].flags & (FLAG_ALIVE | FLAG_PRESCRIBED)) != FLAG_ALIVE) { return; }
 
     let yukawaOn = (u.toggles0 & YUKAWA_BIT) != 0u;
     let radiationOn = (u.toggles0 & RADIATION_BIT) != 0u;
@@ -508,7 +508,7 @@ fn flushRetiredRadiation(@builtin(global_invocation_id) gid: vec3u) {
 fn schwingerDischarge(@builtin(global_invocation_id) gid: vec3u) {
     let i = gid.x;
     if (i >= u.aliveCount) { return; }
-    if ((particles[i].flags & FLAG_ALIVE) == 0u) { return; }
+    if ((particles[i].flags & (FLAG_ALIVE | FLAG_PRESCRIBED)) != FLAG_ALIVE) { return; }
 
     let blackHoleOn = (u.toggles0 & BLACK_HOLE_BIT) != 0u;
     let coulombOn = (u.toggles0 & COULOMB_BIT) != 0u;

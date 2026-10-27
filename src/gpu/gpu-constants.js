@@ -19,7 +19,7 @@ import {
     VELOCITY_VECTOR_SCALE,
     GPU_MAX_PHOTONS, GPU_MAX_PIONS, PHOTON_CULL_AGE, MAX_REJECTION_SAMPLES, GPU_MAX_LEPTONS, LEPTON_CULL_AGE,
     SPAWN_OFFSET_MULTIPLIER, SPAWN_OFFSET_FLOOR, ABERRATION_THRESHOLD,
-    WORLDLINE_LEN, WORLDLINE_DT, CLOCK_PERIOD,
+    WORLDLINE_LEN, WORLDLINE_DT, CLOCK_PERIOD, PRESCRIBED_CAP,
     SCALAR_FIELD_MAX, FIELD_EXCITATION_SIGMA, METRIC_PHI_CLAMP, SHEET_THICKNESS_SQ,
     COL_PASS, COL_MERGE, COL_BOUNCE,
     BOUND_DESPAWN, BOUND_BOUNCE, BOUND_LOOP,
@@ -216,6 +216,8 @@ const FLAG_BH: u32 = 8u;
 const FLAG_GHOST: u32 = 16u;
 const FLAG_WL_BREAK: u32 = 32u;   // a merge jumped this body: its world line records a break
 const FLAG_DEATH_HIST: u32 = 64u;
+const FLAG_PRESCRIBED: u32 = 128u;  // its world line is given (prescribed.wgsl): it responds to nothing
+const PRESCRIBED_CAP: u32 = ${PRESCRIBED_CAP}u;
 
 // Toggle bit constants (toggles0)
 const GRAVITY_BIT: u32 = 1u;
@@ -285,6 +287,9 @@ export const BOSON_INTER_BIT = 32768;
 // toggles1
 export const FIELD_GRAV_BIT_T1 = 1;
 export const HERTZ_BOUNCE_BIT_T1 = 2;
+
+// Particle flags the host sets (the WGSL block above has them all)
+export const FLAG_PRESCRIBED = 128;
 
 // World-line buffer layout (must match the WGSL block above)
 export const WL_STRIDE = 12;

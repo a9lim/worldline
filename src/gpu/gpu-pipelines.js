@@ -9,7 +9,7 @@
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 203;
+const SHADER_VERSION = 205;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -503,6 +503,27 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
         bindGroupLayouts: clockLayouts,
     };
 
+    // ── applyPrescribed (prescribed.wgsl, the curves from shared-prescribed.wgsl) ──
+    // Group 0: uniform + particleState, allForces, clocks (rw) + derived, wlMeta, curves,
+    // the prescribed list (read) + agentAccum (rw)
+    const prescribedModule = device.createShaderModule({
+        label: 'prescribed',
+        code: prefix + '\n' + await fetchShader('shared-prescribed.wgsl') + '\n' + await fetchShader('prescribed.wgsl'),
+    });
+    const prescribedLayouts = [device.createBindGroupLayout({
+        label: 'prescribed_g0',
+        entries: [uniform0, storage(1), storage(2), storage(3), storage(4, true), storage(5, true),
+                  storage(6, true), storage(7, true), storage(8)],
+    })];
+    const applyPrescribed = {
+        pipeline: device.createComputePipeline({
+            label: 'applyPrescribed',
+            layout: device.createPipelineLayout({ bindGroupLayouts: prescribedLayouts }),
+            compute: { module: prescribedModule, entryPoint: 'applyPrescribed' },
+        }),
+        bindGroupLayouts: prescribedLayouts,
+    };
+
     // ── 1PN (onePN.wgsl, entries: compute1PN, vvKick1PN) ──
     // Group 0: uniforms
     // Group 1: particleState (rw) + derived (rw) = 2 storage
@@ -862,7 +883,7 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
 
     return {
         recordWorldLines, recordBreaks, rebaseWorldLines,
-        advanceClocks,
+        advanceClocks, applyPrescribed,
         compute1PN, vvKick1PN, compute1PNTree,
         larmorRadiation, hawkingRadiation, pionEmission, schwingerDischarge, flushRetiredRadiation,
         ...bosonPipelines,
@@ -2031,18 +2052,18 @@ export async function createGridRenderPipeline(device, format, wgslConstants = '
  */
 export async function createSpacetimeRenderPipelines(device, format, wgslConstants = '') {
     const prefix = await getSharedPrefix(wgslConstants);
-    const code = await fetchShader('spacetime-render.wgsl', prefix);
+    const code = prefix + '\n' + await fetchShader('shared-prescribed.wgsl') + '\n' + await fetchShader('spacetime-render.wgsl');
     const module = device.createShaderModule({ label: 'spacetimeRender', code });
     const blend = {
         color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
         alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
     };
-    const make = (label, entryPoint, fragment = 'fs_main') => device.createRenderPipeline({
+    const make = (label, entryPoint, fragment = 'fs_main', topology = 'triangle-strip') => device.createRenderPipeline({
         label,
         layout: 'auto',
         vertex: { module, entryPoint },
         fragment: { module, entryPoint: fragment, targets: [{ format, blend }] },
-        primitive: { topology: 'triangle-strip' },
+        primitive: { topology },
     });
     // The passes that decimate the world lines into the lists vs_line and vs_event draw
     const compute = (entryPoint) => device.createComputePipeline({
@@ -2057,5 +2078,6 @@ export async function createSpacetimeRenderPipelines(device, format, wgslConstan
         event: make('spacetimeEvents', 'vs_event', 'fs_event'),
         boson: make('spacetimeBosons', 'vs_boson'),
         pierce: make('spacetimePierce', 'vs_pierce', 'fs_pierce'),
+        future: make('spacetimeFuture', 'vs_future', 'fs_future', 'triangle-list'),
     };
 }

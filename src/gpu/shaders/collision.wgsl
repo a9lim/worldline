@@ -174,6 +174,8 @@ fn resolveCollisions(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Race condition guard: use <= to catch partially-consumed particles from
     // concurrent merge threads modifying the same particle.
     if ((ps1.flags & FLAG_ALIVE) == 0u || (ps2.flags & FLAG_ALIVE) == 0u) { return; }
+    // Bodies pass through a prescribed one: it neither collides, merges nor is captured
+    if (((ps1.flags | ps2.flags) & FLAG_PRESCRIBED) != 0u) { return; }
     if (ps1.mass <= EPSILON || ps2.mass <= EPSILON) { return; }
 
     // Atomic claim: prevent concurrent merge of same particle by multiple pairs.
@@ -547,6 +549,8 @@ fn resolveBouncePairwise(@builtin(global_invocation_id) gid: vec3<u32>) {
     var ps2 = particleState[idx2];
 
     if ((ps1.flags & FLAG_ALIVE) == 0u || (ps2.flags & FLAG_ALIVE) == 0u) { return; }
+    // Bodies pass through a prescribed one: it neither collides, merges nor is captured
+    if (((ps1.flags | ps2.flags) & FLAG_PRESCRIBED) != 0u) { return; }
     if (ps1.mass <= EPSILON || ps2.mass <= EPSILON) { return; }
 
     // Atomic claim: prevent concurrent impulse on same particle

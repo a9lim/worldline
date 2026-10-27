@@ -19,6 +19,7 @@ export const EL_SPACETIME = 0.52;      // about 30° above the plane
 export const AZ_SPACETIME = -0.55;
 const EL_MIN = 0.16;
 const DEPTH_FRACTION = 1.2;            // time shown below the plane, per visible plane height
+const FUTURE_FRACTION = 0.25;          // a prescribed body's known future above it, per depth
 const HISTORY = WORLDLINE_LEN * WORLDLINE_DT - 1;  // the world lines' recorded reach
 const EASE_RATE = 2.4;                 // per second, for the eased view changes
 const COORD_RATE = 1.6;                // per second, for the boost between coordinates
@@ -59,27 +60,36 @@ export default class SpacetimeView {
         return Math.min(Math.max(DEPTH_FRACTION * cam.viewportH / cam.zoom, this.minDepth), HISTORY);
     }
 
+    /**
+     * Time shown above the plane: a prescribed body's known future (roadmap §6.2), a fraction of
+     * the depth, while there is one; free bodies' futures are blank.
+     */
+    future() {
+        return this.sim._gpuPhysics?.prescribed?.size > 0 ? FUTURE_FRACTION * this.depth() : 0;
+    }
+
     /** The current projection: everything toScreen and the GPU matrix need. */
     frame() {
         const cam = this.sim.camera;
         const W = cam.viewportW, H = cam.viewportH;
         const se = Math.sin(this.el), ce = Math.cos(this.el);
-        const D = this.depth();
+        const D = this.depth(), F = this.future();
         // The plane's visible height foreshortens to H·se (up to √2 more once turned, a square's
-        // diagonal) and its past adds D·z·ce: fit both in H. Turning alone never rescales.
+        // diagonal), its past adds D·z·ce and a known future F·z·ce: fit them in H. Turning alone
+        // never rescales.
         const tilt = clamp(ce / Math.cos(EL_SPACETIME), 0, 1);
         // In an observer's coordinates a column at rest in the lab leans into the past along
         // the boost, tanh ψ per unit of time: centre the leaning stack and fit its width too
         // (observer() is a frame late here, which only delays the refit by a frame)
         const o = this._obs;
         const lean = o.active ? Math.tanh(o.psi) * D * tilt : 0;
-        const kv = 1 / (se * (1 + (Math.SQRT2 - 1) * tilt) + ce * D * cam.zoom / H);
+        const kv = 1 / (se * (1 + (Math.SQRT2 - 1) * tilt) + ce * (D + F) * cam.zoom / H);
         const k = kv * W / (W + lean * kv * cam.zoom);
         const kz = k * cam.zoom;
         return {
             W, H, cx: cam.x + o.n[0] * lean / 2, cy: cam.y + o.n[1] * lean / 2, kz, se, ce,
             ca: Math.cos(this.az), sa: Math.sin(this.az),
-            lift: kz * D * ce / 2, depth: D,
+            lift: kz * (D - F) * ce / 2, depth: D,
         };
     }
 

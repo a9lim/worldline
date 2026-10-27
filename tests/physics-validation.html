@@ -63,6 +63,7 @@ import {
 } from './src/config.js';
 import { WL_STRIDE } from './src/gpu/gpu-constants.js';
 import { TOGGLE_KEYS } from './src/physics-contract.js';
+import { curveAt, shuttleShape } from './src/prescribed.js';
 
 const rowsEl = document.getElementById('rows');
 const logEl = document.getElementById('log');
@@ -2282,6 +2283,167 @@ cases.push({
 // ── Runner ──
 
 /** Run every case, or those whose name contains `filter` (console: runAll('Liénard')). */
+// ── 2.6: prescribed world lines (roadmap §6.2, §6.10) ──
+
+/** Slot idx's ring, oldest first: [{t, x, y, wx, wy, ax, ay, tau}] with t on the world-line clock. */
+async function readRing(gp, idx) {
+    const meta = new Uint32Array(await readBuffer(gp, gp.buffers.wlMeta, (idx + 1) * 32));
+    const writeIdx = meta[idx * 8], count = meta[idx * 8 + 1];
+    const f = new Float32Array(await readBuffer(gp, gp.buffers.wlData, (idx + 1) * WORLDLINE_LEN * WL_STRIDE * 4));
+    const out = [];
+    for (let k = 0; k < count; k++) {
+        const b = (idx * WORLDLINE_LEN + ((writeIdx - count + k + WORLDLINE_LEN) % WORLDLINE_LEN)) * WL_STRIDE;
+        out.push({ t: f[b] + gp.timeEpoch, x: f[b + 1], y: f[b + 2], wx: f[b + 3], wy: f[b + 4],
+                   ax: f[b + 5], ay: f[b + 6], tau: f[b + 7] });
+    }
+    return out;
+}
+
+/** The fastest a cubic Hermite segment between two samples moves (17 points along it). */
+function hermiteTopSpeed(a, b) {
+    const dt = b.t - a.t, ga = Math.sqrt(1 + a.wx ** 2 + a.wy ** 2), gb = Math.sqrt(1 + b.wx ** 2 + b.wy ** 2);
+    const va = [a.wx / ga, a.wy / ga], vb = [b.wx / gb, b.wy / gb];
+    let top = 0;
+    for (let k = 0; k <= 16; k++) {
+        const u = k / 16;
+        const d00 = 6 * u * u - 6 * u, d10 = 3 * u * u - 4 * u + 1, d01 = -d00, d11 = 3 * u * u - 2 * u;
+        const vx = (d00 * a.x + d01 * b.x) / dt + d10 * va[0] + d11 * vb[0];
+        const vy = (d00 * a.y + d01 * b.y) / dt + d10 * va[1] + d11 * vb[1];
+        top = Math.max(top, Math.hypot(vx, vy));
+    }
+    return top;
+}
+
+const CURVES = (cx, cy) => [
+    { kind: 'uniform', t0: 0, x: cx - 20, y: cy, wx: 0.75, wy: 0.4 },
+    { kind: 'hyperbola', t0: 6, x: cx, y: cy, nx: 0.6, ny: -0.8, alpha: 0.12 },
+    { kind: 'circle', t0: 0, cx, cy, r: 9, omega: -0.1, phase: 1 },
+    { kind: 'oscillation', t0: 0, cx, cy, nx: 0, ny: 1, amp: 6, omega: 0.15, phase: 0.3 },
+    { kind: 'shuttle', t0: -3, x: cx - 15, y: cy, nx: 1, ny: 0, v: 0.8, alpha: 0.5, coast: 6 },
+];
+
+cases.push({
+    name: 'Prescribed world lines: every kind’s samples and clock follow its curve, whatever acts on it, and the interpolant stays timelike',
+    async run() {
+        // Gravity, Coulomb and a heavy charge beside them: they respond to none of it
+        const gp = await makeSim({ on: ['relativityEnabled', 'gravityEnabled', 'coulombEnabled'], domainW: 256, domainH: 256 });
+        gp.addParticle({ x: 140, y: 120, mass: 50, charge: 5, bornAt: -Infinity });
+        const curves = CURVES(128, 128);
+        const slots = curves.map((c) => gp.addPrescribed(c, { mass: 1, charge: 1 }));
+        await run(gp, 30, 0.25);
+        let worstX = 0, worstW = 0, worstA = 0, worstTau = 0, top = 0, n = 0;
+        for (let k = 0; k < curves.length; k++) {
+            const ring = await readRing(gp, slots[k]);
+            for (let j = 1; j < ring.length; j++) {
+                const r = ring[j], c = curveAt(gp.prescribed.get(slots[k]), r.t);
+                worstX = Math.max(worstX, Math.hypot(r.x - c.x, r.y - c.y));
+                worstW = Math.max(worstW, Math.hypot(r.wx - c.wx, r.wy - c.wy));
+                // A shuttle's acceleration jumps where a turn begins or ends: a sample on the edge
+                // may take either side
+                const aErr = (q) => Math.hypot(r.ax - q.ax, r.ay - q.ay);
+                const cu = gp.prescribed.get(slots[k]);
+                worstA = Math.max(worstA, Math.min(aErr(c), aErr(curveAt(cu, r.t - 1e-3)), aErr(curveAt(cu, r.t + 1e-3))));
+                worstTau = Math.max(worstTau, Math.abs(r.tau - c.tau));
+                top = Math.max(top, hermiteTopSpeed(ring[j - 1], r));
+                n++;
+            }
+        }
+        const ck = await readClocks(gp, gp.aliveCount);
+        let worstClock = 0;
+        slots.forEach((s) => { worstClock = Math.max(worstClock, Math.abs(ck[s].tau - curveAt(gp.prescribed.get(s), gp.conformalTime).tau)); });
+        gp.destroy();
+        return { expected: 'samples on the curves; |v| < 1 between them',
+                 measured: `${n} samples; fastest interpolant ${fmt(top, 4)}`,
+                 metric: `|Δx| ${fmt(worstX, 2)}, |Δw| ${fmt(worstW, 2)}, |Δa| ${fmt(worstA, 2)}, |Δτ| ${fmt(worstTau, 2)}, clock ${fmt(worstClock, 2)}`,
+                 pass: n >= 500 && worstX < 2e-3 && worstW < 2e-3 && worstA < 2e-3 && worstTau < 2e-3 && worstClock < 2e-3 && top < 1 };
+    },
+});
+
+cases.push({
+    name: 'The agent pays: W = Δ(γm) on a neutral body accelerated from rest, Δ(γm) − qE·Δx against a uniform E',
+    async run() {
+        const alpha = 0.1, T = 20, m = 2, q = 1, E = 0.05;
+        const out = [];
+        for (const charged of [false, true]) {
+            const gp = await makeSim({ on: ['relativityEnabled'], domainW: 256, domainH: 256,
+                                       params: charged ? { extElectric: E, extElectricAngle: 0 } : {} });
+            const c = { kind: 'hyperbola', t0: 0, x: 60, y: 128, nx: 1, ny: 0, alpha };
+            gp.addPrescribed(c, { mass: m, charge: charged ? q : 0 });
+            await run(gp, T, 0.125);
+            const L = (await statsNow(gp)).ledger;
+            const end = curveAt(c, gp.conformalTime);
+            const dGamma = m * (Math.sqrt(1 + end.wx * end.wx) - 1);
+            const want = dGamma - (charged ? q * E * (end.x - c.x) : 0);
+            out.push({ want, got: L.agentE, px: L.agentPx, wantPx: m * end.wx - (charged ? q * E * gp.conformalTime : 0) });
+            gp.destroy();
+        }
+        const err = Math.max(...out.map((o) => Math.abs(o.got / o.want - 1)));
+        const errP = Math.max(...out.map((o) => Math.abs(o.px / o.wantPx - 1)));
+        return { expected: out.map((o) => fmt(o.want, 5)).join(', '), measured: out.map((o) => fmt(o.got, 5)).join(', '),
+                 metric: `${fmt(err * 100, 2)}% (momentum ${fmt(errP * 100, 2)}%)`, pass: err < 5e-3 && errP < 5e-3 };
+    },
+});
+
+/** The Liénard–Wiechert force (softened as pair-force.wgsl has it) on a charge q at rest at obs, time T, from charge Q on curve c. */
+function lwForceFromCurve(c, Q, q, obs, T) {
+    let tr = T - Math.hypot(obs[0] - curveAt(c, T).x, obs[1] - curveAt(c, T).y);
+    for (let k = 0; k < 60; k++) { const p = curveAt(c, tr); tr = T - Math.hypot(obs[0] - p.x, obs[1] - p.y); }
+    const p = curveAt(c, tr), g = Math.sqrt(1 + p.wx * p.wx + p.wy * p.wy);
+    const beta = [p.wx / g, p.wy / g];
+    const bdot = [(p.ax - beta[0] * (beta[0] * p.ax + beta[1] * p.ay)) / g, (p.ay - beta[1] * (beta[0] * p.ax + beta[1] * p.ay)) / g];
+    const Rv = [obs[0] - p.x, obs[1] - p.y], R = Math.hypot(...Rv), n = [Rv[0] / R, Rv[1] / R];
+    const kappa = 1 - (n[0] * beta[0] + n[1] * beta[1]);
+    const nb = [n[0] - beta[0], n[1] - beta[1]];
+    const b2 = beta[0] ** 2 + beta[1] ** 2;
+    // n̂ × ((n̂ − β) × β̇) = (n̂ − β)(n̂·β̇) − β̇(n̂·(n̂ − β))
+    const nbd = n[0] * bdot[0] + n[1] * bdot[1], nnb = n[0] * nb[0] + n[1] * nb[1];
+    const sigma = R / Math.sqrt(R * R + SOFTENING_SQ), s3 = sigma ** 3;
+    const k3 = kappa ** 3;
+    return [0, 1].map((i) => q * Q * s3 * (nb[i] * (1 - b2) / (k3 * R * R) + (nb[i] * nbd - bdot[i] * nnb) / (k3 * R)));
+}
+
+cases.push({
+    name: 'A prescribed oscillating charge acts at once with the Liénard–Wiechert field of its curve’s past',
+    async run() {
+        const gp = await makeSim({ on: ['coulombEnabled', 'relativityEnabled'], domainW: 512, domainH: 512 });
+        const c = { kind: 'oscillation', t0: 0, cx: 256, cy: 256, nx: 1, ny: 0, amp: 4, omega: 0.15, phase: 0 };
+        const Q = 10, q = 0.1, obs = [256, 296];
+        gp.addPrescribed(c, { mass: 1, charge: Q, bornAt: -Infinity });
+        gp.addParticle({ x: obs[0], y: obs[1], mass: 1e6, charge: q, bornAt: -Infinity });
+        const rows = [];
+        for (const T of [3, 17, 31]) {
+            await run(gp, T - gp.simTime, 0.25);
+            const af = new Float32Array(await readBuffer(gp, gp.buffers.allForces, 2 * 160));
+            const F = [af[40 + 2], af[40 + 3]];
+            const want = lwForceFromCurve(c, Q, q, obs, gp.simTime - 0.25);
+            rows.push({ F, want, err: Math.hypot(F[0] - want[0], F[1] - want[1]) / Math.hypot(...want) });
+        }
+        gp.destroy();
+        const err = Math.max(...rows.map((r) => r.err));
+        return { expected: rows.map((r) => `(${fmt(r.want[0], 3)}, ${fmt(r.want[1], 3)})`).join(' '),
+                 measured: rows.map((r) => `(${fmt(r.F[0], 3)}, ${fmt(r.F[1], 3)})`).join(' '),
+                 metric: `${fmt(err * 100, 2)}%`, pass: err < 5e-3 };
+    },
+});
+
+cases.push({
+    name: 'The prescribed twin: at each reunion the traveller has aged its curve’s τ per period against home’s period',
+    async run() {
+        const gp = await makeSim({ on: ['relativityEnabled'], domainW: 128, domainH: 64 });
+        const c = { kind: 'shuttle', t0: 0, x: 10, y: 35, nx: 1, ny: 0, v: 0.8, alpha: 0.4, coast: 40 };
+        const sh = shuttleShape(c);
+        gp.addPrescribed({ kind: 'uniform', t0: 0, x: 10, y: 29, wx: 0, wy: 0 }, { bornAt: -Infinity });
+        gp.addPrescribed(c, { bornAt: -Infinity });
+        await run(gp, 2 * sh.period, 0.25);
+        const ck = await readClocks(gp, 2);
+        gp.destroy();
+        const ratio = ck[1].tau / ck[0].tau, want = sh.tauPeriod / sh.period;
+        return { expected: `τ/t = ${fmt(want, 5)} (coasting alone 1/γ = ${fmt(1 / sh.g, 4)})`,
+                 measured: `${fmt(ratio, 5)} after ${fmt(ck[0].tau, 4)}`,
+                 metric: `${fmt(Math.abs(ratio / want - 1) * 100, 2)}%`, pass: Math.abs(ratio / want - 1) < 1e-3 };
+    },
+});
+
 async function runAll(filter = '') {
     rowsEl.textContent = '';
     logEl.textContent = '';

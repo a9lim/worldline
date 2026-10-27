@@ -40,12 +40,13 @@
 import { PERF } from './gpu-profiler.js';
 import { createParticleBuffers, createWorldLineStore, STORE_TIERS, createUniformBuffer, writeFrameUniforms, writeSubstepUniforms, UNIFORM_DT_OFFSET, UNIFORM_RADIUS_MAX_OFFSET, createFieldBuffers, createGravityGridBuffers, createAtomicGridBuffer, createHeatmapBuffers, createKugelblitzBuffers, createFrameBuffers, FRAME_PARAMS_SIZE, FRAME_STATE_SIZE, FIELD_GRID_RES, PARTICLE_STATE_SIZE, PARTICLE_AUX_SIZE, RADIATION_STATE_SIZE, DERIVED_SIZE, MERGE_RESULT_SIZE } from './gpu-buffers.js';
 import { fetchShader, createLensPipeline, createPhase2Pipelines, createGhostGenPipeline, createTreeBuildPipelines, createTreeForcePipeline, createCollisionPipelines, createMergePhotonPipeline, createDeadGCPipeline, createPhase4Pipelines, createFieldDepositPipelines, createFieldEvolvePipelines, createFieldForcesPipelines, createFieldParticleGravPipeline, createFieldGravityPipelines, createFFTPipelines, createFieldExcitationPipeline, createHeatmapPipelines, createExpansionPipeline, createExtremalPipeline, createBosonDispatchArgsPipeline, createUpdateColorsPipeline, createHitTestPipeline, createComputeStatsPipeline, createFrameSlicePipelines } from './gpu-pipelines.js';
-import { buildWGSLConstants, GRAVITY_BIT, COULOMB_BIT, MAGNETIC_BIT, GRAVITOMAG_BIT, ONE_PN_BIT, RELATIVITY_BIT, SPIN_ORBIT_BIT, RADIATION_BIT, BLACK_HOLE_BIT, EXPANSION_BIT, YUKAWA_BIT, HIGGS_BIT, AXION_BIT, BOSON_INTER_BIT, FIELD_GRAV_BIT_T1, HERTZ_BOUNCE_BIT_T1, WL_STRIDE, WL_META_STRIDE, OBSERVERS_PER_GROUP, STATS_LAYOUT } from './gpu-constants.js';
+import { buildWGSLConstants, FLAG_PRESCRIBED, GRAVITY_BIT, COULOMB_BIT, MAGNETIC_BIT, GRAVITOMAG_BIT, ONE_PN_BIT, RELATIVITY_BIT, SPIN_ORBIT_BIT, RADIATION_BIT, BLACK_HOLE_BIT, EXPANSION_BIT, YUKAWA_BIT, HIGGS_BIT, AXION_BIT, BOSON_INTER_BIT, FIELD_GRAV_BIT_T1, HERTZ_BOUNCE_BIT_T1, WL_STRIDE, WL_META_STRIDE, OBSERVERS_PER_GROUP, STATS_LAYOUT } from './gpu-constants.js';
 import { createGPUDispatchPlan, updateGPUDispatchPlan } from './pass-graph.js';
-import { WORLDLINE_DT, WORLDLINE_LEN, GPU_MAX_PHOTONS, GPU_MAX_PIONS, GPU_MAX_LEPTONS, GPU_MAX_PARTICLES, GPU_HEATMAP_GRID, HEATMAP_INTERVAL_MASK, COL_MERGE, COL_BOUNCE, BOUND_LOOP, TORUS, COL_NAMES, BOUND_NAMES, TOPO_NAMES, SOFTENING, BH_SOFTENING, SOFTENING_SQ, BH_SOFTENING_SQ, CLOCK_PERIOD, HIGGS_COUPLING, AXION_COUPLING, BOSON_CHARGE, EPOCH_SPAN, EPOCH_STEP, TREE_ON, TREE_OFF, TREE_ON_PERIODIC, TREE_OFF_PERIODIC, treeTheta, kerrNewmanRadius } from '../config.js';
+import { WORLDLINE_DT, WORLDLINE_LEN, GPU_MAX_PHOTONS, GPU_MAX_PIONS, GPU_MAX_LEPTONS, GPU_MAX_PARTICLES, GPU_HEATMAP_GRID, HEATMAP_INTERVAL_MASK, COL_MERGE, COL_BOUNCE, BOUND_LOOP, TORUS, COL_NAMES, BOUND_NAMES, TOPO_NAMES, SOFTENING, BH_SOFTENING, SOFTENING_SQ, BH_SOFTENING_SQ, CLOCK_PERIOD, PRESCRIBED_CAP, HIGGS_COUPLING, AXION_COUPLING, BOSON_CHARGE, EPOCH_SPAN, EPOCH_STEP, TREE_ON, TREE_OFF, TREE_ON_PERIODIC, TREE_OFF_PERIODIC, treeTheta, kerrNewmanRadius } from '../config.js';
 import { installFieldMethods } from './gpu-fields.js';
 import Cosmology, { SCHEDULE_KEYS, slabVolume } from '../cosmology.js';
 import { GPU_PARAMETER_SLOTS } from '../physics-contract.js';
+import { curveAt, packCurve, CURVE_FLOATS } from '../prescribed.js';
 
 
 const MAX_PARTICLES = GPU_MAX_PARTICLES;
@@ -123,8 +124,13 @@ const _ledgerAU32 = new Uint32Array(_ledgerAData.buffer);
 // escaped leptons (matter), and the work the expansion has done
 // (escapedE: culled photons and culled leptons' kinetic energy, both redshifting as 1/a, the
 // relativistic law; escapedMatterE: culled leptons' rest mass; escapedP: all their momentum,
-// which falls as 1/a at any speed)
-const EMPTY_LEDGER = Object.freeze({ escapedE: 0, escapedPx: 0, escapedPy: 0, escapedMatterE: 0, expansionWork: 0 });
+// which falls as 1/a at any speed), and the four-momentum the agents driving prescribed bodies
+// have added (prescribed.wgsl)
+const EMPTY_LEDGER = Object.freeze({ escapedE: 0, escapedPx: 0, escapedPy: 0, escapedMatterE: 0, expansionWork: 0,
+                                     agentE: 0, agentPx: 0, agentPy: 0 });
+const _curveData = new Float32Array(CURVE_FLOATS);
+const _prescribedListData = new Uint32Array(PRESCRIBED_CAP + 1);
+const _pastData = new Float32Array(WORLDLINE_LEN * WL_STRIDE);
 const _expansionUniformData = new ArrayBuffer(32);   // ExpansionUniforms
 const _expansionUniformF32 = new Float32Array(_expansionUniformData);
 const _expansionUniformU32 = new Uint32Array(_expansionUniformData);       // one world-line sample (WL_STRIDE)
@@ -223,6 +229,8 @@ export default class GPUPhysics {
         // Per-slot generation, bumped whenever addParticle() fills the slot: (slot, generation)
         // names one body across slot reuse (world-line meta word 3)
         this._slotGeneration = new Uint32Array(GPU_MAX_PARTICLES);
+        // Prescribed bodies (src/prescribed.js): slot → its curve, t0 on the world-line clock
+        this.prescribed = new Map();
 
         // Defaults matching CPU path
         this.boundaryMode = 0;  // despawn
@@ -1274,6 +1282,9 @@ export default class GPUPhysics {
             [b.wlData, b.wlMeta]);
         this._phase4BindGroups.clocksG0 = bg('clocks_g0', p4.advanceClocks.bindGroupLayouts[0],
             [this.uniformBuffer, b.particleState, b.derived, b.allForces, b.clocks]);
+        this._phase4BindGroups.prescribedG0 = bg('prescribed_g0', p4.applyPrescribed.bindGroupLayouts[0],
+            [this.uniformBuffer, b.particleState, b.allForces, b.clocks, b.derived, b.wlMeta,
+             b.curves, b.prescribedList, b.agentAccum]);
 
         // ── 1PN (compute1PN + vvKick1PN share bind groups) ──
         this._phase4BindGroups.onePNG0 = bg('onePN_g0', p4.compute1PN.bindGroupLayouts[0],
@@ -1656,6 +1667,15 @@ export default class GPUPhysics {
         pass.end();
     }
 
+    /** Put the prescribed bodies back on their curves (prescribed.wgsl), before the world lines. */
+    _dispatchPrescribed(encoder) {
+        const pass = encoder.beginComputePass({ label: 'applyPrescribed' });
+        pass.setPipeline(this._phase4.applyPrescribed.pipeline);
+        pass.setBindGroup(0, this._phase4BindGroups.prescribedG0);
+        pass.dispatchWorkgroups(1);
+        pass.end();
+    }
+
     /**
      * World lines (worldline.wgsl), every substep: a sample for every particle when one is
      * due, else only the breaks that merges left and the snapshots of new deaths.
@@ -1707,6 +1727,7 @@ export default class GPUPhysics {
         pass.end();
         this.device.queue.submit([encoder.finish()]);
         this.timeEpoch += EPOCH_STEP;
+        for (const slot of this.prescribed.keys()) this._writeCurve(slot);
     }
 
     /**
@@ -1870,7 +1891,7 @@ export default class GPUPhysics {
      * @returns {number} slot index, or -1 when the pool is full
      */
     addParticle({ x, y, vx = 0, vy = 0, mass: m = 1, charge: q = 0, angw = 0, antimatter = false,
-                  tau = 0, theta = 0, bornAt = null }) {
+                  tau = 0, theta = 0, bornAt = null, prescribed = false }) {
         this.stateVersion++;
         this._stepsSinceChange = 0;
         let idx;
@@ -1894,6 +1915,7 @@ export default class GPUPhysics {
         _addParticleStateF32[7] = m;          // baseMass
         let flags = FLAG_ALIVE;
         if (antimatter && !this._blackHoleEnabled) flags |= FLAG_ANTIMATTER;
+        if (prescribed) flags |= FLAG_PRESCRIBED;
         _addParticleStateU32[8] = flags;
         this.device.queue.writeBuffer(this.buffers.particleState, idx * PARTICLE_STATE_SIZE, _addParticleStateData);
 
@@ -1942,6 +1964,62 @@ export default class GPUPhysics {
         _addParticleMetaU32[3] = this._slotGeneration[idx];
         this.device.queue.writeBuffer(this.buffers.wlMeta, idx * WL_META_STRIDE * 4, _addParticleMetaBuf);
         return idx;
+    }
+
+    /**
+     * Add a prescribed body (roadmap §6.2): `curve` (src/prescribed.js) gives its world line, t0
+     * on the world-line clock (conformalTime), and the body starts where the curve is now. Its
+     * clock reads `tau` now unless the curve sets tau0. A body born at −∞ (a figure's initial
+     * condition) has a past too, the curve's, written into its ring, so it acts at once with the
+     * field of its whole recorded motion; otherwise it is born now, like any body.
+     * Returns the slot, or −1.
+     */
+    addPrescribed(curve, { mass = 1, charge = 0, angw = 0, tau = 0, theta = 0, bornAt = null } = {}) {
+        if (this.prescribed.size >= PRESCRIBED_CAP) return -1;
+        const now = this.conformalTime;
+        const c = { ...curve };
+        if (c.tau0 == null) c.tau0 = tau - curveAt({ ...c, tau0: 0 }, now).tau;
+        const p = curveAt(c, now);
+        const idx = this.addParticle({ x: p.x * this.scaleA, y: p.y * this.scaleA, vx: p.wx, vy: p.wy,
+                                       mass, charge, angw, tau: p.tau, theta, bornAt, prescribed: true });
+        if (idx < 0) return -1;
+        this.prescribed.set(idx, c);
+        this._writeCurve(idx);
+        this._writePrescribedList();
+        if (bornAt === -Infinity) this._writePast(idx, c, mass, charge, angw, theta);
+        return idx;
+    }
+
+    /** Slot idx's curve record (shared-prescribed.wgsl), its t0 as GPU time. */
+    _writeCurve(idx) {
+        packCurve(this.prescribed.get(idx), this.timeEpoch, _curveData);
+        this.device.queue.writeBuffer(this.buffers.curves, idx * CURVE_FLOATS * 4, _curveData);
+    }
+
+    /** The prescribed slots, for prescribed.wgsl and the known future's draw. */
+    _writePrescribedList() {
+        const slots = [...this.prescribed.keys()];
+        _prescribedListData[0] = slots.length;
+        slots.forEach((s, k) => { _prescribedListData[1 + k] = s; });
+        this.device.queue.writeBuffer(this.buffers.prescribedList, 0, _prescribedListData, 0, slots.length + 1);
+        this._prescribedDirty = false;
+    }
+
+    /** Fill slot idx's ring with its curve's past, a sample every WORLDLINE_DT up to now. */
+    _writePast(idx, c, m, q, angw, theta) {
+        if (this.scaleA !== 1) return;   // a prescribed past is drawn in a static universe only
+        const n = WORLDLINE_LEN, now = this.conformalTime, f = _pastData;
+        for (let k = 0; k < n; k++) {
+            const t = now - (n - 1 - k) * WORLDLINE_DT;
+            const p = curveAt(c, t), b = k * WL_STRIDE;
+            f[b] = t - this.timeEpoch; f[b + 1] = p.x; f[b + 2] = p.y; f[b + 3] = p.wx; f[b + 4] = p.wy;
+            f[b + 5] = p.ax; f[b + 6] = p.ay; f[b + 7] = p.tau; f[b + 8] = theta; f[b + 9] = angw;
+            f[b + 10] = m; f[b + 11] = q;
+        }
+        this.device.queue.writeBuffer(this.buffers.wlData, idx * WORLDLINE_LEN * WL_STRIDE * 4, f);
+        _addParticleMetaU32[0] = 0;   // writeIdx: n wraps to 0
+        _addParticleMetaU32[1] = n;
+        this.device.queue.writeBuffer(this.buffers.wlMeta, idx * WL_META_STRIDE * 4, _addParticleMetaBuf, 0, 8);
     }
 
     /**
@@ -2228,6 +2306,9 @@ export default class GPUPhysics {
             l.escapedPx += d[99] / aAt;
             l.escapedPy += d[100] / aAt;
             l.escapedMatterE += d[101];
+            l.agentE += d[104];
+            l.agentPx += d[105];
+            l.agentPy += d[106];
         }
         if (this._peScale === null) {
             L.expansionWork -= this._lnrPending * d[26];
@@ -2808,7 +2889,9 @@ export default class GPUPhysics {
             for (let i = 0; i < top; i++) {
                 const slotIdx = u[RB_FREE_STACK / 4 + i];
                 if (slotIdx < MAX_PARTICLES) this._cpuFreeSlots.push(slotIdx);
+                if (this.prescribed.delete(slotIdx)) this._prescribedDirty = true;
             }
+            if (this._prescribedDirty) this._writePrescribedList();
         }
     }
 
@@ -2875,6 +2958,7 @@ export default class GPUPhysics {
         // otherwise merge breaks and death snapshots only
         // (on the world-line clock, so under expansion the ring spans WORLDLINE_LEN·DT of η)
         const due = this.conformalTime >= this._nextWorldLineTime;
+        if (bodies && this.prescribed.size > 0) this._dispatchPrescribed(encoder);
         if (bodies) this._dispatchRecordWorldLines(encoder, due);
         if (due) this._nextWorldLineTime = (Math.floor(this.conformalTime / WORLDLINE_DT) + 1) * WORLDLINE_DT;
 
@@ -3111,6 +3195,8 @@ export default class GPUPhysics {
                 antimatter: !!(flags & FLAG_ANTIMATTER),
                 tau: clockF32[i * 4],         // proper time
                 theta: clockF32[i * 4 + 2],   // spoke angle
+                // A prescribed body's curve, its t0 relative to the save's time
+                ...(this.prescribed.has(i) ? { curve: { ...this.prescribed.get(i), t0: this.prescribed.get(i).t0 - this.conformalTime } } : {}),
             });
         }
 
@@ -3209,7 +3295,7 @@ export default class GPUPhysics {
             const bm = pd.baseMass ?? m;
             const q = pd.charge || 0;
             const angw = pd.angw || 0;
-            const flagBits = FLAG_ALIVE | (pd.antimatter ? FLAG_ANTIMATTER : 0);
+            const flagBits = FLAG_ALIVE | (pd.antimatter ? FLAG_ANTIMATTER : 0) | (pd.curve ? FLAG_PRESCRIBED : 0);
 
             // Pack ParticleState (9 × 4 bytes = 36)
             const sBase = idx * 9; // 9 f32/u32 per particle
@@ -3279,7 +3365,15 @@ export default class GPUPhysics {
             const pd = particles[idx];
             this._writeBirthSample(idx, pd.x, pd.y, pd.wx || 0, pd.wy || 0, pd.mass || 1, pd.charge || 0,
                 pd.angw || 0, pd.tau || 0, pd.theta || 0);
+            // A prescribed body keeps its curve, and its past is the curve's
+            if (pd.curve) {
+                const c = { ...pd.curve, t0: pd.curve.t0 + this.conformalTime };
+                this.prescribed.set(idx, c);
+                this._writeCurve(idx);
+                this._writePast(idx, c, pd.mass || 1, pd.charge || 0, pd.angw || 0, pd.theta || 0);
+            }
         }
+        if (this.prescribed.size > 0) this._writePrescribedList();
 
         this.aliveCount = count;
 
@@ -3332,6 +3426,9 @@ export default class GPUPhysics {
         this._pendingMergeEvents = [];
         this._pendingKugelblitzEvents = [];
         this._cpuFreeSlots = [];
+        this.prescribed.clear();
+        this._writePrescribedList();
+        this.device.queue.writeBuffer(this.buffers.agentAccum, 0, new Float32Array(4));
         // Reset GPU free stack (reuse pre-allocated zero buffer)
         if (this.buffers.freeTop) {
             this.device.queue.writeBuffer(this.buffers.freeTop, 0, _zeroU32);
@@ -3561,6 +3658,8 @@ export default class GPUPhysics {
         // The ledger's accumulators since the last readback
         encoder.copyBufferToBuffer(this._cosmoAccum, 0, this.buffers.statsBuffer, 96 * 4, 32);
         encoder.clearBuffer(this._cosmoAccum);
+        encoder.copyBufferToBuffer(this.buffers.agentAccum, 0, this.buffers.statsBuffer, 104 * 4, 16);
+        encoder.clearBuffer(this.buffers.agentAccum);
 
         // Copy to staging (double-buffered)
         const staging = this._statsStagingFlip

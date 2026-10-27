@@ -129,10 +129,10 @@ export default class Caption {
                 return B > 0 && E < B ? L.cyclotron(this._k('B', fmt(B)), this._k('E', fmt(E)), fmt(E / B)) : '';
             }
             case 'twinBounce': {
-                const home = body(0), trav = body(1);
-                if (!home || !trav) return '';
-                const { v, g } = speedOf(trav);
-                return L.twinBounce(this._k('v', fmt(v)), fmt(g), fmt(trav.tau, 1), fmt(home.tau, 1));
+                const home = body(0), trav = body(1), c = gp?.prescribed.get(1);
+                if (!home || !trav || !c) return '';
+                const g = 1 / Math.sqrt(1 - c.v * c.v);
+                return L.twinBounce(this._k('v', fmt(c.v)), fmt(g), fmt(trav.tau, 1), fmt(home.tau, 1));
             }
             case 'wheel': {
                 const rest = body(0), moving = body(1);

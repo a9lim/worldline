@@ -57,22 +57,25 @@ export const PRESETS = {
     twinBounce: {
         name: 'Twin paradox',
         toggles: ['relativityEnabled'],
-        modes: { collision: 'pass', boundary: 'bounce' },
+        modes: { collision: 'pass', boundary: 'despawn' },
         speed: 16,
-        // The round trip, about 95, fits the world lines' reach (127), and the spacetime view
-        // shows all of that reach, so for a third of each trip the tilted plate holds a whole one
+        // A round trip at the slowest knob, about 126, fits the world lines' reach (127), and the
+        // spacetime view shows all of that reach, so the tilted plate holds a whole trip or more
         visuals: { depth: Infinity },
         domain: [40, 32],
         // The traveller's speed; below 0.55c a round trip outruns the world lines' reach
         knobs: { v: knob('v', { value: 0.8, min: 0.55, max: 0.95, rerun: true }) },
         spawn(sim, run) {
-            // Home at rest by the near wall; the traveller leaves at v (0.8c: γ = 5/3), turns at
-            // the far wall and comes home, ageing √(1 − v²) of home's time apart from the turn.
-            // Then it turns again at the near wall just behind home, so each trip starts as the
-            // last ends
-            const y = sim.domainH / 2;
-            sim.addParticle(3, y - 3, 0, 0, { mass: 1, charge: 0, spin: 0 });
-            sim.addParticle(3, y + 3, run.knobs.v, 0, { mass: 1, charge: 0, spin: 0 });
+            // Both prescribed (src/prescribed.js): home at rest by the near wall, and the traveller
+            // beside it on a shuttle, leaving at v (0.8c: γ = 5/3), turning by the far wall at
+            // proper acceleration 0.5 and coming home to rest beside home, then out again, so
+            // each trip starts as the last ends. Over a trip it ages τ per period against home's
+            // period: √(1 − v²) while it coasts, more in the turns
+            const y = sim.domainH / 2, x = 3, alpha = 0.5, v = run.knobs.v;
+            const g = 1 / Math.sqrt(1 - v * v), turn = (g - 1) / alpha;
+            const coast = (sim.domainW - 2 * x - 2 * turn) / v;
+            sim.addPrescribed({ kind: 'uniform', t0: 0, x, y: y - 3, wx: 0, wy: 0 }, { mass: 1 });
+            sim.addPrescribed({ kind: 'shuttle', t0: 0, x, y: y + 3, nx: 1, ny: 0, v, alpha, coast }, { mass: 1 });
         },
     },
 

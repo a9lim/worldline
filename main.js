@@ -158,6 +158,8 @@ class Simulation {
             radiatedE: document.getElementById('radiatedE'),
             expansionWork: document.getElementById('expansionWork'),
             expansionWorkRow: document.getElementById('expansion-work-row'),
+            agentWork: document.getElementById('agentWork'),
+            agentWorkRow: document.getElementById('agent-work-row'),
             momentum: document.getElementById('momentum'),
             particleMom: document.getElementById('particleMom'),
             fieldMom: document.getElementById('fieldMom'),
@@ -535,6 +537,26 @@ class Simulation {
         // delay is concerned; anything spawned later is born now, and its field spreads at c.
         const idx = gpu.addParticle({
             x, y, vx: vx * gamma, vy: vy * gamma, mass, charge, angw, antimatter,
+            bornAt: this._spawningPreset ? -Infinity : null,
+        });
+        if (idx < 0) return -1;
+        if (!options.skipBaseline) this.stats.resetBaseline();
+        this._dirty = true;
+        return idx;
+    }
+
+    /**
+     * Add a prescribed body (src/prescribed.js): its world line is `curve`, its t0 lab time
+     * (simTime; the world-line clock in a static universe). A preset's are initial conditions
+     * with the curve's past; anything added later is born now.
+     */
+    addPrescribed(curve, options = {}) {
+        const gpu = this.gpu;
+        if (!gpu || !gpu.canAddParticle()) return -1;
+        const idx = gpu.addPrescribed(curve, {
+            mass: options.mass ?? 1,
+            charge: Math.round((options.charge ?? 0) / BOSON_CHARGE) * BOSON_CHARGE,
+            tau: options.tau ?? 0,
             bornAt: this._spawningPreset ? -Infinity : null,
         });
         if (idx < 0) return -1;

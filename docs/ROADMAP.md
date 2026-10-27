@@ -321,13 +321,17 @@ What sight may assume, stated before it is built (Codex):
 
 ### 6.2 Prescribed world lines
 
+Landed 2026-10-27 (§14; `AGENTS.md`, Prescribed bodies): the five curves, the pass that keeps a
+body on its curve, the agent's books, the known past written at a figure's start and the known
+future drawn, and the twin rebuilt on them with turns of finite duration.
+
 - A body can be **prescribed**: its world line given, not computed. 2.6 brings the analytic curves:
   uniform motion, hyperbolic motion, uniform circular motion, a linear oscillation, and a twin's legs
   joined by a turn of finite duration. Prescribed bodies source every law and
   serve as observers like any body; they respond to nothing, and the agent that drives them pays
   (Jackson's prescribed currents) [standard].
-- **Constant mass, stated interactions.** A prescribed body keeps its mass and charge; it doesn't
-  radiate away energy, collide, bounce or merge, and other bodies' collisions with it are a stated
+- **Stated interactions.** A prescribed body keeps its charge (its mass follows the Higgs like any
+  body's); it doesn't radiate away energy, absorb bosons, collide, bounce or merge, and other bodies' collisions with it are a stated
   policy (they pass through, first). Its samples carry the curve's own position, proper velocity and
   dw/dt, so its Liénard–Wiechert field is the field of the motion drawn; the sample's acceleration is
   otherwise the summed force at the substep's start plus the Boris rotations (`worldline.wgsl`).

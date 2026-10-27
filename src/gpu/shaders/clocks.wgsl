@@ -42,7 +42,8 @@ fn advanceClocks(@builtin(workgroup_id) wg: vec3u, @builtin(local_invocation_id)
     var ok = i < u.aliveCount;
     if (ok) {
         p = particles[i];
-        ok = (p.flags & FLAG_ALIVE) != 0u;
+        // A prescribed body's clock is its curve's (prescribed.wgsl)
+        ok = (p.flags & (FLAG_ALIVE | FLAG_PRESCRIBED)) == FLAG_ALIVE;
     }
     let relOn = (u.toggles0 & RELATIVITY_BIT) != 0u;
     let gravOn = (u.toggles0 & GRAVITY_BIT) != 0u;

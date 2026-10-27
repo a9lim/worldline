@@ -14,7 +14,7 @@
 
 import {
     WORLDLINE_LEN, GPU_MAX_PHOTONS, GPU_MAX_PIONS,
-    GPU_SCALAR_GRID, GPU_MAX_LEPTONS, GPU_MAX_PARTICLES,
+    GPU_SCALAR_GRID, GPU_MAX_LEPTONS, GPU_MAX_PARTICLES, PRESCRIBED_CAP,
 } from '../config.js';
 import { WL_STRIDE, WL_META_STRIDE, STATS_LAYOUT } from './gpu-constants.js';
 
@@ -111,6 +111,12 @@ export function createParticleBuffers(device, maxParticles, storeCapacity = maxP
 
     // Proper-time clocks (clocks.wgsl): τ, clock-ring phase, spoke angle θ, lapse dτ/dt
     const clocks = storageBuffer('clocks', VEC4_SIZE, maxParticles);
+    // Prescribed bodies (prescribed.wgsl): a curve a slot (shared-prescribed.wgsl's record, four
+    // vec4s), the prescribed slots (a count, then up to PRESCRIBED_CAP slots), and the agent's
+    // four-momentum since the last stats readback
+    const curves = storageBuffer('curves', 4 * VEC4_SIZE, maxParticles);
+    const prescribedList = storageBuffer('prescribedList', UINT_SIZE, PRESCRIBED_CAP + 1);
+    const agentAccum = storageBuffer('agentAccum', VEC4_SIZE, 1);
 
     // World lines (worldline.wgsl): WL_STRIDE f32 per sample, WORLDLINE_LEN samples per
     // particle (~25 MB at 512 particles), at the store's capacity, plus WL_META_STRIDE u32 of
@@ -325,6 +331,8 @@ export function createParticleBuffers(device, maxParticles, storeCapacity = maxP
         color,
         // Clocks and world lines
         clocks, wlData, wlMeta, wlHints, storeCapacity,
+        // Prescribed bodies
+        curves, prescribedList, agentAccum,
         // Forces (packed AllForces struct)
         allForces,
         // Radiation (packed RadiationState struct)

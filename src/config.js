@@ -136,6 +136,8 @@ export const MIN_KUGELBLITZ_COUNT = 4;       // minimum boson count in collapsin
 export const WORLDLINE_LEN = 1024;            // power of 2 (ring mask)
 export const WORLDLINE_DT = 1 / 8;
 export const CLOCK_PERIOD = 16;              // proper time per sweep of the clock ring
+// Prescribed bodies (src/prescribed.js): at most this many at once, one workgroup's worth
+export const PRESCRIBED_CAP = 256;
 // GPU times are f32 relative to a rolling epoch. Once GPU time passes EPOCH_SPAN, every
 // stored time shifts back by EPOCH_STEP and each world line is recentred on its tile.
 export const EPOCH_SPAN = 512;

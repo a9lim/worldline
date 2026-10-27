@@ -33,6 +33,9 @@
 //   vs_boson   (MAX_PHOTONS + PION_POOL_CAP) × 4, triangle strip
 //   vs_pierce  maxParticles × 4, triangle strip: where each world line crosses the
 //              observer's present, while the lab is boosting toward it or shows it tilted
+//   vs_future  prescribed bodies × 6·FUTURE_SEGS, triangle list: a prescribed body's known
+//              future, from its curve (shared-prescribed.wgsl), above the present, dashed, its
+//              beads hollow; seen from above, its path ahead
 //
 // In lab coordinates, lines below the sheet of the present are seen through it, lighter.
 //
@@ -83,6 +86,10 @@ struct SpacetimeParams {
     trails: f32,        // 1: world lines show in the plane view too, as its trails
     lineWindow: u32,    // samples drawn back from each line's newest (0: all); past the depth
                         // the lines fade to nothing, so in the lab's coordinates only these show
+    future: f32,        // how far above the present the prescribed bodies' known future is drawn
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 
 // The slicer's observer (frame-slice.wgsl)
@@ -1213,6 +1220,99 @@ fn fs_event(in: POut) -> @location(0) vec4<f32> {
     if (a < 0.003) { discard; }
     let rgb = mix(ground(), in.color.rgb, ring / max(max(ring, fill), 1e-4));
     return vec4(rgb * a, a);
+}
+
+// ─── The known future (roadmap §6.2) ───
+// A prescribed body's world line is given, so its future is known: drawn from its curve above
+// the present, up to params.future, faint and dashed, a hollow bead at each beadStep of its
+// proper time, fading as it rises. Free bodies' futures stay blank. Each segment is its own quad,
+// so one that jumps a seam on a periodic domain simply isn't drawn.
+
+@group(0) @binding(20) var<storage, read> curves: array<vec4<f32>>;
+@group(0) @binding(21) var<storage, read> prescribedList: array<u32>;
+
+const FUTURE_SEGS: u32 = 96u;
+const DASH_PX: f32 = 6.0;       // the least dash and gap drawn as dashes
+
+/** Slot s's curve at GPU time t, through its deck, in the image nearest `anchor`. */
+fn futurePoint(c: Curve, deck: vec4<f32>, t: f32, anchor: vec2<f32>) -> LinePoint {
+    let cp = curveAt(c, t);
+    var p: LinePoint;
+    p.pos = nearImage(deck.xy * (cp.pos - deck.zw) * params.scaleA, anchor);
+    p.t = t;
+    p.tau = cp.tau;
+    return p;
+}
+
+@vertex
+fn vs_future(@builtin(vertex_index) vid: u32, @builtin(instance_index) k: u32) -> VOut {
+    if (params.future <= 0.0 || k >= prescribedList[0]) { return collapsed(); }
+    let s = prescribedList[1u + k];
+    let b = particles[s];
+    if ((b.flags & (FLAG_ALIVE | FLAG_PRESCRIBED)) != (FLAG_ALIVE | FLAG_PRESCRIBED)) { return collapsed(); }
+    let o = observer();
+    let cb = s * CURVE_VEC4S;
+    let c = curveFrom(curves[cb], curves[cb + 1u], curves[cb + 2u], curves[cb + 3u]);
+    let mb = s * WL_META_STRIDE;
+    let bits = wlMeta[mb + 4u];
+    let deck = vec4(select(1.0, -1.0, (bits & 1u) != 0u), select(1.0, -1.0, (bits & 2u) != 0u),
+                    bitcast<f32>(wlMeta[mb + 5u]), bitcast<f32>(wlMeta[mb + 6u]));
+    var anchor = vec2(b.posX, b.posY);
+    if (o.observing) { anchor = nearImage(anchor, o.aNow); }
+
+    // Segment j of the future, and this vertex's end (0 or 1) and side of it
+    let j = vid / 6u;
+    let corner = vid % 6u;
+    let end = select(0u, 1u, corner == 1u || corner == 4u || corner == 5u);
+    let side = select(-1.0, 1.0, corner == 2u || corner == 3u || corner == 5u);
+    let step = params.future / f32(FUTURE_SEGS);
+    let p0 = futurePoint(c, deck, params.tNow + step * f32(j), anchor);
+    let p1 = futurePoint(c, deck, params.tNow + step * f32(j + 1u), anchor);
+    if (isBreak(p0, p1)) { return collapsed(); }
+    let c0 = projectEvent(o, p0.pos, p0.t);
+    let c1 = projectEvent(o, p1.pos, p1.t);
+    var dir = toPx(c1) - toPx(c0);
+    let len = length(dir);
+    dir = select(vec2(1.0, 0.0), dir / max(len, 1e-6), len > 1e-6);
+    var at = p0;
+    if (end == 1u) { at = p1; }
+    let rgb = select(mix(unpack(color[s]), ink(), 0.35), accent(), s == params.selected);
+    // Faint, and fading toward the top of what is shown; seen from above, faint throughout
+    let rise = (at.t - params.tNow) / params.future;
+    var out: VOut;
+    out.position = offsetClip(select(c0, c1, end == 1u), vec2(-dir.y, dir.x) * side * BEAD_REACH);
+    out.color = vec4(rgb, 0.55 * (1.0 - 0.7 * rise));
+    out.across = side * BEAD_REACH;
+    out.tau = at.tau;
+    out.pxPerTau = len / max(abs(p1.tau - p0.tau), 1e-6);
+    out.core = select(0.6, 0.95, s == params.selected);
+    return out;
+}
+
+/**
+ * The future's fragment: a hairline dashed in proper time, four dashes to a bead, solid where
+ * they would be under DASH_PX apart; hollow beads.
+ */
+@fragment
+fn fs_future(in: VOut) -> @location(0) vec4<f32> {
+    if (in.color.a < 0.004) { discard; }
+    let d = abs(in.across);
+    let aa = 0.6 / max(camera.dpr, 1.0);
+    var cover = 1.0 - smoothstep(in.core - aa, in.core + aa, d);
+    let period = params.beadStep * 0.25;
+    let dashPx = max(period * in.pxPerTau, 1e-3);
+    let dash = 1.0 - smoothstep(0.5, 0.5 + aa / dashPx, fract(in.tau / period));
+    cover *= mix(1.0, dash, smoothstep(DASH_PX * 0.5, DASH_PX, dashPx));
+    if (in.pxPerTau > 0.0) {
+        let spacing = params.beadStep * in.pxPerTau;
+        let k = round(in.tau / params.beadStep);
+        let bd = length(vec2((in.tau - k * params.beadStep) * in.pxPerTau, in.across));
+        let ring = 1.0 - smoothstep(0.55 - aa, 0.55 + aa, abs(bd - BEAD_PX + 0.3));
+        cover = max(cover, ring * smoothstep(6.0, 10.0, spacing));
+    }
+    let a = in.color.a * cover;
+    if (a < 0.003) { discard; }
+    return vec4(in.color.rgb * a, a);
 }
 
 // ─── Shared fragment: hairline core, proper-time beads ───

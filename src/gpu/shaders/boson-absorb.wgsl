@@ -93,7 +93,8 @@ struct Boson { pos: vec2f, emitter: u32, energy: f32, px: f32, py: f32 };
 // Squared distance from boson b to body j if j can absorb it, else -1
 fn candidate(b: Boson, j: u32) -> f32 {
     let pj = particles[j];
-    if ((pj.flags & FLAG_ALIVE) == 0u || (pj.flags & FLAG_GHOST) != 0u) { return -1.0; }
+    // A prescribed body is transparent to bosons: it responds to nothing
+    if ((pj.flags & (FLAG_ALIVE | FLAG_GHOST | FLAG_PRESCRIBED)) != FLAG_ALIVE) { return -1.0; }
     let aux = particleAux[j];
     if (aux.particleId == b.emitter) { return -1.0; }   // no self-absorption
     let d = toBody(b.pos, pj);

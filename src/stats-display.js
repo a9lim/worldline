@@ -79,7 +79,8 @@ export default class StatsDisplay {
         this.radiated = radiated;   // for the caption
         this.photonE = e.photonE;   // for the key: light is on the scene
         const total = e.totalMass + e.linearKE + e.spinKE + pe + allFieldE + radiated;
-        const ledgerTotal = total + L.expansionWork;
+        // Prescribed bodies' agents add energy and momentum from outside (prescribed.wgsl)
+        const ledgerTotal = total + L.expansionWork - L.agentE;
 
         const totalFieldPx = e.fieldPx + e.scalarFieldMomX * e.scaleA;   // the slab's, like its energy
         const totalFieldPy = e.fieldPy + e.scalarFieldMomY * e.scaleA;
@@ -88,7 +89,7 @@ export default class StatsDisplay {
         const totalPx = e.px + totalFieldPx + radPx;
         const totalPy = e.py + totalFieldPy + radPy;
         const pMag = Math.sqrt(totalPx * totalPx + totalPy * totalPy);
-        const pComoving = pMag * e.scaleA;
+        const pComoving = Math.hypot(totalPx * e.scaleA - L.agentPx, totalPy * e.scaleA - L.agentPy);
 
         // The baseline comes from a readback of the current state, not one in flight before it
         if (this.initialEnergy === null && e.aliveCount > 0 && e.current) {
@@ -99,7 +100,7 @@ export default class StatsDisplay {
 
         // Relative to the run's energy scale: under expansion the energy that has flowed through
         // the ledger can dwarf the starting total (a frozen field's slab energy grows as a³)
-        const eScale = Math.max(Math.abs(this.initialEnergy ?? 0), Math.abs(total), Math.abs(L.expansionWork), 1e-6);
+        const eScale = Math.max(Math.abs(this.initialEnergy ?? 0), Math.abs(total), Math.abs(L.expansionWork), Math.abs(L.agentE), 1e-6);
         const eDrift = this.initialEnergy !== null ? ((ledgerTotal - this.initialEnergy) / eScale * 100) : 0;
         // Relative to the system's momentum scale √(2M·KE) too: a system at rest (zero total
         // momentum) would otherwise divide float noise by nothing
@@ -119,6 +120,9 @@ export default class StatsDisplay {
         const showWork = L.expansionWork !== 0;
         if (this.dom.expansionWorkRow.hidden === showWork) this.dom.expansionWorkRow.hidden = !showWork;
         if (showWork) _set(this.dom.expansionWork, fmt(L.expansionWork));
+        const showAgent = L.agentE !== 0;
+        if (this.dom.agentWorkRow.hidden === showAgent) this.dom.agentWorkRow.hidden = !showAgent;
+        if (showAgent) _set(this.dom.agentWork, fmt(L.agentE));
         _set(this.dom.momentum, fmt(pMag));
         _set(this.dom.particleMom, fmt(Math.sqrt(e.px * e.px + e.py * e.py)));
         _set(this.dom.fieldMom, fmt(Math.sqrt(totalFieldPx * totalFieldPx + totalFieldPy * totalFieldPy)));

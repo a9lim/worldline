@@ -13,6 +13,8 @@ import { fetchShader, getSharedPrefix, createBosonRenderPipelines, createFieldRe
 import { buildWGSLConstants, paletteRGB } from './gpu-constants.js';
 import { HEATMAP_SENSITIVITY, HEATMAP_MAX_ALPHA, GPU_MAX_PHOTONS, GPU_MAX_PIONS, GPU_MAX_LEPTONS, WORLDLINE_LEN, WORLDLINE_DT } from '../config.js';
 
+const FUTURE_SEGS = 96;   // the known future's segments (spacetime-render.wgsl)
+
 // Pre-allocated typed arrays for per-frame writeBuffer calls (eliminate GC pressure)
 const _cameraData = new ArrayBuffer(256);
 const _cameraF32 = new Float32Array(_cameraData);
@@ -34,7 +36,7 @@ const _fieldRenderU32 = new Uint32Array(_fieldRenderData);
 const _heatmapRenderData = new ArrayBuffer(80);
 const _heatmapRenderF32 = new Float32Array(_heatmapRenderData);
 const _heatmapRenderU32 = new Uint32Array(_heatmapRenderData);
-const _spacetimeData = new ArrayBuffer(112);  // SpacetimeParams (spacetime-render.wgsl)
+const _spacetimeData = new ArrayBuffer(128);  // SpacetimeParams (spacetime-render.wgsl)
 const _spacetimeF32 = new Float32Array(_spacetimeData);
 const _spacetimeU32 = new Uint32Array(_spacetimeData);
 const _spacetimeI32 = new Int32Array(_spacetimeData);
@@ -306,7 +308,7 @@ export default class GPURenderer {
         try {
             this._spacetimePipelines = await createSpacetimeRenderPipelines(this.device, this.format, this._wgslConstants || '');
             this._spacetimeUniformBuffer = this.device.createBuffer({
-                label: 'spacetimeParams', size: 112, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+                label: 'spacetimeParams', size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
             });
             this._createSpacetimeGroups();
         } catch (e) {
@@ -353,6 +355,8 @@ export default class GPURenderer {
                 coneGroup: group(p.cone, 'spacetimeCone', line),
                 bosonGroup: group(p.boson, 'spacetimeBosons', [[6, b.photonPool], [7, b.phCount], [8, b.pionPool], [9, b.piCount], [10, fs]]),
                 pierceGroup: group(p.pierce, 'spacetimePierce', [...line, [5, b.color], [11, b.particleAux]]),
+                future: p.future,
+                futureGroup: group(p.future, 'spacetimeFuture', [[3, b.wlMeta], [4, b.particleState], [5, b.color], [10, fs], [20, b.curves], [21, b.prescribedList]]),
                 eventGroup: group(p.event, 'spacetimeEvents', [[5, b.color], [19, lists.events]]),
                 keepGroup: group(p.keep, 'lineKeep', [...line, [12, lists.bits], [13, lists.counts]]),
                 scanGroup: group(p.scan, 'lineScan', [[13, lists.counts], [14, lists.offsets], [15, lists.args], [17, lists.events]], [[1, this._spacetimeUniformBuffer]]),
@@ -365,7 +369,7 @@ export default class GPURenderer {
      * Write the spacetime view's uniforms and record, ahead of the scene's render pass, the
      * passes that decimate the world lines into the lists vs_line and vs_event draw: on screen
      * most samples are a fraction of a pixel apart. `st` carries the view's state: { tilt,
-     * depth, beadStep, tNow, selected, topology, scaleA, obs, pierce, trails }
+     * depth, beadStep, tNow, selected, topology, scaleA, obs, pierce, trails, future, prescribed }
      * (src/spacetime.js observer()).
      */
     _encodeSpacetime(encoder, st, slots) {
@@ -401,6 +405,7 @@ export default class GPURenderer {
         // an observer's coordinates shift heights by the lag, so they draw the whole ring
         const window = o.active ? 0 : Math.min(WORLDLINE_LEN, Math.ceil(st.depth / WORLDLINE_DT) + 2);
         _spacetimeU32[27] = window;
+        _spacetimeF32[28] = st.prescribed > 0 ? st.future : 0;
         this.device.queue.writeBuffer(this._spacetimeUniformBuffer, 0, _spacetimeData);
         if (slots > 0 && _linesShown(st)) {
             encoder.clearBuffer(sp.counts, 0, slots * 4);
@@ -441,6 +446,11 @@ export default class GPURenderer {
                 pass.setBindGroup(0, sp.eventGroup);
                 pass.drawIndirect(sp.args, 16);
             }
+        }
+        if (st.prescribed > 0 && st.future > 0) {
+            pass.setPipeline(sp.future);
+            pass.setBindGroup(0, sp.futureGroup);
+            pass.draw(6 * FUTURE_SEGS, st.prescribed);
         }
         if (st.pierce && slots > 0) {
             pass.setPipeline(sp.pierce);

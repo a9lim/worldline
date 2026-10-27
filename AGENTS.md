@@ -83,6 +83,7 @@ src/overlay.js           the 2D canvas above the GPU canvas: the field atlas, sp
                          the spacetime box with its dimension line and presents
 src/field-atlas.js       the Fields overlay's contours and field lines, from the heatmap readback
 src/presets.js           six curated figures (PRESET_ORDER): data, knobs, a spawn, and an optional tick
+src/prescribed.js        prescribed world lines' curves: evaluation, packing for the GPU
 src/quench.js            the Higgs quench: startQuench(), measureHiggs(), the Measure tab's Quench section
 src/cosmology.js         the scale factor a(t): schedules, the Friedmann closure, horizons
 src/cosmology-panel.js   the Measure tab's expansion readouts and the overlay's horizons
@@ -195,7 +196,8 @@ field step) and the later body passes skip when none is alive, while the fields 
 go on. `_dispatchSubstep()` lists the order in its pass comments: forces, external and
 field forces come before the fused kick–rotate–kick, then spin-orbit and torques,
 radiation, drift, clocks, the 1PN velocity-Verlet correction, the field step,
-collisions, extremal shedding, bosons, the boundary, and the world lines (a sample whenever
+collisions, extremal shedding, bosons, the boundary, the prescribed bodies put back on their
+curves (Prescribed bodies, below), and the world lines (a sample whenever
 the world-line clock crosses the next `WORLDLINE_DT` mark, else merge breaks and death
 snapshots only). After the substeps, once per frame: the expansion (below), the pool
 culls, the pools' compaction, pion decay, boson interaction, the pending radiation of bodies that died
@@ -430,6 +432,43 @@ created at `−∞` and act at once.
 - **Continuity.** An inelastic merge keeps the heavier parent's slot, so its τ and θ
   carry on.
 
+### Prescribed bodies
+
+A prescribed body's world line is given, not computed (roadmap §6.2): it sources every law like
+any body, responds to nothing, and the agent that drives it pays. The curves (`src/prescribed.js`,
+evaluated again in `shared-prescribed.wgsl`, which must agree with it) are uniform motion, the
+hyperbola (constant proper acceleration, the whole hyperbola about its corner), the circle, the
+linear oscillation (its proper time an elliptic integral, by Gauss–Legendre panels), and the
+shuttle (out at v and back, turning at proper acceleration α, forever: the twin's traveller). A
+curve is a plain object with `t0` on the world-line clock and `tau0`, its proper time then.
+
+- **The pass** (`prescribed.wgsl`, one workgroup over `buffers.prescribedList`, at most
+  `PRESCRIBED_CAP` (256)): after everything else in a substep that moves a body and before the
+  world lines record it, each prescribed body is put back on its curve at the substep's end:
+  position (through its deck, so on a torus the curve lives on the covering plane), proper
+  velocity, `totalForce` = the curve's m·dw/dt (which `worldline.wgsl` records as the sample's
+  acceleration, without Boris's rotation or the Hubble drag, so the Liénard–Wiechert field is the
+  field of the motion drawn), and its clock: the curve's proper time, exact and flat
+  (`clocks.wgsl` skips these bodies), with the spoke turning and precessing by Thomas's term of the
+  curve's whole acceleration.
+- **What it ignores** (`FLAG_PRESCRIBED`): it doesn't radiate away energy (Larmor, Hawking, pion
+  emission, Schwinger), absorb bosons, shed charge, collide, merge or get captured; bodies pass
+  through it. Its mass follows the Higgs like any body's. Walls and the despawn edge act as for any
+  body; on a torus the boundary moves its deck.
+- **The agent's books.** What a substep did to the body (every force, an external field) the pass
+  undoes, so the agent adds the curve's four-momentum minus the state the substep left, summed
+  into `buffers.agentAccum` and read and cleared with the stats (words 104–106) into
+  `ledger.agentE`, `agentPx`, `agentPy`. Over a run that is W = Δ(γm) − ∫F_other·v dt. The Measure
+  tab shows it as the work by prescribed motion, and the drifts subtract it.
+- **Its past and future.** `addPrescribed(curve, opts)` (`GPUPhysics`, `Simulation`) starts the
+  body where its curve is now. A figure's prescribed bodies are born at −∞ and get their curve's
+  past written into the ring, a sample every `WORLDLINE_DT` (`_writePast`), so they act at once
+  with the field of their whole recorded motion; one added later is born now. Its future is
+  known, and the spacetime view draws it (below). Saves keep the curve with t0 relative to the
+  save's time; the epoch rebase rewrites every curve's GPU t0.
+- **Contract** (roadmap §6.1): flat and open first. A prescribed past isn't written in an
+  expanding universe, where a curve would be read in comoving coordinates and conformal time.
+
 ### The spacetime view
 
 The canvas tilts from the plane into the world lines it shows (`spacetime.js`,
@@ -445,8 +484,9 @@ and Spacetime buttons, ease between the two (`EL_SPACETIME` ≈ 30°).
 
 - **Depth.** The time shown below the plane is `DEPTH_FRACTION` (1.2) of the visible plane's
   height, or a preset's `minDepth` if that is more (the twin asks for the whole reach, so
-  its round trip of about 109 shows whole as it ends), capped by the world lines' reach
-  (127); the fit `k` shrinks the scene so the plane and its past share the screen.
+  its round trip, about 89 at 0.8c and 126 at the knob's least 0.55c, shows whole), capped by the
+  world lines' reach (127); the fit `k` shrinks the scene so the plane, its past and any known
+  future share the screen.
 - **World lines** (`vs_line`): the history ring's samples (in the lab's coordinates only the
   newest depth / `WORLDLINE_DT`, `SpacetimeParams.lineWindow`, since older ones have faded
   out), mapped from the cover through the slot's deck and on a periodic domain to the image
@@ -484,6 +524,12 @@ and Spacetime buttons, ease between the two (`EL_SPACETIME` ≈ 30°).
   every sample in the window for them each frame and `lineWrite` lists them (up to 64 a slot
   of the store on average) for one instanced draw; 3.0's event log (`docs/ROADMAP.md` §7.1)
   would draw logged events instead.
+- **The known future** (`vs_future`, `fs_future`): a prescribed body's curve above the present,
+  `FUTURE_FRACTION` (0.25) of the depth, each of `FUTURE_SEGS` segments its own quad (one that
+  jumps a seam isn't drawn), dashed in proper time (four dashes to a bead, solid where they would
+  fall under 6 px), its beads hollow, fading as it rises; seen from above, the path ahead. Free
+  bodies' futures stay blank. `SpacetimeView.future()` makes room for it in the fit while a
+  prescribed body exists.
 - **The sheet of the present.** In the lab's coordinates, world lines and light that pass
   under the tilted plane's fill are drawn at `SEEN` (0.45) (`underSheet()`).
 - **The plane and box.** `grid-render.wgsl` keeps the rulers to the domain and gives it a faint

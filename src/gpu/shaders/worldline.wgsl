@@ -61,11 +61,14 @@ fn writeCurrent(i: u32) {
     let relOn = (u.toggles0 & RELATIVITY_BIT) != 0u;
     let v = w / select(1.0, gammaFromW(w), relOn);
     var dwdt = af.totalForce;
+    // A prescribed body's totalForce is its curve's m·dw/dt (prescribed.wgsl), Boris's rotation
+    // and the Hubble drag included
+    let free = (p.flags & FLAG_PRESCRIBED) == 0u;
     let rot = vec2<f32>(v.y, -v.x); // v × ẑ
-    if ((u.toggles0 & MAGNETIC_BIT) != 0u || u.extBz != 0.0) { dwdt += p.charge * af.bFields.x * rot; }
-    if ((u.toggles0 & GRAVITOMAG_BIT) != 0u) { dwdt += 4.0 * p.mass * af.bFields.y * rot; }
+    if (free && ((u.toggles0 & MAGNETIC_BIT) != 0u || u.extBz != 0.0)) { dwdt += p.charge * af.bFields.x * rot; }
+    if (free && (u.toggles0 & GRAVITOMAG_BIT) != 0u) { dwdt += 4.0 * p.mass * af.bFields.y * rot; }
     dwdt /= max(p.mass, EPSILON);
-    dwdt -= u.hubble * w;
+    if (free) { dwdt -= u.hubble * w; }
     let c = clocks[i];
 
     // Onto the cover, comoving; a mirror reverses θ's sense and angw's sign
