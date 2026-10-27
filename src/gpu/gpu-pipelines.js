@@ -9,7 +9,7 @@
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 217;
+const SHADER_VERSION = 223;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -2095,5 +2095,7 @@ export async function createSpacetimeRenderPipelines(device, format, wgslConstan
         tickRing: make('spacetimeTickRing', 'vs_tickRing'),
         tickRay: make('spacetimeTickRay', 'vs_tickRay'),
         tickMark: make('spacetimeTickMark', 'vs_tickMark', 'fs_pierce'),
+        simulTrace: compute('simulTrace'),
+        simul: make('spacetimeSimul', 'vs_simul', 'fs_simul'),
     };
 }

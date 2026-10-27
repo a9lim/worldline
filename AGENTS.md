@@ -553,6 +553,19 @@ and Spacetime buttons, ease between the two (`EL_SPACETIME` ≈ 30°).
   and a mark there. A prescribed receiver's reception still to come is found on its curve, above
   the present. On the twin the receptions read the k-calculus: kT apart going out, T/k coming back.
   The light interacts with nothing; it is the tick seen.
+- **Simultaneity at the ticks** (`simulTrace`, `vs_simul`; roadmap §6.4): beside each tick's light,
+  its two nows on every other world line, under the same conditions on an open domain: the rest
+  frame's plane t − t_k = u_k·(x − x_k), a straight dashed chord, and radar time's surface, a solid
+  trace. The rays and the rest-frame plane share one search on the receiver's line (`crossingOf`,
+  a `Probe` rising along any timelike line, its known future included); the radar event is where
+  the selected body's radar time `radarTime()` (by bisection on its curve when prescribed, else on
+  its samples, so a free body's radar events appear once their light has come back) reaches τ_k,
+  and the trace's points stand over the straight path between them, each bisected in t between
+  the tick's two light cones. `simulTrace`, a compute pass of a workgroup per tick and receiver,
+  solves them into `simul` (`SIM_PTS` (17) points and the rest frame's event) before the scene's
+  render pass, about 0.12 ms at 24 bodies. For a uniformly moving body they coincide; on the twin
+  the rest frame's sweep across home's line at the turn while radar's carry home's time on at
+  between 1/k and k.
 - **The sheet of the present.** In the lab's coordinates, world lines and light that pass
   under the tilted plane's fill are drawn at `SEEN` (0.45) (`underSheet()`).
 - **The plane and box.** `grid-render.wgsl` keeps the rulers to the domain and gives it a faint
@@ -615,8 +628,11 @@ readouts are on the Measure tab.
   `FrameState.omega` carries α and `phi` the direction. Tilted, `vs_horizon` hatches the two null
   planes through the corner, (x − c)·n̂ = ±(t − t_c), and draws the corner line, which lies on every
   one of its slices. Every lab-static body eventually crosses its future horizon, so the scene
-  leaves it within a few 1/α; choosing it again starts it at rest. Seen and the streak plate follow
-  it along the hyperbola.
+  leaves it within a few 1/α; choosing it again starts it at rest. On its slices a body fades with
+  the frame's lapse αξ there (ξ its Rindler distance from the corner, written into `viewClocks.w`,
+  which `particle.wgsl` reads in a frame's view): toward the horizon, where its clock freezes, and
+  faint beyond both horizons, behind the corner. Tilted, what lies past the future horizon is ahead
+  of every slice, so it is already faint. Seen and the streak plate follow it along the hyperbola.
 - **Radar** (`src/radar.js`, roadmap §6.4): the Measure tab's "red body by radar" gives the selected
   body's radar time (τ₁ + τ₂)/2 and distance (τ₂ − τ₁)/2 for the observer, at the event the scene
   snapshot read it at (`sim.scene.t`): τ₁ when the observer's light leaves to reach it, τ₂ when its
@@ -659,7 +675,17 @@ readouts are on the Measure tab.
   observer may be at rest: an eye at the camera's centre. Tilted, the observer's past cone is
   drawn (to half the domain's diagonal, in the ink unless the observer is the red body), each
   world line's pierce of it ringed (`conePierceOf`), and the light in flight from each pierce to
-  the observer (`vs_seenRay`). Point sources: a fast body's seen outline (Terrell) is §6.9's.
+  the observer (`vs_seenRay`).
+- **Extended bodies under Seen** (`particle.wgsl`, roadmap §6.9): each point of a body is drawn
+  at its own retarded time. The observer sits at the view's origin receiving now, so the drawing's
+  point X is seen as it was |X| ago, and with the body moving uniformly at v over that while, it is
+  the body's lab offset X − X_c − v·Δt (Δt = |X_c| − |X|) from the centre the slicer found,
+  at rest-frame time γ(Δt − v·(X − X_c)) from it: the outline, spoke and clock face follow. A body
+  approaching head-on is stretched by √((1 + v)/(1 − v)) along the line of sight, one receding
+  squeezed by its inverse, one crossing turned, and a spinning one's spoke curls by the light's
+  delay across it. The quad is the box around where 16 rim points are seen (`seenAt()`, the cone's
+  quadratic), and the selection ring takes the same map (`ring-render.wgsl`). The camera uniforms'
+  former spare word is `seen`.
 - **The streak plate** (`src/streak.js`, `streakRows` in `frame-slice.wgsl`, roadmap §6.5): under
   Seen, a band under the scene. Row k is the reception event k·dTau of the observer's proper time
   back (128 rows over the spacetime view's depth, now at the top); for each of the first
@@ -669,7 +695,8 @@ readouts are on the Measure tab.
   render and they are read back and drawn with Canvas 2D: each source a track in its ink (the
   selection's in the accent), its width reading D⁴ (bolometric intensity), solid while approaching
   (D ≥ 1) and dashed while receding. A track ends where the source's or the observer's history
-  runs out. Real light (pool photons arriving) isn't on it yet.
+  runs out. Real light, the quanta that reach the observer, waits for 3.0's event log: for a body
+  observer an arrival is an absorption (`EV_ABSORB`), and a point eye catches none.
 - **What frames skip:** force and velocity arrows, torque arcs, the heatmap and the field
   overlays stay lab-only and are hidden in a frame; a frame that is not a boost draws no
   world lines.

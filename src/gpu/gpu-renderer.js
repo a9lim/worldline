@@ -16,6 +16,7 @@ import { HEATMAP_SENSITIVITY, HEATMAP_MAX_ALPHA, GPU_MAX_PHOTONS, GPU_MAX_PIONS,
 const FUTURE_SEGS = 96;   // the known future's segments (spacetime-render.wgsl)
 const TICKS = 32;         // ticks' light: the newest ticks drawn, and the bodies that receive them
 const TICK_RECEIVERS = 24;
+const SIM_STRIDE = 18;    // simultaneity at the ticks: a radar trace's points and the rest frame's event
 
 // Pre-allocated typed arrays for per-frame writeBuffer calls (eliminate GC pressure)
 const _cameraData = new ArrayBuffer(256);
@@ -47,6 +48,9 @@ const LINE_CHUNKS = WORLDLINE_LEN / 32;
 const LINE_WORDS = WORLDLINE_LEN / 32 + 1;
 // Seen from above, the world lines are the plane view's trails (vs_line's show)
 const _linesShown = (st) => Math.max(st.tilt, st.trails ? 1 : 0) >= 0.002;
+// The selected body's simultaneity at its ticks: tilted, on an open domain, in a small scene
+const _simulShown = (st, slots) => st.selected >= 0 && st.tilt >= 0.05 && st.topology < 0
+    && slots > 1 && slots <= TICK_RECEIVERS;
 
 // Palette-derived colors (computed once at module load from _PALETTE)
 const _PAL = window._PALETTE;
@@ -190,6 +194,7 @@ export default class GPURenderer {
         this.lensBuffers = null;  // GPUPhysics' lens map (set before init()); this.lens per frame
         this.lens = null;
         this.frameImages = 1;
+        this.seen = false;          // under Seen: bodies drawn as seen, each point at its own retarded time
         this.showGrid = true;
         this.periodic = false;
         this._gridReady = false;
@@ -347,6 +352,7 @@ export default class GPURenderer {
                 args: buf('lineArgs', 48, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT),
                 verts: buf('lineVerts', cap * (WORLDLINE_LEN + 1) * 32),
                 events: buf('lineEvents', cap * 64 * 16),
+                simul: buf('simul', TICKS * TICK_RECEIVERS * SIM_STRIDE * 16, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC),
             };
             const fs = this.frameBuffers.frameState;
             const line = [[2, b.wlData], [3, b.wlMeta], [4, b.particleState], [10, fs]];
@@ -367,6 +373,9 @@ export default class GPURenderer {
                 tickRingGroup: group(p.tickRing, 'spacetimeTickRing', line),
                 tickRayGroup: group(p.tickRay, 'spacetimeTickRay', [...line, [20, b.curves]]),
                 tickMarkGroup: group(p.tickMark, 'spacetimeTickMark', [...line, [20, b.curves]]),
+                simulTrace: p.simulTrace, simul: p.simul,
+                simulTraceGroup: group(p.simulTrace, 'simulTrace', [...line, [20, b.curves], [22, lists.simul]], [[1, this._spacetimeUniformBuffer]]),
+                simulGroup: group(p.simul, 'spacetimeSimul', [[10, fs], [23, lists.simul]]),
                 eventGroup: group(p.event, 'spacetimeEvents', [[5, b.color], [19, lists.events]]),
                 keepGroup: group(p.keep, 'lineKeep', [...line, [12, lists.bits], [13, lists.counts]]),
                 scanGroup: group(p.scan, 'lineScan', [[13, lists.counts], [14, lists.offsets], [15, lists.args], [17, lists.events]], [[1, this._spacetimeUniformBuffer]]),
@@ -432,6 +441,13 @@ export default class GPURenderer {
             pass.dispatchWorkgroupsIndirect(sp.args, 32);
             pass.end();
         }
+        if (_simulShown(st, slots)) {
+            const pass = encoder.beginComputePass({ label: 'simulTrace' });
+            pass.setPipeline(sp.simulTrace);
+            pass.setBindGroup(0, sp.simulTraceGroup);
+            pass.dispatchWorkgroups(TICKS * TICK_RECEIVERS);
+            pass.end();
+        }
     }
 
     /**
@@ -473,6 +489,12 @@ export default class GPURenderer {
                 pass.setPipeline(sp.tickMark);
                 pass.setBindGroup(0, sp.tickMarkGroup);
                 pass.draw(4, TICKS * TICK_RECEIVERS);
+            }
+            // And each tick's simultaneity on the other world lines: the rest frame's, radar's
+            if (_simulShown(st, slots)) {
+                pass.setPipeline(sp.simul);
+                pass.setBindGroup(0, sp.simulGroup);
+                pass.draw(2 * (SIM_STRIDE - 1), TICKS * TICK_RECEIVERS * 2);
             }
         }
         if (st.prescribed > 0 && st.future > 0) {
@@ -782,7 +804,7 @@ export default class GPURenderer {
         f[35] = this.isLight ? 0.0 : 1.0;
         f[36] = this.relativityOn ? 1.0 : 0.0;
         f[37] = this.blackHoleOn ? 1.0 : 0.0;
-        f[38] = 0;   // unused
+        f[38] = this.frameOn && this.seen ? 1.0 : 0.0;
         f[39] = this.frameOn ? 1.0 : 0.0;
         f[40] = this.frameImages;
         f[41] = this.dpr;

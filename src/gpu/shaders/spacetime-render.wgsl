@@ -44,6 +44,9 @@
 //              where it crosses the present, a ring growing at c from each tick
 //   vs_tickRay TICKS·RECEIVERS × 4, triangle strip: tilted, the null ray from each tick to where
 //              its light reaches another world line; vs_tickMark × 4 marks that event
+//   vs_simul   TICKS·RECEIVERS·2 × 2·SIM_PTS, triangle strip: tilted, each tick's simultaneity on
+//              each other world line, the rest frame's chord dashed and the radar surface's trace
+//              solid (simulTrace solves them first, a compute pass)
 //
 // In lab coordinates, lines below the sheet of the present are seen through it, lighter.
 //
@@ -1531,30 +1534,50 @@ fn tickOf(sel: u32, l: Line, k: u32) -> Tick {
     return out;
 }
 
-/** Where tick e's light meets slot j's world line: in its recorded past, or a prescribed body's
+/**
+ * What a tick asks of each point of another world line, a function that rises along any timelike
+ * line: PROBE_LIGHT, has the tick's light reached it; PROBE_REST, is it past the tick's
+ * rest-frame plane t − t_k = u·(x − x_k); PROBE_RADAR, is its radar time past the tick's.
+ */
+const PROBE_LIGHT: u32 = 0u;
+const PROBE_REST: u32 = 1u;
+const PROBE_RADAR: u32 = 2u;
+
+struct Probe {
+    mode: u32,
+    e: LinePoint,       // the tick
+    u: vec2<f32>,       // the body's velocity there (PROBE_REST)
+};
+
+fn probeG(pr: Probe, p: LinePoint) -> f32 {
+    switch pr.mode {
+        case 0u: { return (p.t - pr.e.t) - length(p.pos - pr.e.pos); }
+        case 1u: { return (p.t - pr.e.t) - dot(pr.u, p.pos - pr.e.pos); }
+        default: { return radarTime(p) - pr.e.tau; }
+    }
+}
+
+/** Where probe pr crosses slot j's world line: in its recorded past, or on a prescribed body's
  *  known future up to params.future. */
-fn receptionOf(e: LinePoint, j: u32, o: Obs) -> Tick {
+fn crossingOf(pr: Probe, j: u32, o: Obs) -> Tick {
     var out: Tick;
     out.ok = false;
     let l = lineOf(j, o);
     if (!l.ok || !l.alive) { return out; }
     let last = pointOf(j, l, l.n - 1u);
-    let hLast = (last.t - e.t) - length(last.pos - e.pos);
-    if (hLast >= 0.0) {
+    if (probeG(pr, last) >= 0.0) {
         var lo = 0u;
         var hi = l.n - 1u;
-        let first = pointOf(j, l, 0u);
-        if ((first.t - e.t) - length(first.pos - e.pos) >= 0.0) { return out; }
+        if (probeG(pr, pointOf(j, l, 0u)) >= 0.0) { return out; }
         for (var it = 0; it < 12; it++) {
             if (hi - lo <= 1u) { break; }
             let mid = (lo + hi) >> 1u;
-            let p = pointOf(j, l, mid);
-            if ((p.t - e.t) - length(p.pos - e.pos) < 0.0) { lo = mid; } else { hi = mid; }
+            if (probeG(pr, pointOf(j, l, mid)) < 0.0) { lo = mid; } else { hi = mid; }
         }
         let a = pointOf(j, l, lo);
         let b = pointOf(j, l, hi);
-        let ha = (a.t - e.t) - length(a.pos - e.pos);
-        let hb = (b.t - e.t) - length(b.pos - e.pos);
+        let ha = probeG(pr, a);
+        let hb = probeG(pr, b);
         let k = select(0.0, clamp(ha / (ha - hb), 0.0, 1.0), abs(ha - hb) > 1e-9);
         out.e.pos = mix(a.pos, b.pos, k);
         out.e.t = mix(a.t, b.t, k);
@@ -1569,12 +1592,10 @@ fn receptionOf(e: LinePoint, j: u32, o: Obs) -> Tick {
     if (c.kind == CURVE_HELD) { return out; }
     var lo = params.tNow;
     var hi = params.tNow + params.future;
-    let pHi = futurePoint(c, l.deck, hi, l.anchor);
-    if ((pHi.t - e.t) - length(pHi.pos - e.pos) < 0.0) { return out; }
+    if (probeG(pr, futurePoint(c, l.deck, hi, l.anchor)) < 0.0) { return out; }
     for (var it = 0; it < 24; it++) {
         let mid = 0.5 * (lo + hi);
-        let p = futurePoint(c, l.deck, mid, l.anchor);
-        if ((p.t - e.t) - length(p.pos - e.pos) < 0.0) { lo = mid; } else { hi = mid; }
+        if (probeG(pr, futurePoint(c, l.deck, mid, l.anchor)) < 0.0) { lo = mid; } else { hi = mid; }
     }
     out.e = futurePoint(c, l.deck, hi, l.anchor);
     out.ok = true;
@@ -1651,7 +1672,10 @@ fn vs_tickRay(@builtin(vertex_index) vid: u32, @builtin(instance_index) idx: u32
     if (j == params.selected || j >= params.maxParticles) { return collapsed(); }
     let tk = tickOf(params.selected, l, idx / RECEIVERS);
     if (!tk.ok) { return collapsed(); }
-    let r = receptionOf(tk.e, j, o);
+    var pr: Probe;
+    pr.mode = PROBE_LIGHT;
+    pr.e = tk.e;
+    let r = crossingOf(pr, j, o);
     if (!r.ok) { return collapsed(); }
     let c0 = projectEvent(o, tk.e.pos, tk.e.t);
     let c1 = projectEvent(o, r.e.pos, r.e.t);
@@ -1685,7 +1709,10 @@ fn vs_tickMark(@builtin(vertex_index) vid: u32, @builtin(instance_index) idx: u3
     if (j == params.selected || j >= params.maxParticles) { return out; }
     let tk = tickOf(params.selected, l, idx / RECEIVERS);
     if (!tk.ok) { return out; }
-    let r = receptionOf(tk.e, j, o);
+    var pr: Probe;
+    pr.mode = PROBE_LIGHT;
+    pr.e = tk.e;
+    let r = crossingOf(pr, j, o);
     if (!r.ok) { return out; }
     let corner = vec2(select(-1.0, 1.0, (vid & 1u) != 0u), select(-1.0, 1.0, (vid & 2u) != 0u));
     let R = 2.2;
@@ -1694,6 +1721,250 @@ fn vs_tickMark(@builtin(vertex_index) vid: u32, @builtin(instance_index) idx: u3
     out.px = R;
     out.color = vec4(accent(), 0.9 * params.tilt);
     return out;
+}
+
+// ─── Simultaneity at the ticks (roadmap §6.4) ───
+// Each of the selected body's ticks has two nows on every other world line: its rest frame's,
+// the plane t − t_k = u_k·(x − x_k), and radar's, the events whose radar time (τ₁ + τ₂)/2 is the
+// tick's, τ₁ when the body's light leaves to reach the event and τ₂ when the event's light comes
+// back. Tilted, from each tick to each other world line, as for its light: the rest frame's chord
+// straight and dashed, and the radar surface's trace solid, over the straight path between the
+// tick and the event it reaches (each point between the tick's light cones, where radar time
+// rises with t). They agree for a body that moves uniformly; for the travelling twin the rest
+// frame's sweep across home's line at the turn, and radar's stay even. Radar needs the body's
+// future: a prescribed body's curve has it, and a free body's radar events appear once their
+// light has come back. An open domain only (§6.1).
+//
+// simulTrace, a workgroup per tick and receiver, solves them into simul once a frame: SIM_PTS
+// points of the radar trace (x, y, t, 1), the tick first and the event last, then the rest
+// frame's event; w = 0 where there is none. vs_simul draws them.
+
+const SIM_PTS: u32 = 17u;
+const SIM_STRIDE: u32 = 18u;    // SIM_PTS, then the rest frame's event
+const BIG: f32 = 1e30;
+
+@group(0) @binding(22) var<storage, read_write> simulOut: array<vec4<f32>>;
+@group(0) @binding(23) var<storage, read> simul: array<vec4<f32>>;
+
+/** The selected body as the observer whose radar time is taken: its curve when prescribed (its
+ *  whole line, the future too), else its recorded line. */
+struct ObsLine {
+    known: bool,
+    c: Curve,
+    l: Line,
+};
+
+var<private> obsLine: ObsLine;
+
+fn obsLineOf(l: Line) -> ObsLine {
+    var ol: ObsLine;
+    ol.l = l;
+    ol.known = false;
+    let sel = params.selected;
+    if ((particles[sel].flags & FLAG_PRESCRIBED) != 0u) {
+        let cb = sel * CURVE_VEC4S;
+        ol.c = curveFrom(curves[cb], curves[cb + 1u], curves[cb + 2u], curves[cb + 3u]);
+        ol.known = ol.c.kind != CURVE_HELD;
+    }
+    return ol;
+}
+
+/**
+ * The selected body's radar time of event p, (τ₁ + τ₂)/2: on its curve by bisection, or on its
+ * recorded samples. −BIG when even its oldest light reaches p too late (τ₁ before its history),
+ * BIG while p's light hasn't come back (τ₂ still to come).
+ */
+fn radarTime(p: LinePoint) -> f32 {
+    if (obsLine.known) {
+        let reach = params.depth + params.future + params.domainW + params.domainH;
+        var lo = p.t - reach;
+        var hi = p.t;
+        for (var it = 0; it < 24; it++) {
+            let mid = 0.5 * (lo + hi);
+            let q = futurePoint(obsLine.c, obsLine.l.deck, mid, obsLine.l.anchor);
+            if ((p.t - q.t) - length(q.pos - p.pos) >= 0.0) { lo = mid; } else { hi = mid; }
+        }
+        let tau1 = futurePoint(obsLine.c, obsLine.l.deck, 0.5 * (lo + hi), obsLine.l.anchor).tau;
+        lo = p.t;
+        hi = p.t + reach;
+        for (var it = 0; it < 24; it++) {
+            let mid = 0.5 * (lo + hi);
+            let q = futurePoint(obsLine.c, obsLine.l.deck, mid, obsLine.l.anchor);
+            if ((q.t - p.t) - length(q.pos - p.pos) < 0.0) { lo = mid; } else { hi = mid; }
+        }
+        let tau2 = futurePoint(obsLine.c, obsLine.l.deck, 0.5 * (lo + hi), obsLine.l.anchor).tau;
+        return 0.5 * (tau1 + tau2);
+    }
+    let s = params.selected;
+    let l = obsLine.l;
+    let first = pointOf(s, l, 0u);
+    let last = pointOf(s, l, l.n - 1u);
+    if ((p.t - first.t) - length(first.pos - p.pos) < 0.0) { return -BIG; }
+    if ((last.t - p.t) - length(last.pos - p.pos) < 0.0) { return BIG; }
+    // τ₁: (t_p − t) − |x(t) − x_p| falls along the line
+    var lo = 0u;
+    var hi = l.n - 1u;
+    for (var it = 0; it < 12; it++) {
+        if (hi - lo <= 1u) { break; }
+        let mid = (lo + hi) >> 1u;
+        let q = pointOf(s, l, mid);
+        if ((p.t - q.t) - length(q.pos - p.pos) >= 0.0) { lo = mid; } else { hi = mid; }
+    }
+    var a = pointOf(s, l, lo);
+    var b = pointOf(s, l, hi);
+    var fa = (p.t - a.t) - length(a.pos - p.pos);
+    var fb = (p.t - b.t) - length(b.pos - p.pos);
+    let tau1 = mix(a.tau, b.tau, select(0.0, clamp(fa / (fa - fb), 0.0, 1.0), abs(fa - fb) > 1e-9));
+    // τ₂: (t − t_p) − |x(t) − x_p| rises along it
+    lo = 0u;
+    hi = l.n - 1u;
+    for (var it = 0; it < 12; it++) {
+        if (hi - lo <= 1u) { break; }
+        let mid = (lo + hi) >> 1u;
+        let q = pointOf(s, l, mid);
+        if ((q.t - p.t) - length(q.pos - p.pos) < 0.0) { lo = mid; } else { hi = mid; }
+    }
+    a = pointOf(s, l, lo);
+    b = pointOf(s, l, hi);
+    fa = (a.t - p.t) - length(a.pos - p.pos);
+    fb = (b.t - p.t) - length(b.pos - p.pos);
+    let tau2 = mix(a.tau, b.tau, select(0.0, clamp(fa / (fa - fb), 0.0, 1.0), abs(fa - fb) > 1e-9));
+    return 0.5 * (tau1 + tau2);
+}
+
+/** The selected body's velocity at lab time t: its curve's, or between its samples there. */
+fn obsVelocity(t: f32) -> vec2<f32> {
+    if (obsLine.known) {
+        let w = curveAt(obsLine.c, t).w;
+        return obsLine.l.deck.xy * w * inverseSqrt(1.0 + dot(w, w));
+    }
+    let s = params.selected;
+    let l = obsLine.l;
+    var lo = 0u;
+    var hi = l.n - 1u;
+    for (var it = 0; it < 12; it++) {
+        if (hi - lo <= 1u) { break; }
+        let mid = (lo + hi) >> 1u;
+        if (pointOf(s, l, mid).t <= t) { lo = mid; } else { hi = mid; }
+    }
+    let a = pointOf(s, l, lo);
+    let b = pointOf(s, l, hi);
+    return (b.pos - a.pos) / max(b.t - a.t, 1e-6);
+}
+
+// The tick (x, y, t, 1), the radar event, the rest frame's event, and (τ_k, 0, 0, 0)
+var<workgroup> wgEnds: array<vec4<f32>, 4>;
+
+@compute @workgroup_size(32)
+fn simulTrace(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) i: u32) {
+    let chord = wg.x;
+    let k = chord / RECEIVERS;
+    let j = chord % RECEIVERS;
+    let o = observer();
+    let l = tickLine(o);
+    if (l.ok) { obsLine = obsLineOf(l); }
+    if (i == 0u) {
+        var ends = array<vec4<f32>, 4>(vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0));
+        if (l.ok && params.topology < 0 && j != params.selected && j < params.maxParticles) {
+            let tk = tickOf(params.selected, l, k);
+            if (tk.ok) {
+                ends[0] = vec4(tk.e.pos, tk.e.t, 1.0);
+                ends[3] = vec4(tk.e.tau, 0.0, 0.0, 0.0);
+                var pr: Probe;
+                pr.e = tk.e;
+                pr.mode = PROBE_RADAR;
+                let radar = crossingOf(pr, j, o);
+                if (radar.ok) { ends[1] = vec4(radar.e.pos, radar.e.t, 1.0); }
+                pr.mode = PROBE_REST;
+                pr.u = obsVelocity(tk.e.t);
+                let rest = crossingOf(pr, j, o);
+                if (rest.ok) { ends[2] = vec4(rest.e.pos, rest.e.t, 1.0); }
+            }
+        }
+        wgEnds = ends;
+    }
+    let ends = workgroupUniformLoad(&wgEnds);
+    if (i >= SIM_STRIDE) { return; }
+    let at = chord * SIM_STRIDE + i;
+    if (i == SIM_PTS) { simulOut[at] = select(vec4(0.0), ends[2], ends[0].w > 0.5); return; }
+    if (ends[0].w < 0.5 || ends[1].w < 0.5) { simulOut[at] = vec4(0.0); return; }
+    if (i == 0u) { simulOut[at] = ends[0]; return; }
+    if (i == SIM_PTS - 1u) { simulOut[at] = ends[1]; return; }
+    // Above a point P between the tick and the event: the tick's past cone there has radar time
+    // under τ_k (its light reaches the body at the tick) and its future cone over it
+    let P = mix(ends[0].xy, ends[1].xy, f32(i) / f32(SIM_PTS - 1u));
+    let D = length(P - ends[0].xy);
+    var lo = ends[0].z - D;
+    var hi = ends[0].z + D;
+    var p: LinePoint;
+    p.pos = P;
+    for (var it = 0; it < 24; it++) {
+        p.t = 0.5 * (lo + hi);
+        if (radarTime(p) < ends[3].x) { lo = p.t; } else { hi = p.t; }
+    }
+    simulOut[at] = vec4(P, 0.5 * (lo + hi), 1.0);
+}
+
+struct SOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec4<f32>,
+    @location(1) across: f32,
+    @location(2) along: f32,                        // px from the tick
+    @location(3) @interpolate(flat) dashed: f32,
+};
+
+/** Point i of a chord: the radar trace's, or the rest frame's straight chord's. */
+fn simulPoint(base: u32, radar: bool, i: u32) -> vec3<f32> {
+    if (radar) { return simul[base + i].xyz; }
+    return mix(simul[base].xyz, simul[base + SIM_PTS].xyz, f32(i) / f32(SIM_PTS - 1u));
+}
+
+@vertex
+fn vs_simul(@builtin(vertex_index) vid: u32, @builtin(instance_index) idx: u32) -> SOut {
+    var out: SOut;
+    out.position = vec4(0.0, 0.0, 0.0, 1.0);
+    out.color = vec4(0.0);
+    out.across = 0.0;
+    out.along = 0.0;
+    out.dashed = 0.0;
+    if (params.tilt < 0.05) { return out; }
+    let radar = (idx & 1u) == 1u;
+    let base = (idx >> 1u) * SIM_STRIDE;
+    if (simul[base].w < 0.5) { return out; }
+    if (radar) {
+        for (var i = 1u; i < SIM_PTS; i++) { if (simul[base + i].w < 0.5) { return out; } }
+    } else if (simul[base + SIM_PTS].w < 0.5) { return out; }
+    let o = observer();
+    let i = vid >> 1u;
+    let p = simulPoint(base, radar, i);
+    let c = projectEvent(o, p.xy, p.z);
+    let prev = simulPoint(base, radar, max(i, 1u) - 1u);
+    let next = simulPoint(base, radar, min(i + 1u, SIM_PTS - 1u));
+    var dir = toPx(projectEvent(o, next.xy, next.z)) - toPx(projectEvent(o, prev.xy, prev.z));
+    if (dot(dir, dir) < 1e-8) { return out; }
+    dir = normalize(dir);
+    let side = select(-1.0, 1.0, (vid & 1u) != 0u);
+    let tick = simul[base].xyz;
+    out.position = offsetClip(c, vec2(-dir.y, dir.x) * side * 1.5);
+    out.color = vec4(ink(), 0.42 * params.tilt * ageAlpha(min(disp(o, p.xy, p.z).z, 0.0)));
+    out.across = side * 1.5;
+    out.along = length(toPx(c) - toPx(projectEvent(o, tick.xy, tick.z)));
+    out.dashed = select(1.0, 0.0, radar);
+    return out;
+}
+
+/** A hairline: the rest frame's dashed, radar's solid. */
+@fragment
+fn fs_simul(in: SOut) -> @location(0) vec4<f32> {
+    let aa = 0.6 / max(camera.dpr, 1.0);
+    var cover = 1.0 - smoothstep(0.45 - aa, 0.45 + aa, abs(in.across));
+    if (in.dashed > 0.5) {
+        let f = fract(in.along / 6.0) * 6.0;
+        cover *= 1.0 - smoothstep(3.5 - aa, 3.5 + aa, f);
+    }
+    let a = in.color.a * cover;
+    if (a < 0.003) { discard; }
+    return vec4(in.color.rgb * a, a);
 }
 
 // ─── Shared fragment: hairline core, proper-time beads ───

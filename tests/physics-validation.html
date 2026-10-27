@@ -2542,6 +2542,29 @@ cases.push({
 });
 
 cases.push({
+    name: 'Seen, extended: a rod approaching head-on is seen stretched by k = √((1 + v)/(1 − v)), one receding squeezed by 1/k',
+    async run() {
+        // Rods of rest length 8 at 0.8c along x (k = 3), their ends prescribed bodies: one
+        // coming at an eye at rest, one leaving it, on the line through it
+        const gp = await makeSim({ on: ['relativityEnabled'], domainW: 256, domainH: 256 });
+        const eye = [128, 128], L = 8, v = 0.8, g = 1 / Math.sqrt(1 - v * v), k = Math.sqrt((1 + v) / (1 - v));
+        const end = (x) => gp.addPrescribed({ kind: 'uniform', t0: 0, x, y: eye[1], wx: g * v, wy: 0 }, { bornAt: -Infinity });
+        end(eye[0] - 20 - L / g); end(eye[0] - 20);   // coming: back, front
+        end(eye[0] + 10); end(eye[0] + 10 + L / g);   // going: back, front
+        await run(gp, 20, 0.25);
+        gp.sliceFrame(frameParams({ kind: 3, boostX: 0, boostY: 0, originX: eye[0], originY: eye[1], refT: gp.simTime,
+                                    seen: true, viewHalfW: 1, viewHalfH: 1 }));
+        const view = await readView(gp, 4);
+        gp.destroy();
+        const coming = view[1].x - view[0].x, going = view[3].x - view[2].x;
+        const err = Math.max(Math.abs(coming / (L * k) - 1), Math.abs(going / (L / k) - 1));
+        return { expected: `coming ${fmt(L * k, 4)}, going ${fmt(L / k, 4)} (lab length ${fmt(L / g, 3)})`,
+                 measured: `${fmt(coming, 4)}, ${fmt(going, 4)}`,
+                 metric: `${fmt(err * 100, 2)}%`, pass: view.every((b) => b.valid) && err < 1e-3 };
+    },
+});
+
+cases.push({
     name: 'The streak plate: a moving observer sees static sources aberrated and shifted by D = γ(1 + β cos θ), a moving source by γ_o(1 − n̂·u)/γ_s(1 − n̂·v)',
     async run() {
         const gp = await makeSim({ on: ['relativityEnabled'], domainW: 256, domainH: 256 });
@@ -2611,6 +2634,45 @@ cases.push({
         return { expected: 'Lorentz; η and (1/α)·arcosh[(α²(ξ² + y²) + 1)/(2αξ)]; none past the horizon',
                  measured: `beyond: ${behind.beyond}`, metric: `inertial ${fmt(worstI, 2)}, accelerated ${fmt(worstA, 2)}`,
                  pass: worstI < 1e-6 && worstA < 1e-6 && behind.beyond === 'future' };
+    },
+});
+
+cases.push({
+    name: 'The twin’s two nows: at the turn its rest frame sweeps home’s line by 2T_a + 2v(D_a + vT_c), while its radar time carries home’s on at between 1/k and k',
+    async run() {
+        // The traveller leaves home (at rest at the origin) at 0.8c: k = 3
+        const c = { kind: 'shuttle', t0: 0, x: 0, y: 0, nx: 1, ny: 0, v: 0.8, alpha: 0.5, coast: 30 };
+        const sh = shuttleShape(c), k = Math.sqrt((1 + sh.v) / (1 - sh.v));
+        const line = { pos: (t) => { const p = curveAt(c, t); return [p.x, p.y]; }, tau: (t) => curveAt(c, t).tau };
+        // Home's event of radar time T (radar time rises along home's line), and of the rest
+        // frame's now at lab time t, t_h = t + u·(x_h − x(t))
+        const radarHome = (T) => {
+            let lo = T - 200, hi = T + 200;
+            for (let i = 0; i < 60; i++) {
+                const m = 0.5 * (lo + hi);
+                if (radarCoords(line, m, 0, 0).time < T) lo = m; else hi = m;
+            }
+            return 0.5 * (lo + hi);
+        };
+        const restHome = (t) => { const p = curveAt(c, t); return t - p.wx / Math.sqrt(1 + p.wx * p.wx) * p.x; };
+        // The far turn, from the end of the outbound coast to the start of the inbound one
+        const tA = sh.Ta + sh.Tc, tB = 3 * sh.Ta + sh.Tc;
+        const sweep = restHome(tB) - restHome(tA), want = 2 * sh.Ta + 2 * sh.v * (sh.Da + sh.v * sh.Tc);
+        const turnTau = line.tau(tB) - line.tau(tA);
+        // Radar over a whole period: dt_h/dT is the mean of the two legs' Doppler factors,
+        // inverted: 1/γ on a coast, k while the legs straddle the far turn, 1/k the near one
+        const N = 600, T0 = line.tau(sh.Ta), dT = sh.tauPeriod / N;
+        let prev = radarHome(T0), lo = Infinity, hi = 0;
+        for (let i = 1; i <= N; i++) {
+            const th = radarHome(T0 + i * dT), rate = (th - prev) / dT;
+            lo = Math.min(lo, rate); hi = Math.max(hi, rate);
+            prev = th;
+        }
+        const errSweep = Math.abs(sweep / want - 1);
+        return { expected: `rest frame ${fmt(want, 4)} in Δτ ${fmt(turnTau, 3)}; radar rate in [1/k, k] = [${fmt(1 / k, 3)}, ${fmt(k, 3)}], reaching k`,
+                 measured: `${fmt(sweep, 4)}; [${fmt(lo, 4)}, ${fmt(hi, 4)}]`,
+                 metric: `sweep ${fmt(errSweep, 2)}, peak ${fmt(Math.abs(hi / k - 1), 2)}`,
+                 pass: errSweep < 1e-9 && lo > 1 / k - 1e-3 && Math.abs(hi / k - 1) < 1e-3 && sweep / turnTau > 3 * k };
     },
 });
 

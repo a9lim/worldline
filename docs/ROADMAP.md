@@ -144,19 +144,22 @@ is a fit over many quenches, not one run's number.
 
 ## 2. Where it stands
 
-As of 2026-10-27 (`5009c17`):
+As of 2026-10-27, after 2.6's sight and the hand:
 
 - **The plate.** The canvas tilts into spacetime: world lines with proper-time beads, events, the
   selected body's past cone, the sheet of the present; Lab and Observer coordinates through a boost;
-  six observers (the lab, zero momentum, a body, a boost, co-rotation, free fall). Every body's
-  outline is its clock, and its spoke bends through the Lorentz map.
+  seven observers (the lab, zero momentum, a body, a boost, co-rotation, free fall, constant proper
+  acceleration). Every body's outline is its clock, and its spoke bends through the Lorentz map.
+- **Sight and the hand** (2.6): prescribed world lines with the agent's books and the known future;
+  the hand; the selected body's ticks' light and its two simultaneities; Seen with extended bodies
+  and the streak plate; the accelerated observer's horizons; radar.
 - **The physics.** Up to 4096 bodies under gravity (signal delay as a toy; 1PN),
   Liénard–Wiechert electromagnetism from the world lines, gravitomagnetism, Yukawa, two scalar
   fields on 128² grids with grid gravity, Paczyński–Wiita holes with Hawking, Schwinger and
   superradiance, pools of photons, pions and leptons, an expanding torus, and a lensed backdrop with
   a microlensing probe.
 - **The margin** in the plate's notation (2.3), and six figures with knobs in their captions.
-- **Checks.** 57 oracles in `tests/physics-validation.html`; plate screenshots that reproduce byte
+- **Checks.** 69 oracles in `tests/physics-validation.html`; plate screenshots that reproduce byte
   for byte with their physics hashes; colour-vision sheets; benchmarks timed back to back
   (`docs/PERFORMANCE.md`).
 - **The model pass** has landed step 0: ten contained bugs fixed or disabled (the quadrupole sink,
@@ -369,8 +372,11 @@ cone, the tilted cone with its pierces and the light in flight, unavailable hist
 No beacons or mirrors (a9, 2026-10-27): the signals are the light of events the plate already
 draws. Ticks' light landed 2026-10-27 (§14): rings at the present, rays and reception marks, a
 prescribed receiver's receptions found in its known future; radar as a readout for observers whose
-future is known. Still open: radar's simultaneity surfaces drawn beside the rest frame's on the
-twin.
+future is known. Simultaneity at the ticks landed the same day: from each of the selected body's
+ticks to each other world line, the rest frame's chord dashed and the radar surface's trace solid
+(`AGENTS.md`, The spacetime view), with the twin's oracle: at the turn the rest frame sweeps
+home's line by 2T_a + 2v(D_a + vT_c) in Δτ 4.4, while radar carries home's time on at between 1/k
+and k, reaching k.
 
 - **Ticks' light.** A body's beads are its clock's ticks. Selected, its ticks send light: each bead's
   future cone, drawn as a ring growing at c in the plane and a cone in the plate, marked where it
@@ -393,8 +399,10 @@ twin.
 ### 6.5 The seen sky and the streak plate
 
 Landed 2026-10-27 (§14): the streak plate with aberration, Doppler, D⁴ weights and the
-approaching/receding pattern, and its oracle. Still open: real light (pool photons arriving) and
-apparent superluminal motion as a figure.
+approaching/receding pattern, and its oracle. Still open: apparent superluminal motion as a figure.
+Real light moves to 3.0's event log (§7.1): for a body observer a quantum's arrival is its
+absorption, an `EV_ABSORB` record, and a point eye catches none, so arrivals are logged events, not
+an aperture invented for sight.
 
 - **Doppler** [standard]: `ν_o/ν_s = (k·u_o)/(k·u_s)`, for any source and observer.
 - **Aberration** [standard]: a source at angle θ from the observer's velocity is seen at
@@ -424,8 +432,8 @@ apparent superluminal motion as a figure.
 ### 6.6 The accelerated observer [standard]
 
 Landed 2026-10-27 (§14): the observer kind, slices through the corner, the hatched horizons and
-the corner line, radar off the axis, and their oracles. Still open: fading bodies past the future
-horizon, and Bell's ships and the rigid ruler (3.0).
+the corner line, radar off the axis, and their oracles; bodies fading with the frame's lapse αξ
+toward the horizon and faint beyond it. Still open: Bell's ships and the rigid ruler (3.0).
 
 - An observer kind beside the six: constant proper acceleration α along a chosen direction, through
   the camera's centre now. Its world line is the hyperbola x² − t² = 1/α² about a corner, the line
@@ -487,6 +495,11 @@ control: an affordance rather than an instruction.
 
 ### 6.9 Extended bodies (a second stage)
 
+Landed 2026-10-27 (`AGENTS.md`, Frames): under Seen each point of a body is drawn at its own
+retarded time, the body taken in uniform motion over its light-crossing time, with the apparent
+length oracle (a rod head-on is seen stretched by √((1 + v)/(1 − v)), receding squeezed by its
+inverse).
+
 Each point of a body is seen at its own retarded time, so a fast body's seen outline is neither its
 lab shape nor its contracted shape (Terrell 1959, Penrose 1959) [standard]. In the plane, sample the
 body's rest-frame disk along its world tube per sky direction [synthesis]. Delaying the centre alone
@@ -508,6 +521,10 @@ isn't this effect (Codex); label point-source sight as point-source until this s
   the arcosh above, off the axis too;
 - the k-calculus interval kT, and the twin's ticks counted against its clocks;
 - apparent transverse speed `v sin θ/(1 − v cos θ)`;
+- a rod's apparent length head-on, `L√((1 + v)/(1 − v))` approaching and `L√((1 − v)/(1 + v))`
+  receding (landed);
+- the twin's two slicings: the rest frame's sweep of home's line at the turn, `2T_a + 2v(D_a +
+  vT_c)`, against radar's rate between 1/k and k (landed);
 - a held or prescribed charge's field at a distant point equals the analytic Liénard–Wiechert field
   of its curve, and the band's fronts move at c.
 
@@ -540,7 +557,9 @@ general means of acting are the hand and prescribed bodies (2.6), editing a body
 - **The event log** (§12.2) gives picking and the plate true events: births, deaths, merges,
   emissions and absorptions, with the four-momentum that changed hands, so a photon is drawn from
   its emission event and the plate draws logged events instead of scanning every sample for them
-  (§10). Bodies are named by (slot, generation), which survives slot reuse.
+  (§10). The streak plate's real light comes with it (§6.5): an observer body's absorptions are the
+  quanta it received, marked on its sky at their direction and Doppler-shifted energy beside the
+  tracks of virtual sight. Bodies are named by (slot, generation), which survives slot reuse.
 - The Measure tab holds the picked events and their numbers beside the ledger and the selected
   body; the phase and potential plots are redrawn in the plate's language.
 
@@ -801,7 +820,7 @@ struct WorldEvent {          // 48 B, 12 words
 ### 12.3 Tests
 
 `tests/physics-validation.html` instantiates the production `GPUPhysics` headlessly, runs each
-analytic oracle and reads back GPU state (57 oracles). Every feature adds its oracle, and every
+analytic oracle and reads back GPU state (69 oracles). Every feature adds its oracle, and every
 figure is one. The WGSL→JS transpiler (`lib/wgsl/transpile.js`, compute only) and `gpu-diff.mjs`
 remain available for Node kernel tests where a kernel is pure compute. The screenshot-diff,
 colour-vision and benchmark harnesses are in `docs/second-pass/tools/`.

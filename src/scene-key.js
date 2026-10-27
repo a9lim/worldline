@@ -7,7 +7,7 @@
 // it with the rulers, and it stays out of a small stage. The same marks fill the margin's ticks,
 // so the Laws tab reads as the scene's legend.
 import { getLang } from './i18n.js';
-import { CLOCK_PERIOD } from './config.js';
+import { CLOCK_PERIOD, BOUND_LOOP } from './config.js';
 import { swatch } from './marks.js';
 
 const WORDS = {
@@ -21,6 +21,8 @@ const WORDS = {
         light: 'Light',
         cone: 'Past light cone',
         tick: 'Light of its ticks, arriving',
+        restNow: 'Its now · rest frame',
+        radarNow: 'Its now · radar',
         seenCone: 'Observer’s past light cone',
         horizon: (r) => `Horizons · corner 1/α = ${r} behind`,
         seenLight: 'Light seen now, in flight',
@@ -51,6 +53,8 @@ const WORDS = {
         light: '光',
         cone: '過去光円錐',
         tick: '刻みの光、到着',
+        restNow: 'その今・静止系',
+        radarNow: 'その今・レーダー',
         seenCone: '観測者の過去光円錐',
         horizon: (r) => `地平面・角 1/α = ${r} 後方`,
         seenLight: '今見える光、伝播中',
@@ -132,7 +136,14 @@ export default class SceneKey {
         } else if (tilted && sim.selectedIdx >= 0) rows.push(['cone', L.cone]);
         // The selected body's ticks' light, and its rays where the scene is small enough
         // (GPURenderer TICK_RECEIVERS); a prescribed body's known future (src/prescribed.js)
-        if (tilted && sim.selectedIdx >= 0 && bodies.length > 1 && bodies.length <= 24) rows.push(['tick', L.tick]);
+        if (tilted && sim.selectedIdx >= 0 && bodies.length > 1 && bodies.length <= 24) {
+            rows.push(['tick', L.tick]);
+            // And its simultaneity at each tick, on an open domain (GPURenderer _simulShown)
+            if (sim.boundaryMode !== BOUND_LOOP) {
+                rows.push(['simul', L.restNow, {}]);
+                rows.push(['simul', L.radarNow, { radar: true }]);
+            }
+        }
         if (tilted && sim.spacetime.future() > 0) rows.push(['future', L.future]);
         if (tilted && any) rows.push(['event', L.event]);
         if ((sim.stats.photonE || 0) > 1e-6) rows.push(['light', L.light]);

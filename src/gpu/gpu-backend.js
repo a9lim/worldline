@@ -177,6 +177,7 @@ export default class GPUBackend {
         sim.streak?.tick(this.physics, sim.spacetime ? sim.spacetime.depth() : 64, this._streakFrame = (this._streakFrame || 0) + 1);
         this.renderer.frameOn = !!frameParams;
         this.renderer.frameImages = frameParams ? frameParams.images : 1;
+        this.renderer.seen = !!(frameParams && frameParams.seen);
 
         if ((ph.higgsEnabled || ph.axionEnabled) && !this.renderer._fieldRenderReady) {
             this.renderer.initFieldOverlay();

@@ -18,7 +18,7 @@ struct CameraUniforms {
     isDarkMode: f32,
     relativityOn: f32,
     blackHoleOn: f32,
-    _unused: f32,      // once the Clocks overlay; every body's outline is its clock now
+    seen: f32,         // 1 under Seen: the observer at the origin (particle.wgsl)
     frameOn: f32,
     frameImages: f32,
 };
@@ -99,6 +99,16 @@ fn vs_main(
         if (speed > 1e-4) {
             let n = v / length(v);
             off -= (1.0 - sqrt(1.0 - speed * speed)) * dot(off, n) * n;
+            // Under Seen, where that point is seen, as the body is (particle.wgsl seenAt)
+            if (camera.seen > 0.5 && camera.frameOn > 0.5) {
+                let c = vec2f(p.posX, p.posY);
+                let P = c + off;
+                let c0 = length(c);
+                let a = max(1.0 - dot(v, v), 1e-4);
+                let b = dot(P, v) + c0;
+                let tau = (b - sqrt(max(b * b + a * (dot(P, P) - c0 * c0), 0.0))) / a;
+                off += v * tau;
+            }
         }
     }
 

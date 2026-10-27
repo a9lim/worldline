@@ -514,7 +514,19 @@ fn sliceWorldLines(@builtin(global_invocation_id) gid: vec3u) {
 
     let theta = atan2(L.y * sin(q.theta), L.x * cos(q.theta));
     let phase = q.tau - CLOCK_PERIOD * floor(q.tau / CLOCK_PERIOD);
-    viewClocks[k] = vec4(q.tau, phase, select(theta, theta - st.phi, fp.kind == 4u), 1.0);
+    // The frame's lapse where the body crosses the slice: 1, or for the accelerated observer αξ,
+    // ξ the event's distance from the corner in the wedge the observer lives in (Rindler's), 0 at
+    // its horizons and −1 beyond them (particle.wgsl fades the body by it)
+    var lapse = 1.0;
+    if (fp.kind == 6u && fp.seen == 0u) {
+        let a = st.omega;
+        let n = vec2(cos(st.phi), sin(st.phi));
+        let wA = a * (st.tA - fp.refT);
+        let xi = dot(X - (st.xA - n * (sqrt(1.0 + wA * wA) / a)), n);
+        let eta = q.t - fp.refT;
+        lapse = select(-1.0, a * sqrt(max(xi * xi - eta * eta, 0.0)), xi > abs(eta));
+    }
+    viewClocks[k] = vec4(q.tau, phase, select(theta, theta - st.phi, fp.kind == 4u), lapse);
 }
 
 // ─── The streak plate (roadmap §6.5) ───

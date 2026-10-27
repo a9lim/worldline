@@ -107,6 +107,11 @@ const SWATCH = {
     tick: () => line(4, 0, 4, 14, ACCENT, 1) + circle(4, 10, 1.7, 'none', ACCENT, 0)
         + line(4, 10, 20, 2, ACCENT, 0.8, ' stroke-opacity="0.6"') + line(20, 0, 20, 14, MUTED, 1)
         + circle(20, 2, 2.2, 'none', ACCENT, 0),
+    // A tick's simultaneity on another line: the rest frame's chord dashed, radar's trace solid
+    simul: (o) => line(4, 0, 4, 14, ACCENT, 1) + circle(4, 10, 1.7, 'none', ACCENT, 0)
+        + (o?.radar ? path('M4,10 C10,9.5 13,4 22,4', TEXT, 1, ' stroke-opacity="0.7"')
+            : line(4, 10, 22, 3, TEXT, 1, ' stroke-opacity="0.7" stroke-dasharray="3.5 2.5"'))
+        + line(22, 0, 22, 14, MUTED, 1),
     // The known future: dashed above, hollow beads (spacetime-render.wgsl fs_future)
     future: () => line(1, 7, 25, 7, MUTED, 1, ' stroke-dasharray="3 3"') + [7, 19].map((x) => circle(x, 7, 1.9, MUTED, GROUND, 0.9)).join(''),
     gravity: () => path('M1,10 C7,3 17,3 25,9', ink('umber'), 1.3)

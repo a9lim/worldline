@@ -21,6 +21,15 @@
 //     there, τ − γvΔ∥ as the spoke does, so a moving clock's face is skewed by the same
 //     simultaneity that bends its spoke.
 // Marks show only on bodies at least 5 px across their radius; the edge is antialiased.
+//
+// Under Seen (roadmap §6.9) a body is drawn as the observer sees it, each point at its own
+// retarded time: the observer sits at the origin of the view's coordinates and receives now,
+// so the point X of the drawing is seen as it was |X| ago, |X| − |X_c| before the centre the
+// slicer found on the cone. The body moving uniformly over that while (v its velocity there),
+// the drawing at X is the body's lab offset X − X_c − v·Δt, Δt = |X_c| − |X|, and that point's
+// rest-frame time is γ(Δt − v·(X − X_c)) from the centre's: the outline, the spoke and the
+// clock face all come from it, so a fast body is stretched toward the observer as it
+// approaches and squeezed as it recedes, and turned as it crosses (Terrell, Penrose).
 
 struct CameraUniforms {
     viewMatrix: mat4x4<f32>,
@@ -31,7 +40,7 @@ struct CameraUniforms {
     isDarkMode: f32,   // 0.0 = light, 1.0 = dark
     relativityOn: f32,
     blackHoleOn: f32,
-    _unused: f32,      // once the Clocks overlay; every body's outline is its clock now
+    seen: f32,         // 1 drawing the view under Seen: the observer at the origin, seeing now
     frameOn: f32,      // drawing a frame's view buffers (frame-slice.wgsl)
     frameImages: f32,  // view entries per slot
 };
@@ -43,7 +52,8 @@ struct CameraUniforms {
 @group(0) @binding(2) var<storage, read> particleAux: array<ParticleAux>;
 @group(0) @binding(3) var<storage, read> color: array<u32>;
 @group(0) @binding(4) var<storage, read> derived: array<ParticleDerived>;
-@group(0) @binding(5) var<storage, read> clocks: array<vec4<f32>>;   // y = τ mod CLOCK_PERIOD, z = θ
+@group(0) @binding(5) var<storage, read> clocks: array<vec4<f32>>;   // y = τ mod CLOCK_PERIOD, z = θ,
+                                                                      // w in a frame's view: its lapse there
 
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
@@ -53,6 +63,7 @@ struct VertexOut {
     @location(3) @interpolate(flat) body: vec4<f32>,    // radius, θ, ω, drawn radius
     @location(4) @interpolate(flat) kind: vec2<f32>,    // sign of the charge, antimatter (1/0)
     @location(5) @interpolate(flat) clock: f32,         // the clock's phase, τ mod CLOCK_PERIOD
+    @location(6) @interpolate(flat) centre: vec2<f32>,  // the body's centre; under Seen the observer is at the origin
 };
 
 // Quad vertices: 2 triangles forming a [-1,1] square
@@ -100,27 +111,63 @@ fn vs_main(
     let quadR = drawR + 1.0 / camera.zoom;
     let corner = QUAD_POS[vertexIndex];
     let perp = vec2(-n.y, n.x);
-    let offset = n * corner.x * max(quadR / gamma, 2.0 / camera.zoom) + perp * corner.y * quadR;
+    var offset = n * corner.x * max(quadR / gamma, 2.0 / camera.zoom) + perp * corner.y * quadR;
+    let centre = vec2(p.posX, p.posY);
+    if (camera.seen > 0.5 && camera.frameOn > 0.5 && speed > 1e-4) {
+        // Seen: the box around where the rim is seen, from 16 of its points
+        let v = n * speed;
+        var lo = vec2(1e30);
+        var hi = vec2(-1e30);
+        for (var k = 0u; k < 16u; k++) {
+            let ang = f32(k) * TWO_PI / 16.0;
+            let rim = (n * cos(ang) / gamma + perp * sin(ang)) * quadR;
+            let at = seenAt(centre, rim, v) - centre;
+            lo = min(lo, at);
+            hi = max(hi, at);
+        }
+        let mid = 0.5 * (hi + lo);
+        let half = 0.5 * (hi - lo) * 1.04 + vec2(1.0 / camera.zoom);
+        offset = mid + corner * half;
+    }
 
     out.position = camera.viewMatrix * vec4(p.posX + offset.x, p.posY + offset.y, 0.0, 1.0);
     out.offset = offset;
     out.boost = vec4(n, gamma, speed);
     out.body = vec4(r, clocks[instanceIndex].z, omega, drawR);
     out.clock = clocks[instanceIndex].y;
+    out.centre = centre;
     let q = select(0.0, sign(p.charge), abs(p.charge) > 0.5 * BOSON_CHARGE);
     out.kind = vec2(q, select(0.0, 1.0, (p.flags & FLAG_ANTIMATTER) != 0u));
 
     // Unpack RGBA from u32 (ABGR packed); colors stay per slot in a frame's view
     let slot = select(instanceIndex, instanceIndex / u32(max(camera.frameImages, 1.0)), camera.frameOn > 0.5);
     let packed = color[slot];
+    // In a frame's view a body fades with the frame's lapse at it: toward the accelerated
+    // observer's horizon, where its clock freezes, to faint beyond it
+    let fade = select(1.0, mix(0.12, 1.0, smoothstep(0.0, 0.25, clocks[instanceIndex].w)), camera.frameOn > 0.5);
     out.particleColor = vec4(
         f32(packed & 0xFFu) / 255.0,
         f32((packed >> 8u) & 0xFFu) / 255.0,
         f32((packed >> 16u) & 0xFFu) / 255.0,
-        f32((packed >> 24u) & 0xFFu) / 255.0,
+        f32((packed >> 24u) & 0xFFu) / 255.0 * fade,
     );
 
     return out;
+}
+
+/**
+ * Under Seen, where the point of a body at lab offset `rim` from its centre (at the centre's
+ * time) is seen, the body moving uniformly at v: on the observer's past cone at the origin,
+ * |P + vτ| = |X_c| − τ for the point P = X_c + rim, the earlier root.
+ */
+fn seenAt(centre: vec2<f32>, rim: vec2<f32>, v: vec2<f32>) -> vec2<f32> {
+    let P = centre + rim;
+    let c0 = length(centre);
+    let a = max(1.0 - dot(v, v), 1e-4);
+    let b = dot(P, v) + c0;
+    let c = dot(P, P) - c0 * c0;
+    let tau = (b - sqrt(max(b * b + a * c, 0.0))) / a;
+    return P + v * tau;
 }
 
 /** Coverage of a band |x| < w with an antialiased edge aa wide. */
@@ -136,9 +183,18 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let r = in.body.x;
     let drawR = in.body.w;
 
+    // This point's lab offset from the centre at the centre's time, and its rest-frame time
+    // against the centre's: the same lab instant, or under Seen its own retarded time
+    var rel = in.offset;
+    var toff = -gamma * speed * dot(in.offset, n);
+    if (camera.seen > 0.5 && camera.frameOn > 0.5) {
+        let dt = length(in.centre) - length(in.centre + in.offset);
+        rel = in.offset - n * speed * dt;
+        toff = gamma * (dt - speed * dot(in.offset, n));
+    }
     // Rest-frame offset of this lab point (pure boost along n̂)
-    let par = dot(in.offset, n);
-    let rest = in.offset + (gamma - 1.0) * par * n;
+    let par = dot(rel, n);
+    let rest = rel + (gamma - 1.0) * par * n;
     let dist = length(rest);
     let aa = max(fwidth(dist), 1e-6);
     let cover = 1.0 - smoothstep(drawR - aa, drawR + aa, dist);
@@ -172,7 +228,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // this point's own time has reached; antialiased along the rim at both of its ends
     var mark = 0.0;
     if (rPx >= 5.0) {
-        let swept = fract((in.clock - gamma * speed * par) / CLOCK_PERIOD);
+        let swept = fract((in.clock + toff) / CLOCK_PERIOD);
         let at = fract(atan2(rest.x, -rest.y) / TWO_PI);
         let rim = TWO_PI * dist;
         let arc = smoothstep(-aa, aa, (swept - at) * rim) * smoothstep(-aa, aa, at * rim);
@@ -191,7 +247,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // The spoke, a radius at the angle it held at this point's rest-frame time: from the
     // centre on a neutral body, a tick at the rim where the centre carries a mark
     if (rPx >= 4.0) {
-        let spokeAngle = in.body.y + in.body.z * (-gamma * speed * par);
+        let spokeAngle = in.body.y + in.body.z * toff;
         let dir = vec2(cos(spokeAngle), sin(spokeAngle));
         let along = dot(rest, dir);
         let across = rest.x * dir.y - rest.y * dir.x;
