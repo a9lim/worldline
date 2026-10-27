@@ -520,8 +520,24 @@ kbd.tick-law {
 
 .field-k { font-size: 0.93rem; color: var(--text-secondary); }
 
-/* ─── The list of figures (src/ui.js builds it from PRESET_ORDER) ─── */
+/* ─── The list of figures (src/ui.js builds it from CHAPTERS) ─── */
 .figures { display: grid; }
+
+/* A chapter: its numeral over the figures' numbers, its name over theirs, ruled off above */
+.figure-chapter {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr);
+    align-items: baseline;
+    gap: 0 10px;
+    margin-top: 6px;
+    padding: 7px 0 2px;
+    border-top: 1px solid var(--border);
+    font-size: 0.86rem;
+    font-style: italic;
+    color: var(--text-muted);
+}
+.figure-chapter:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.figure-chapter .chapter-no { font-style: normal; text-align: right; }
 
 .figure-row {
     display: grid;
@@ -765,6 +781,7 @@ kbd.tick-law {
 
 /* ─── Japanese: labels upright and tracked, as base.css sets the group labels ─── */
 :lang(ja) .tick-law,
+:lang(ja) .figure-chapter,
 :lang(ja) .scale-row > output { font-style: normal; }
 :lang(ja) .field-k,
 :lang(ja) .scale-row > label { letter-spacing: 0.05em; }

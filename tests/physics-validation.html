@@ -2700,6 +2700,217 @@ cases.push({
     },
 });
 
+// ── 2.6's figures (roadmap §4): each figure's measured number against its prediction ──
+
+/** A line's event at proper time tau, linear between its ring's samples (exact on a coast). */
+function eventAtTau(ring, tau) {
+    for (let i = 1; i < ring.length; i++) {
+        const a = ring[i - 1], b = ring[i];
+        if (a.tau <= tau && tau <= b.tau) {
+            const f = (tau - a.tau) / (b.tau - a.tau || 1);
+            return { t: a.t + f * (b.t - a.t), x: a.x + f * (b.x - a.x), y: a.y + f * (b.y - a.y) };
+        }
+    }
+    return null;
+}
+
+/** Where light leaving event e meets a line given by its ring: (t − t_e) − |x(t) − x_e| rises along it. */
+function receptionOn(ring, e) {
+    const g = (s) => (s.t - e.t) - Math.hypot(s.x - e.x, s.y - e.y);
+    for (let i = 1; i < ring.length; i++) {
+        const a = ring[i - 1], b = ring[i];
+        if (g(a) <= 0 && g(b) > 0) {
+            let lo = 0, hi = 1;
+            for (let it = 0; it < 50; it++) {
+                const m = 0.5 * (lo + hi), s = { t: a.t + m * (b.t - a.t), x: a.x + m * (b.x - a.x), y: a.y + m * (b.y - a.y) };
+                if (g(s) <= 0) lo = m; else hi = m;
+            }
+            const m = 0.5 * (lo + hi);
+            return { t: a.t + m * (b.t - a.t), tau: a.tau + m * (b.tau - a.tau) };
+        }
+    }
+    return null;
+}
+
+cases.push({
+    name: 'The twin by its ticks’ light: the traveller’s ticks reach home every kT going and T/k coming back, and the ticks each counts give both ages',
+    async run() {
+        // Home at rest where the traveller starts, so they meet at each reunion; both world lines
+        // as the GPU recorded them over a whole trip, ticks every T of proper time
+        const gp = await makeSim({ on: ['relativityEnabled'], domainW: 128, domainH: 64 });
+        const c = { kind: 'shuttle', t0: 0, x: 20, y: 32, nx: 1, ny: 0, v: 0.8, alpha: 0.5, coast: 40 };
+        const sh = shuttleShape(c), k = Math.sqrt((1 + sh.v) / (1 - sh.v)), T = 0.25;
+        gp.addPrescribed({ kind: 'uniform', t0: 0, x: 20, y: 32, wx: 0, wy: 0 }, { bornAt: -Infinity });
+        gp.addPrescribed(c, { bornAt: -Infinity });
+        await run(gp, sh.period + 2, 0.25);
+        const home = await readRing(gp, 0), trav = await readRing(gp, 1);
+        gp.destroy();
+        // The traveller's ticks over the trip, received at home; and home's at the traveller
+        const tauEnd = curveAt(c, sh.period).tau;
+        const out = [], back = [];
+        let fromTrav = 0, fromHome = 0;
+        for (let n = 0; n * T < tauEnd - 1e-9; n++) {
+            const e = eventAtTau(trav, n * T), r = e && receptionOn(home, e);
+            if (!r) return { expected: '', measured: `tick ${n} unreceived`, metric: '', pass: false };
+            if (r.t < sh.period - 1e-6) fromTrav++;
+            if (e.t > sh.Ta && e.t < sh.Ta + sh.Tc) out.push(r.t);
+            if (e.t > 3 * sh.Ta + sh.Tc && e.t < 3 * sh.Ta + 2 * sh.Tc) back.push(r.t);
+        }
+        for (let n = 0; n * T < sh.period - 1e-9; n++) {
+            const r = receptionOn(trav, eventAtTau(home, n * T));
+            if (r && r.t < sh.period - 1e-6) fromHome++;
+        }
+        const rate = (rs) => rs.slice(1).map((t, i) => (t - rs[i]) / T);
+        const ro = rate(out), rb = rate(back);
+        const errK = Math.max(...ro.map((x) => Math.abs(x / k - 1)), ...rb.map((x) => Math.abs(x * k - 1)));
+        // Counted ticks: the traveller's that home received in its trip, home's the traveller received
+        const ageT = fromTrav * T, ageH = fromHome * T;
+        const errAge = Math.max(Math.abs(ageT - sh.tauPeriod), Math.abs(ageH - sh.period));
+        return { expected: `every ${fmt(k, 4)}T going, ${fmt(1 / k, 4)}T back; counts ${fmt(sh.tauPeriod, 3)} and ${fmt(sh.period, 3)} (T = ${T})`,
+                 measured: `${fmt(ro[0], 4)}T, ${fmt(rb[0], 4)}T over ${ro.length} + ${rb.length} ticks; counts ${fmt(ageT, 3)} and ${fmt(ageH, 3)}`,
+                 metric: `k ${fmt(errK, 2)}, age ${fmt(errAge, 2)}`,
+                 pass: ro.length > 20 && rb.length > 20 && errK < 1e-3 && errAge <= T };
+    },
+});
+
+cases.push({
+    name: 'Rindler horizon: the observer’s lattice stands still on its slices, clocks at αξ and radar distance (1/α)·arcosh[(α²(ξ² + y²) + 1)/(2αξ)]; a dropped body is seen ever closer to the time it crosses',
+    async run() {
+        // The figure's lattice about a corner at x = 50, t = 0, the observer 1/α in front of it
+        const a = 0.08, L = 1 / a, xc = 50, y0 = 64;
+        const gp = await makeSim({ on: ['relativityEnabled'], domainW: 256, domainH: 128 });
+        const lattice = [[0.25, 0], [0.5, 0], [1.5, 0], [2, 0], [0.5, 0.6], [1.5, -0.6]];
+        for (const [f, g] of lattice) {
+            gp.addPrescribed({ kind: 'hyperbola', t0: 0, x: xc + f * L, y: y0 + g * L, nx: 1, ny: 0, alpha: 1 / (f * L) }, { bornAt: -Infinity });
+        }
+        const Xb = 0.75 * L;
+        gp.addPrescribed({ kind: 'uniform', t0: 0, x: xc + Xb, y: y0, wx: 0, wy: 0 }, { bornAt: -Infinity });
+        const n = lattice.length + 1, slices = [];
+        for (const T of [20, 45]) {
+            await run(gp, T - gp.simTime, 0.25);
+            const p = { kind: 6, boostX: a, boostY: 0, originX: xc + L, originY: y0, refT: 0, viewHalfW: 2 * L, viewHalfH: L };
+            gp.sliceFrame(frameParams(p));
+            const st = await readFrameState(gp), view = await readView(gp, n);
+            gp.sliceFrame(frameParams({ ...p, seen: true }));
+            const seenSt = await readFrameState(gp), seen = await readView(gp, n);
+            slices.push({ st, view, seenSt, seen });
+        }
+        const bodies = await readParticles(gp), now = gp.simTime;
+        gp.destroy();
+        // Positions: ξ − 1/α along the axis, y across; clocks: Δτ/Δτ_observer = αξ
+        let errX = 0, errRate = 0, errR = 0;
+        const eta = slices.map((s) => Math.atanh(s.st.ux) / a);
+        lattice.forEach(([f, g], i) => {
+            for (const s of slices) errX = Math.max(errX, Math.hypot(s.view[i].x - (f - 1) * L, s.view[i].y - g * L));
+            const rate = (slices[1].view[i].tau - slices[0].view[i].tau) / (eta[1] - eta[0]);
+            errRate = Math.max(errRate, Math.abs(rate / f - 1));
+            // Radar, for the observer's world line, of where the GPU has the body now
+            const b = bodies[i], X = b.x - xc, xi = Math.sqrt(X * X - now * now), yy = b.y - y0;
+            const r = radarCoords(acceleratedLine(xc + L, y0, 0, a, 1, 0), now, b.x, b.y);
+            const want = Math.acosh((a * a * (xi * xi + yy * yy) + 1) / (2 * a * xi)) / a;
+            errR = Math.max(errR, Math.abs(r.distance - want));
+        });
+        // The dropped body: on the slices at ξ = X_b/cosh αη, and seen at τ = X_b − e^{−αη}/α
+        const d = lattice.length;
+        const errDrop = Math.max(...slices.map((s, j) => Math.abs(s.view[d].x + L - Xb / Math.cosh(a * eta[j]))));
+        const etaSeen = slices.map((s) => Math.atanh(s.seenSt.ux) / a);
+        const errSeen = Math.max(...slices.map((s, j) => Math.abs(s.seen[d].tau - (Xb - L * Math.exp(-a * etaSeen[j])))));
+        const below = slices.every((s) => s.seen[d].valid && s.seen[d].tau < Xb);
+        return { expected: `still; rates αξ; radar by the arcosh; dropped seen short of τ ${fmt(Xb, 3)}`,
+                 measured: `dropped seen at τ ${slices.map((s) => fmt(s.seen[d].tau, 3)).join(', ')}`,
+                 metric: `x ${fmt(errX, 2)}, rate ${fmt(errRate, 2)}, radar ${fmt(errR, 2)}, fall ${fmt(errDrop, 2)}, seen ${fmt(errSeen, 2)}`,
+                 pass: slices.every((s) => s.st.valid && s.view.every((v) => v.valid)) && below
+                     && errX < 2e-3 && errRate < 1e-3 && errR < 1e-4 && errDrop < 2e-3 && errSeen < 2e-3 };
+    },
+});
+
+cases.push({
+    name: 'Aberration: an eye coasting through a ring of lamps sees each at its aberrated direction, the lamp ahead shifted by k and the one behind by 1/k',
+    async run() {
+        // The figure: 24 lamps on a ring of 24 and an eye shuttling through its centre at 0.8c
+        const gp = await makeSim({ on: ['relativityEnabled'], domainW: 128, domainH: 128 });
+        const cx = 64, cy = 64, R = 24, N = 24, v = 0.8, g = 1 / Math.sqrt(1 - v * v), k = Math.sqrt((1 + v) / (1 - v));
+        for (let j = 0; j < N; j++) {
+            const th = j * 2 * Math.PI / N;
+            gp.addPrescribed({ kind: 'uniform', t0: 0, x: cx + R * Math.cos(th), y: cy + R * Math.sin(th), wx: 0, wy: 0 }, { bornAt: -Infinity });
+        }
+        const c = { kind: 'shuttle', t0: 0, x: cx - 20, y: cy, nx: 1, ny: 0, v, alpha: 0.5, coast: 2 * (20 - (g - 1) / 0.5) / v };
+        const sh = shuttleShape(c);
+        gp.addPrescribed(c, { bornAt: -Infinity });
+        // Two moments on the outbound coast: at the centre, and past it
+        const rows = [];
+        for (const T of [sh.Ta + sh.Tc / 2, sh.Ta + 0.85 * sh.Tc]) {
+            await run(gp, T - gp.simTime, 0.25);
+            gp.sliceFrame(frameParams({ kind: 2, slot: N, seen: true, viewHalfW: 1, viewHalfH: 1 }));
+            const st = await readFrameState(gp), prev = gp.readStreak()?.seq ?? 0;
+            gp.requestStreak({ dTau: 0.5, forward: [1, 0] });
+            let s = null;
+            for (let i = 0; i < 200 && !(s && s.seq > prev); i++) { await new Promise((r) => setTimeout(r, 5)); s = gp.readStreak(); }
+            rows.push({ st, data: s.data.slice(0, (N + 1) * 4) });
+        }
+        gp.destroy();
+        let worstA = 0, worstD = 0, seen = 0;
+        for (const r of rows) {
+            const e = curveAt(c, r.st.tA);
+            for (let j = 0; j < N; j++) {
+                const th = j * 2 * Math.PI / N, dx = cx + R * Math.cos(th) - e.x, dy = cy + R * Math.sin(th) - e.y;
+                const lab = Math.atan2(dy, dx), cl = Math.cos(lab);
+                const want = Math.sign(Math.sin(lab)) * Math.acos((cl + v) / (1 + v * cl));
+                const got = r.data[j * 4];
+                if (r.data[j * 4 + 2] < 0.5) continue;
+                seen++;
+                worstA = Math.max(worstA, Math.abs(Math.atan2(Math.sin(got - want), Math.cos(got - want))));
+                worstD = Math.max(worstD, Math.abs(r.data[j * 4 + 1] / (g * (1 + v * cl)) - 1));
+            }
+        }
+        const Dk = rows.map((r) => [r.data[0 * 4 + 1], r.data[(N / 2) * 4 + 1]]);
+        const errK = Math.max(...Dk.map(([a, b]) => Math.max(Math.abs(a / k - 1), Math.abs(b * k - 1))));
+        return { expected: `aberrated directions; D ahead k = ${fmt(k, 4)}, behind ${fmt(1 / k, 4)}`,
+                 measured: `D ${Dk.map(([a, b]) => `${fmt(a, 4)}, ${fmt(b, 4)}`).join('; ')}; ${seen} of ${2 * N} seen`,
+                 metric: `|Δθ′| ${fmt(worstA, 2)}, D ${fmt(worstD * 100, 2)}%, k ${fmt(errK, 2)}`,
+                 pass: seen === 2 * N && worstA < 1e-3 && worstD < 1e-3 && errK < 1e-3 };
+    },
+});
+
+cases.push({
+    name: 'Apparent superluminal motion: a blob leaves its core across the sky at v sin θ/(1 − v cos θ), γv at cos θ = v',
+    async run() {
+        // An eye at rest, a core 80 away along x, a blob ejected toward the eye θ off the line of
+        // sight at 0.95c; the streak plate's track where it leaves the core, times the distance
+        const D = 80, v = 0.95, g = 1 / Math.sqrt(1 - v * v), eye = [20, 128], core = [20 + D, 128];
+        const out = [];
+        for (const deg of [Math.acos(v) * 180 / Math.PI, 45, 8]) {
+            const th = deg * Math.PI / 180;
+            const gp = await makeSim({ on: ['relativityEnabled'], domainW: 256, domainH: 256 });
+            gp.addPrescribed({ kind: 'uniform', t0: 0, x: core[0], y: core[1], wx: 0, wy: 0 }, { bornAt: -Infinity });
+            await run(gp, 4, 0.25);
+            const tEj = gp.simTime;
+            gp.addPrescribed({ kind: 'uniform', t0: tEj, x: core[0], y: core[1], wx: -g * v * Math.cos(th), wy: -g * v * Math.sin(th) });
+            await run(gp, D + 6, 0.25);
+            gp.sliceFrame(frameParams({ kind: 3, boostX: 0, boostY: 0, originX: eye[0], originY: eye[1], refT: gp.simTime,
+                                        seen: true, viewHalfW: 1, viewHalfH: 1 }));
+            const tR = gp.simTime, dTau = 0.1;
+            gp.requestStreak({ dTau, forward: [1, 0] });
+            let s = null;
+            for (let i = 0; i < 200 && !s; i++) { await new Promise((r) => setTimeout(r, 5)); s = gp.readStreak(); }
+            gp.destroy();
+            // The track's start at τ₀ = t_ej + D, angle 0: the quadratic through it and two rows
+            const tau0 = tEj + D, kS = Math.floor((tR - tau0) / dTau);
+            const k1 = tR - kS * dTau - tau0 < 0.25 * dTau ? kS - 1 : kS, k2 = k1 - 1;
+            const row = (kk) => (kk * s.sources + 1) * 4;
+            const h1 = tR - k1 * dTau - tau0, h2 = tR - k2 * dTau - tau0;
+            const p1 = s.data[row(k1)], p2 = s.data[row(k2)];
+            const slope = (p1 * h2 * h2 - p2 * h1 * h1) / (h1 * h2 * (h2 - h1));
+            out.push({ deg, got: D * Math.abs(slope), want: v * Math.sin(th) / (1 - v * Math.cos(th)),
+                       ok: s.data[row(k1) + 2] > 0.5 && s.data[row(k2) + 2] > 0.5 && s.data[row(kS + 1) + 2] < 0.5 });
+        }
+        const err = Math.max(...out.map((o) => Math.abs(o.got / o.want - 1)));
+        return { expected: out.map((o) => `${o.deg.toFixed(1)}°: ${fmt(o.want, 4)}`).join(', ') + ` (γv = ${fmt(g * v, 4)})`,
+                 measured: out.map((o) => fmt(o.got, 4)).join(', '),
+                 metric: `${fmt(err * 100, 2)}%`, pass: out.every((o) => o.ok) && err < 2e-3 };
+    },
+});
+
 async function runAll(filter = '') {
     rowsEl.textContent = '';
     logEl.textContent = '';

@@ -3,7 +3,7 @@
 // to the sim. Every control shows the settings store (sim.settings), the modes and the view;
 // a control writes the store and calls update(), which applies the laws' prerequisites and the
 // mode locks to the store and shows the result everywhere, then pushes it to the GPU.
-import { loadPreset, PRESETS, PRESET_ORDER } from './presets.js';
+import { loadPreset, PRESETS, PRESET_ORDER, CHAPTERS } from './presets.js';
 import { startQuench } from './quench.js';
 import { DEFAULT_DOMAIN, COL_MERGE, COL_BOUNCE, BOUND_DESPAWN, BOUND_BOUNCE, BOUND_LOOP, TORUS, SPEED_OPTIONS, COL_NAMES, TOPO_NAMES, colFromString, topoFromString } from './config.js';
 import { REFERENCE } from './reference.js';
@@ -99,25 +99,35 @@ export function setupUI(sim) {
     // ═══ Figure ═══
 
     // ─── The list of figures, and the active figure's knobs ───
-    // A figure is a preset: its row loads it (or re-runs it, keeping its knobs), keys 1–6 too.
-    // Its knobs (presets.js) sit under its row as scales and in the caption as numbers you
-    // drag (caption.js), one value: a knob over a store key reads and writes the store live; a
-    // knob of its own holds a value the figure's spawn and tick read from `run.knobs`, and one
-    // marked `rerun` runs the figure again when it settles.
+    // A figure is a preset: its row loads it (or re-runs it, keeping its knobs), keys 1–9 too.
+    // The rows stand in their chapters (presets.js CHAPTERS), each under its numeral and name,
+    // numbered on through them. Its knobs (presets.js) sit under its row as scales and in the
+    // caption as numbers you drag (caption.js), one value: a knob over a store key reads and
+    // writes the store live; a knob of its own holds a value the figure's spawn and tick read
+    // from `run.knobs`, and one marked `rerun` runs the figure again when it settles.
     const figureList = $('figure-list');
     const figureRows = {};
     const knobBox = document.createElement('div');
     knobBox.className = 'figure-knobs';
-    PRESET_ORDER.forEach((key, i) => {
-        const row = document.createElement('button');
-        row.type = 'button';
-        row.className = 'figure-row';
-        row.setAttribute('aria-pressed', 'false');
-        row.innerHTML = `<span class="figure-no">${i + 1}</span>${plateGlyph(key)}`
-            + `<span class="figure-name" data-i18n="preset.${key}.name">${_T('preset.' + key + '.name', PRESETS[key].name)}</span>`;
-        row.addEventListener('click', () => loadFigure(key, { keep: sim.figure === key }));
-        figureList.append(row);
-        figureRows[key] = row;
+    const NUMERALS = ['I', 'II', 'III', 'IV', 'V', 'VI'];
+    let figureNo = 0;
+    CHAPTERS.forEach((ch, c) => {
+        const head = document.createElement('div');
+        head.className = 'figure-chapter';
+        head.innerHTML = `<span class="chapter-no">${NUMERALS[c]}</span>`
+            + `<span data-i18n="chapter.${ch.key}">${_T('chapter.' + ch.key, ch.key)}</span>`;
+        figureList.append(head);
+        for (const key of ch.figures) {
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.className = 'figure-row';
+            row.setAttribute('aria-pressed', 'false');
+            row.innerHTML = `<span class="figure-no">${++figureNo}</span>${plateGlyph(key)}`
+                + `<span class="figure-name" data-i18n="preset.${key}.name">${_T('preset.' + key + '.name', PRESETS[key].name)}</span>`;
+            row.addEventListener('click', () => loadFigure(key, { keep: sim.figure === key }));
+            figureList.append(row);
+            figureRows[key] = row;
+        }
     });
 
     sim.figure = 'none';
@@ -190,7 +200,7 @@ export function setupUI(sim) {
         // A store knob's value survives a re-run: the preset writes its default, then the knob
         const kept = keep ? Object.fromEntries(Object.entries(preset.knobs || {}).filter(([, d]) => d.store).map(([, d]) => [d.store, S[d.store]])) : null;
         sim.figure = key;
-        loadPreset(key, sim, { quiet: sim._openingScene || keep, knobs: sim.knobValues, settings: kept });
+        loadPreset(key, sim, { quiet: sim._openingScene || keep, knobs: sim.knobValues, settings: kept, rerun: keep });
         sim.knobs = makeKnobs(key);
         sim.caption?.rebuildKnobs();   // before buildKnobs, whose sync reads the caption's knobs
         buildKnobs();
@@ -202,6 +212,7 @@ export function setupUI(sim) {
 
     // ─── Clear ───
     const clearScene = () => {
+        if (sim.figureRun?.view && sim.frames.active) sim.observe('lab');
         sim.reset();
         sim.setDomain(DEFAULT_DOMAIN, DEFAULT_DOMAIN);
         sim.stats.resetBaseline();
@@ -595,6 +606,25 @@ export function setupUI(sim) {
     };
     coordsSeen.addEventListener('click', toSeen);
     sim.spacetime.onCoords = syncCoords;
+    /**
+     * Put the view in observer `key` (frame-panel.js's words), Seen or not, or with 'lab' in
+     * the lab's coordinates at once: the view a figure opens in (presets.js).
+     */
+    sim.observe = (key, { seen = false } = {}) => {
+        if (key === 'lab') {
+            sim.spacetime.toCoords(false);
+            sim.spacetime.s = 0;
+        } else {
+            sim.observerKind = key;
+            sim.framePanel?.choose(key);
+            if (sim.frames.active) sim.frames.seen = seen;
+        }
+        // The streak band shows or hides now, so a camera fitted next fits the stage it leaves
+        sim.streak?.update();
+        sim.resize();
+        syncCoords();
+        sim._dirty = true;
+    };
     // Words drawn on the canvas
     const labelCanvas = () => {
         sim.overlay._labels = {

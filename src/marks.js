@@ -97,7 +97,7 @@ const SWATCH = {
     cone: (o) => cone(o?.ink ? MUTED : ACCENT),
     event: () => line(13, 0, 13, 14, MUTED, 1) + circle(13, 7, 3.3, TEXT, GROUND, 1),
     // The accelerated observer's horizons: two hatched null planes and their corner line
-    horizon: () => hatch(1, 1, 11, 12, true, MUTED) + hatch(14, 1, 11, 12, false, MUTED) + line(13, 0, 13, 14, TEXT, 1.2),
+    horizon: (o) => (o?.plane ? '' : hatch(1, 1, 11, 12, true, MUTED) + hatch(14, 1, 11, 12, false, MUTED)) + line(13, 0, 13, 14, TEXT, 1.2),
     // The streak plate's tracks: solid approaching, dashed receding (src/streak.js)
     track: (o) => path('M2,11 C9,10 15,6 24,3', MUTED, o?.receding ? 1 : 1.8, o?.receding ? ' stroke-dasharray="3 2.5"' : ''),
     // Under Seen: a world line pierced by the observer's cone, its light running to the apex
@@ -171,6 +171,33 @@ const PLATES = {
     twinBounce: () => line(10, 30, 10, 2, MUTED, 1) + path('M10,30 L37,16 L10,2', MUTED, 1)
         + [24.5, 19, 13.5, 8].map((y) => circle(10, y, 1.3, 'none', MUTED, 0)).join('')
         + [[20.8, 24.4], [31.6, 18.8], [31.6, 13.2], [20.8, 7.6]].map(([x, y]) => circle(x, y, 1.3, 'none', MUTED, 0)).join(''),
+    // The accelerated observer's hyperbola among its lattice's, about their corner; the two
+    // horizons through it, and a body at rest in the lab crossing the future one
+    accelerated: () => {
+        const hyp = (xi, c, w) => {
+            const pts = [];
+            for (let i = 0; i <= 24; i++) { const t = -15 + 30 * i / 24; pts.push([9 + Math.sqrt(xi * xi + t * t), 16 - t]); }
+            return path(poly(pts), c, w);
+        };
+        return line(9, 16, 25, 0, MUTED, 0.9, ' stroke-dasharray="2 2"') + line(9, 16, 25, 32, MUTED, 0.9, ' stroke-dasharray="2 2"')
+            + hyp(5, MUTED, 0.9) + hyp(11, TEXT, 1.2) + hyp(19, MUTED, 0.9)
+            + line(17, 24, 17, 8, MUTED, 1) + line(17, 8, 17, 1, faint(MUTED, 40), 1);
+    },
+    // A ring of lamps seen from an eye moving through it: crowded forward
+    seenSky: () => {
+        let out = '';
+        for (let k = 0; k < 12; k++) {
+            const th = (k + 0.5) * Math.PI / 6, c = Math.cos(th);
+            const tp = Math.sign(Math.sin(th)) * Math.acos((c + 0.7) / (1 + 0.7 * c));
+            out += circle(24 + 13 * Math.cos(tp), 16 + 13 * Math.sin(tp), 1.5, MUTED, fillOf(MUTED), 0.9);
+        }
+        return out + circle(24, 16, 2, ACCENT, fillOf(ACCENT), 1) + arrowTo(26.5, 16, 33, 16, ACCENT, 1, 2.4);
+    },
+    // A jet's blobs leaving its core, nearly along the line of sight to the eye
+    superluminal: () => line(8, 25, 38, 25, faint(MUTED, 55), 0.8, ' stroke-dasharray="1.5 2"')
+        + circle(5.5, 25, 1.8, ACCENT, fillOf(ACCENT), 1) + circle(41, 25, 2.6, MUTED, fillOf(MUTED), 1)
+        + [8, 15, 22, 29].map((d) => circle(41 - d * 0.906, 25 - d * 0.423, 1.3, MUTED, fillOf(MUTED), 0.9)).join('')
+        + arrowTo(41 - 31 * 0.906, 25 - 31 * 0.423, 41 - 36 * 0.906, 25 - 36 * 0.423, MUTED, 0.9, 2.2),
     // The wheel at rest, and moving: contracted, its spoke bent
     wheel: () => circle(12, 16, 8.5, MUTED, fillOf(MUTED), 1.1) + line(12, 16, 17.5, 9.5, markOf(MUTED), 1.1)
         + `<ellipse cx="36" cy="16" rx="4.2" ry="8.5" style="stroke:${MUTED};fill:${fillOf(MUTED)};stroke-width:1.1"/>`

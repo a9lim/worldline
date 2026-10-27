@@ -5,10 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title data-i18n="meta.title">Worldline — Interactive Particle Physics Simulator | a9l.im</title>
-    <meta name="description" data-i18n-content="meta.description" content="Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in six curated presets, and tilt the plane into spacetime to see the world lines they trace.">
+    <meta name="description" data-i18n-content="meta.description" content="Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in nine curated figures, and tilt the plane into spacetime to see the world lines they trace.">
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
     <meta property="og:title" data-i18n-content="meta.ogTitle" content="Worldline — Interactive Particle Physics Simulator">
-    <meta property="og:description" data-i18n-content="meta.ogDescription" content="Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in six curated presets, and tilt the plane into spacetime to see the world lines they trace.">
+    <meta property="og:description" data-i18n-content="meta.ogDescription" content="Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in nine curated figures, and tilt the plane into spacetime to see the world lines they trace.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://a9l.im/worldline">
     <meta property="og:site_name" content="a9l.im">
@@ -23,7 +23,7 @@
     <meta name="twitter:site" content="@_a9lim">
     <meta name="twitter:creator" content="@_a9lim">
     <meta name="twitter:title" data-i18n-content="meta.twitterTitle" content="Worldline — Interactive Particle Physics Simulator">
-    <meta name="twitter:description" data-i18n-content="meta.twitterDescription" content="Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in six curated presets, and tilt the plane into spacetime to see the world lines they trace.">
+    <meta name="twitter:description" data-i18n-content="meta.twitterDescription" content="Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in nine curated figures, and tilt the plane into spacetime to see the world lines they trace.">
     <meta name="author" content="a9lim">
     <link rel="icon" href="/favicon.ico">
     <meta name="theme-color" content="#FCFCFB">
@@ -68,7 +68,7 @@
       "@type": ["WebApplication", "LearningResource"],
       "name": "Worldline",
       "url": "https://a9l.im/worldline",
-      "description": "Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in six curated presets, and tilt the plane into spacetime to see the world lines they trace.",
+      "description": "Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in nine curated figures, and tilt the plane into spacetime to see the world lines they trace.",
       "speakable": {
         "@type": "SpeakableSpecification",
         "cssSelector": ["meta[name='description']"]
@@ -255,7 +255,7 @@
       "@type": "HowTo",
       "name": "How to simulate particle physics with Worldline",
       "step": [
-        {"@type": "HowToStep", "position": 1, "name": "Choose a figure", "text": "Pick one of six curated figures from the list of figures; each sets its initial conditions and laws to show one effect, and the dotted numbers in its caption can be dragged to change it."},
+        {"@type": "HowToStep", "position": 1, "name": "Choose a figure", "text": "Pick one of nine curated figures from the list of figures; each sets its initial conditions and laws to show one effect, and the dotted numbers in its caption can be dragged to change it."},
         {"@type": "HowToStep", "position": 2, "name": "Place particles", "text": "Click or drag on the canvas to spawn bodies with the mass, charge, and spin set on the World tab, which draws the body each click will place."},
         {"@type": "HowToStep", "position": 3, "name": "Choose the laws", "text": "On the Laws tab, choose Newtonian mechanics, relativity, or relativity with 1PN, and tick individual forces — gravity, electromagnetism, Yukawa, Higgs, axion — to isolate specific interactions."},
         {"@type": "HowToStep", "position": 4, "name": "Observe trajectories", "text": "Watch particles interact in real time. Use pause, step, and speed controls to examine dynamics at different timescales."},
@@ -600,7 +600,7 @@
         <h3 data-i18n="edu.h.fields">Scalar fields</h3>
         <p data-i18n="edu.p.fields">Two scalar fields — Higgs and axion — live on a PQS grid with C² interpolation. The Higgs field modulates particle mass through its local vacuum expectation value, while the axion field couples to charge. Both evolve via Störmer-Verlet integration and exert gradient forces on particles.</p>
         <h3 data-i18n="edu.h.presets">Presets</h3>
-        <p data-i18n="edu.p.presets">Six curated figures each show one effect: cyclotron drift, where charges of both signs trace helices in spacetime; the twin paradox; a relativistic wheel; bremsstrahlung, where a beam of fast electrons bent by a nucleus sheds light beamed forward; Kibble–Zurek walls in a quenched Higgs field; and microlensing of a backdrop star. The dotted numbers in each caption are its knobs: drag one to change the figure.</p>
+        <p data-i18n="edu.p.presets">Nine curated figures in five chapters each show one effect. Clocks and simultaneity: the twin paradox, a relativistic wheel, and the horizon of an observer under constant acceleration. Light: aberration, a ring of lamps seen by an eye moving through it, and the apparent superluminal motion of a jet. Fields and radiation: cyclotron drift, where charges of both signs trace helices in spacetime, and bremsstrahlung, where a beam of fast electrons bent by a nucleus sheds light beamed forward. Gravity: microlensing of a backdrop star. The universe: Kibble–Zurek walls in a quenched Higgs field. The dotted numbers in each caption are its knobs: drag one to change the figure.</p>
     <h3 data-i18n="edu.h.frames">Frames</h3>
     <p data-i18n="edu.p.frames">The view can be drawn for observers other than the lab: a moving observer at a chosen speed and direction, the zero-momentum frame, the selected body's rest frame, a frame rotating at a chosen rate, or free fall. Worldline records every body's world line and redraws the scene on the observer's surface of simultaneity, so in a boosted frame moving rulers contract, clocks synchronized in the lab disagree across the view, and a fast wheel can be followed in its own rest frame, where it is round. The observer's present is set far enough into the lab's past that everything shown has already been computed, and the Measure tab reports how far behind the lab it is. A background grid of rulers at rest in the lab contracts and shears with the observer, and tilted into spacetime the same world lines are drawn in the observer's coordinates.</p>
     <h3 data-i18n="edu.h.expansion">Cosmological expansion</h3>

@@ -489,8 +489,19 @@ class Simulation {
         return Math.min(Math.max(z, ZOOM_MIN / this.scaleA), ZOOM_MAX);
     }
 
-    /** Center the camera on the domain and zoom to fit it. */
+    /** Center the camera on the domain and zoom to fit it; in a frame, on the observer. */
     fitCamera() {
+        const f = this.frames, run = this.figureRun;
+        if (f && f.active) {
+            // A frame's camera is in its observer's coordinates: a figure's own view of its own
+            // observer (presets.js), or the observer at the centre
+            const own = run && run.fit && run.view && f.kind === run.view.kind && f.slot === run.view.slot;
+            if (own) {
+                const { hw, hh, cx } = run.fit;
+                this.camera.reset(cx, 0, 0.92 * Math.min(this.width / (2 * hw), this.height / (2 * hh)));
+            } else this.camera.reset(0, 0, this._fitZoom());
+            return;
+        }
         this.camera.reset(this.physW / 2, this.physH / 2, this._fitZoom());
     }
 
@@ -550,7 +561,8 @@ class Simulation {
     /**
      * Add a prescribed body (src/prescribed.js): its world line is `curve`, its t0 lab time
      * (simTime; the world-line clock in a static universe). A preset's are initial conditions
-     * with the curve's past; anything added later is born now.
+     * with the curve's past; anything added later is born now, or at `bornAt` with its past
+     * from then (the jet's blobs already on their way).
      */
     addPrescribed(curve, options = {}) {
         const gpu = this.gpu;
@@ -559,7 +571,7 @@ class Simulation {
             mass: options.mass ?? 1,
             charge: Math.round((options.charge ?? 0) / BOSON_CHARGE) * BOSON_CHARGE,
             tau: options.tau ?? 0,
-            bornAt: this._spawningPreset ? -Infinity : null,
+            bornAt: options.bornAt ?? (this._spawningPreset ? -Infinity : null),
         });
         if (idx < 0) return -1;
         if (!options.skipBaseline) this.stats.resetBaseline();
@@ -570,6 +582,7 @@ class Simulation {
     /** Clear the simulation: particles, bosons, fields, selection. */
     reset() {
         this.presetTick = null;
+        this.figureRun = null;
         this.spacetime.minDepth = 0;
         this.select(-1);
         if (this.gpu) this.gpu.reset(this);

@@ -11,11 +11,11 @@ import { REFERENCE_STRINGS } from './strings-reference.js';
 const UI_EN = {
     // ── document <head> ──
     'meta.title': "Worldline — Interactive Particle Physics Simulator | a9l.im",
-    'meta.description': "Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in six curated presets, and tilt the plane into spacetime to see the world lines they trace.",
+    'meta.description': "Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in nine curated figures, and tilt the plane into spacetime to see the world lines they trace.",
     'meta.ogTitle': "Worldline — Interactive Particle Physics Simulator",
-    'meta.ogDescription': "Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in six curated presets, and tilt the plane into spacetime to see the world lines they trace.",
+    'meta.ogDescription': "Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in nine curated figures, and tilt the plane into spacetime to see the world lines they trace.",
     'meta.twitterTitle': "Worldline — Interactive Particle Physics Simulator",
-    'meta.twitterDescription': "Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in six curated presets, and tilt the plane into spacetime to see the world lines they trace.",
+    'meta.twitterDescription': "Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in nine curated figures, and tilt the plane into spacetime to see the world lines they trace.",
 
     // ── Topbar ──
     'topbar.modeNormalTitle': 'Normal mode (X)',
@@ -247,7 +247,7 @@ const UI_EN = {
 
     // ── About panel ──
     'about.title': 'Worldline',
-    'about.description': "Spawn bodies and watch them interact through gravity, electromagnetism and stranger forces, then tilt the plane into spacetime to see the world lines they trace. Fling matter into orbit, follow a moving observer, choose the laws the bodies obey, and drag the numbers in each of six figures’ captions to change them.",
+    'about.description': "Spawn bodies and watch them interact through gravity, electromagnetism and stranger forces, then tilt the plane into spacetime to see the world lines they trace. Fling matter into orbit, follow a moving observer, choose the laws the bodies obey, and drag the numbers in each of nine figures’ captions to change them.",
     'about.controls.addParticle': 'Add particle',
     'about.controls.addParticleVal': 'Click on canvas',
     'about.controls.fling': 'Fling particle',
@@ -344,6 +344,14 @@ const UI_EN = {
     'preset.wheel.name': 'Relativistic wheel',
     'preset.twinBounce.name': 'Twin paradox',
     'preset.bremsstrahlung.name': 'Bremsstrahlung',
+    'preset.accelerated.name': 'Rindler horizon',
+    'preset.seenSky.name': 'Aberration',
+    'preset.superluminal.name': 'Apparent superluminal motion',
+    'chapter.clocks': 'Clocks and simultaneity',
+    'chapter.light': 'Light',
+    'chapter.fields': 'Fields and radiation',
+    'chapter.gravity': 'Gravity',
+    'chapter.universe': 'The universe',
 
     // ── Edu-content (long-form crawler text) ──
     'edu.summary': 'About this simulation',
@@ -354,7 +362,7 @@ const UI_EN = {
     'edu.h.fields': 'Scalar fields',
     'edu.p.fields': 'Two scalar fields — Higgs and axion — live on a PQS grid with C² interpolation. The Higgs field modulates particle mass through its local vacuum expectation value, while the axion field couples to charge. Both evolve via Störmer-Verlet integration and exert gradient forces on particles.',
     'edu.h.presets': 'Presets',
-    'edu.p.presets': "Six curated figures each show one effect: cyclotron drift, where charges of both signs trace helices in spacetime; the twin paradox; a relativistic wheel; bremsstrahlung, where a beam of fast electrons bent by a nucleus sheds light beamed forward; Kibble–Zurek walls in a quenched Higgs field; and microlensing of a backdrop star. The dotted numbers in each caption are its knobs: drag one to change the figure.",
+    'edu.p.presets': "Nine curated figures in five chapters each show one effect. Clocks and simultaneity: the twin paradox, a relativistic wheel, and the horizon of an observer under constant acceleration. Light: aberration, a ring of lamps seen by an eye moving through it, and the apparent superluminal motion of a jet. Fields and radiation: cyclotron drift, where charges of both signs trace helices in spacetime, and bremsstrahlung, where a beam of fast electrons bent by a nucleus sheds light beamed forward. Gravity: microlensing of a backdrop star. The universe: Kibble–Zurek walls in a quenched Higgs field. The dotted numbers in each caption are its knobs: drag one to change the figure.",
     'edu.h.expansion': 'Cosmological expansion',
     'edu.p.expansion': "With expansion on, the periodic domain becomes a slice of an expanding Friedmann–Robertson–Walker universe. Bodies at rest keep their comoving positions while the space between them grows; peculiar momenta and photon energies fall as 1/a; scalar fields feel Hubble friction; and bound systems keep their size. The history can be imposed (de Sitter, matter, radiation, ΛCDM) or follow from the universe's own contents through the Friedmann equation, with matter, radiation and field energy each diluting at its own rate. Signals travel on light cones that are straight in comoving coordinates and conformal time, and because Maxwell's equations are conformally invariant a charge's Liénard–Wiechert field stays exact, its radiation dimmed by the redshift. The Measure tab shows the scale factor, the Hubble rate, the Hubble radius and the event horizon, and books the energy the expansion takes or gives as its own line, so the energy drift still measures numerical error. An axion field frozen by Hubble friction starts oscillating once the Hubble rate falls below its mass and then dilutes like cold matter (misalignment), and a Higgs field quenched through its symmetry-breaking transition freezes into domains, and a slower quench leaves fewer walls between them: the Kibble–Zurek mechanism (Kibble, 1976; Zurek, 1985).",
     'edu.h.lensing': 'Gravitational lensing',
@@ -415,6 +423,8 @@ const UI_EN = {
     'knob.v': "speed",
     'knob.tau': "quench time",
     'knob.M': "lens mass",
+    'knob.alpha': "acceleration α",
+    'knob.theta': "angle θ",
     'about.controls.knob': "Change a figure",
     'about.controls.knobVal': "Drag a dotted number in the caption",
     'stats.forceSum': "Forces summed",
@@ -426,11 +436,11 @@ const UI_EN = {
 const UI_JA = {
     // ── document <head> ──
     'meta.title': 'Worldline | a9l.im',
-    'meta.description': '重力・電磁気・相対論的効果が粒子の運動をどう形作るかを探る。11種の力、スカラー場、厳選した六つのプリセットを備えたインタラクティブな多体シミュレータ。WebGPUによりブラウザ上でリアルタイム動作。',
+    'meta.description': '重力・電磁気・相対論的効果が粒子の運動をどう形作るかを探る。11種の力、スカラー場、厳選した九つの図を備えたインタラクティブな多体シミュレータ。WebGPUによりブラウザ上でリアルタイム動作。',
     'meta.ogTitle': 'Worldline — インタラクティブ粒子物理シミュレータ',
-    'meta.ogDescription': '重力・電磁気・相対論的効果が粒子の運動をどう形作るかを探る。厳選した六つのプリセットを備えたインタラクティブな多体シミュレータ、ブラウザ上でリアルタイム動作。',
+    'meta.ogDescription': '重力・電磁気・相対論的効果が粒子の運動をどう形作るかを探る。厳選した九つの図を備えたインタラクティブな多体シミュレータ、ブラウザ上でリアルタイム動作。',
     'meta.twitterTitle': 'Worldline — インタラクティブ粒子物理シミュレータ',
-    'meta.twitterDescription': '重力・電磁気・相対論的効果が粒子の運動をどう形作るかを探る。厳選した六つのプリセットを備えたインタラクティブな多体シミュレータ。',
+    'meta.twitterDescription': '重力・電磁気・相対論的効果が粒子の運動をどう形作るかを探る。厳選した九つの図を備えたインタラクティブな多体シミュレータ。',
 
     // ── Topbar ──
     'topbar.modeNormalTitle': '通常モード (X)',
@@ -660,7 +670,7 @@ const UI_JA = {
 
     // ── About panel ──
     'about.title': 'Worldline',
-    'about.description': "物体を生成し、重力・電磁気・より奇妙な力による相互作用を観察し、平面を時空へ傾けて、物体がたどる世界線を見ます。物質を軌道に投げ込み、動く観測者の視点で追い、物体が従う法則を選び、六つの図のキャプションにある数字をドラッグして図を変えてください。",
+    'about.description': "物体を生成し、重力・電磁気・より奇妙な力による相互作用を観察し、平面を時空へ傾けて、物体がたどる世界線を見ます。物質を軌道に投げ込み、動く観測者の視点で追い、物体が従う法則を選び、九つの図のキャプションにある数字をドラッグして図を変えてください。",
     'about.controls.addParticle': '粒子を追加',
     'about.controls.addParticleVal': 'キャンバスをクリック',
     'about.controls.fling': '粒子を投げる',
@@ -757,6 +767,14 @@ const UI_JA = {
     'preset.wheel.name': '相対論的な車輪',
     'preset.twinBounce.name': '双子のパラドックス',
     'preset.bremsstrahlung.name': '制動放射',
+    'preset.accelerated.name': 'リンドラー地平線',
+    'preset.seenSky.name': '光行差',
+    'preset.superluminal.name': '見かけの超光速運動',
+    'chapter.clocks': '時計と同時性',
+    'chapter.light': '光',
+    'chapter.fields': '場と放射',
+    'chapter.gravity': '重力',
+    'chapter.universe': '宇宙',
 
     // ── Edu-content (long-form crawler text) ──
     'edu.summary': 'このシミュレーションについて',
@@ -767,7 +785,7 @@ const UI_JA = {
     'edu.h.fields': 'スカラー場',
     'edu.p.fields': '2つのスカラー場 — ヒッグスとアクシオン — はC²補間付きのPQS格子上で定義されます。ヒッグス場は局所的な真空期待値を通じて粒子質量を変調し、アクシオン場は電荷に結合します。両者ともストーマー＝ヴェルレ法で時間発展し、勾配力で粒子に作用します。',
     'edu.h.presets': 'プリセット',
-    'edu.p.presets': "厳選した六つの図が、それぞれ一つの効果を示します。正負の電荷が時空にらせんを描くサイクロトロン・ドリフト、双子のパラドックス、相対論的な車輪、原子核に曲げられた高速電子の列が前方へ光を放つ制動放射、急冷したヒッグス場にできるキブル＝ズレックの壁、そして背景の星のマイクロレンズです。キャプションの点線の数字はその図のつまみで、ドラッグすると図が変わります。",
+    'edu.p.presets': "厳選した九つの図が五つの章に分かれ、それぞれ一つの効果を示します。時計と同時性では、双子のパラドックス、相対論的な車輪、一定の加速度で進む観測者の地平線。光では、灯りの輪の中を動く目に見える光行差と、ジェットの見かけの超光速運動。場と放射では、正負の電荷が時空にらせんを描くサイクロトロン・ドリフトと、原子核に曲げられた高速電子の列が前方へ光を放つ制動放射。重力では背景の星のマイクロレンズ。宇宙では、急冷したヒッグス場にできるキブル＝ズレックの壁です。キャプションの点線の数字はその図のつまみで、ドラッグすると図が変わります。",
     'edu.h.expansion': '宇宙膨張',
     'edu.p.expansion': '膨張をオンにすると、周期的な領域は膨張するフリードマン＝ロバートソン＝ウォーカー宇宙の一断面になります。静止した物体は共動座標に留まり、その間の空間が伸びます。特異運動量と光子のエネルギーは 1/a で減り、スカラー場はハッブル摩擦を受け、束縛系は大きさを保ちます。膨張の歴史は課すこと（ド・ジッター、物質優勢、放射優勢、ΛCDM）も、宇宙自身の内容物からフリードマン方程式で決めることもでき、物質・放射・場のエネルギーはそれぞれ固有の割合で薄まります。信号は共動座標と共形時間で真っ直ぐな光円錐の上を伝わり、マクスウェル方程式が共形不変なので、電荷のリエナール＝ヴィーヘルト場は厳密なまま、その放射は赤方偏移の分だけ弱まります。測定タブにはスケール因子、ハッブル率、ハッブル半径、事象の地平面が表示され、膨張が奪い与えるエネルギーは別の行に記録されるので、エネルギーのドリフトは数値誤差を表し続けます。ハッブル摩擦で凍結したアクシオン場はハッブル率が質量を下回ると振動を始めて冷たい物質のように薄まり（ミスアラインメント）、対称性の破れる転移をクエンチしたヒッグス場は領域に凍結し、クエンチが遅いほど領域の間の壁は少なくなります。これがキブル＝ズレック機構です（Kibble, 1976; Zurek, 1985）。',
     'edu.h.lensing': '重力レンズ',
@@ -828,6 +846,8 @@ const UI_JA = {
     'knob.v': "速さ",
     'knob.tau': "クエンチ時間",
     'knob.M': "レンズの質量",
+    'knob.alpha': "加速度 α",
+    'knob.theta': "角度 θ",
     'about.controls.knob': "図を変える",
     'about.controls.knobVal': "キャプションの点線の数字をドラッグ",
     'stats.forceSum': "力の和",

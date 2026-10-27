@@ -74,6 +74,13 @@ export default class FramePanel {
         this._sync();
     }
 
+    /** Show the accelerated frame's α as frames.js holds it. */
+    syncAlpha() {
+        const a = this.sim.frames.alpha;
+        document.getElementById('frameAlphaInput').value = a;
+        document.getElementById('frameAlphaValue').textContent = a.toFixed(3);
+    }
+
     /** Show the boost frame's speed and direction as frames.js holds them. */
     syncBoost() {
         const f = this.sim.frames, $ = (id) => document.getElementById(id);

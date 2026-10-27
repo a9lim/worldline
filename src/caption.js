@@ -6,8 +6,10 @@
 // Knob): the line marks one with a token, and the writer keeps each knob's element across
 // rewrites, changing only the text around it, so a drag survives them.
 import { getLang } from './i18n.js';
-import { PRESET_ORDER } from './presets.js';
+import { PRESET_ORDER, JET_D } from './presets.js';
 import { Knob } from './controls.js';
+import { FRAME_PARTICLE } from './frames.js';
+import { radarCoords, acceleratedLine } from './radar.js';
 
 // A knob's place in the line: \u0001key\u0002
 const TOKEN = /\u0001(\w+)\u0002/;
@@ -24,6 +26,13 @@ const TEXT = {
         selected: (v, tau) => `red body ${v}c · τ ${tau}`,
         cyclotron: (B, E, d) => `B ${B} · E ${E} · E/B ${d}c`,
         twinBounce: (v, g, tt, th) => `v ${v}c · γ ${g} · traveller τ ${tt} · home τ ${th}`,
+        accelerated: (a, h) => `α ${a} · horizon ${h} behind`,
+        rindlerBody: (r, d) => `red body ruler ${r} · radar ${d}`,
+        pastHorizon: 'red body past the horizon',
+        seenSky: (v, g) => `v ${v}c · γ ${g}`,
+        doppler: (up, down) => `D ahead ${up} · behind ${down}`,
+        superluminal: (th, v) => `θ ${th}° · v ${v}c`,
+        apparent: (u) => `apparent ${u}c`,
         wheel: (v, g, tm, tr) => `v ${v}c · γ ${g} · moving τ ${tm} · at rest τ ${tr}`,
         bremsstrahlung: (v, E) => `v ${v}c · radiated ${E}`,
         kzBefore: (T, tau) => `transition in ${T} · τ_Q ${tau}`,
@@ -39,6 +48,13 @@ const TEXT = {
         selected: (v, tau) => `赤い物体 ${v}c・τ ${tau}`,
         cyclotron: (B, E, d) => `B ${B}・E ${E}・E/B ${d}c`,
         twinBounce: (v, g, tt, th) => `v ${v}c・γ ${g}・旅人 τ ${tt}・家 τ ${th}`,
+        accelerated: (a, h) => `α ${a}・地平線は後方 ${h}`,
+        rindlerBody: (r, d) => `赤い物体 物差し ${r}・レーダー ${d}`,
+        pastHorizon: '赤い物体は地平線の向こう',
+        seenSky: (v, g) => `v ${v}c・γ ${g}`,
+        doppler: (up, down) => `前方の D ${up}・後方 ${down}`,
+        superluminal: (th, v) => `θ ${th}°・v ${v}c`,
+        apparent: (u) => `見かけ ${u}c`,
         wheel: (v, g, tm, tr) => `v ${v}c・γ ${g}・動く車輪 τ ${tm}・静止 τ ${tr}`,
         bremsstrahlung: (v, E) => `v ${v}c・放射 ${E}`,
         kzBefore: (T, tau) => `転移まで${T}・τ_Q ${tau}`,
@@ -47,6 +63,31 @@ const TEXT = {
         microlensing: (M, rE, u, mu) => `M ${M}・R_E ${rE}・u ${u}` + (mu ? `・μ ${mu}` : ''),
     },
 };
+
+/**
+ * The jet's apparent speed across the sky (presets.js superluminal), from the streak plate:
+ * the newest blob whose track has begun, its slope where it leaves the core's direction (at
+ * τ₀ = its ejection + the core's distance, at angle 0), times that distance. The slope is the
+ * quadratic's through the track's start and its first two rows.
+ */
+function apparentSpeed(run, s) {
+    if (!s || s.t == null) return null;
+    for (let b = run.blobs.length - 1; b >= 0; b--) {
+        const { idx, t } = run.blobs[b], tau0 = t + JET_D;
+        const kStart = Math.floor((s.t - tau0) / s.dTau);
+        if (kStart >= s.rows) continue;
+        // The first two rows after τ₀, the first not too close to it
+        const k1 = s.t - kStart * s.dTau - tau0 < 0.25 * s.dTau ? kStart - 1 : kStart, k2 = k1 - 1;
+        if (k2 < 0) continue;
+        const row = (k) => (k * s.sources + idx) * 4;
+        if (s.data[row(k1) + 2] < 0.5 || s.data[row(k2) + 2] < 0.5) continue;
+        const h1 = s.t - k1 * s.dTau - tau0, h2 = s.t - k2 * s.dTau - tau0;
+        const p1 = s.data[row(k1)], p2 = s.data[row(k2)];
+        const slope = (p1 * h2 * h2 - p2 * h1 * h1) / (h1 * h2 * (h2 - h1));
+        return JET_D * Math.abs(slope);
+    }
+    return null;
+}
 
 export default class Caption {
     constructor(sim) {
@@ -134,6 +175,44 @@ export default class Caption {
                 const g = 1 / Math.sqrt(1 - c.v * c.v);
                 return L.twinBounce(this._k('v', fmt(c.v)), fmt(g), fmt(trav.tau, 1), fmt(home.tau, 1));
             }
+            case 'accelerated': {
+                // The red body's distance from the observer by ruler (on its slice, in the
+                // Rindler coordinates of the run's corner) and by radar, at the scene's event
+                const run = sim.figureRun, a = run && run.alpha;
+                if (!a) return '';
+                const parts = [L.accelerated(this._k('alpha', a.toFixed(3)), fmt(1 / a))];
+                const b = body(sim.selectedIdx);
+                if (b && sim.scene.t != null) {
+                    const X = b.x - run.xc, T = sim.scene.t - run.tc, Y = b.y - run.yo;
+                    const r = radarCoords(acceleratedLine(run.xo, run.yo, run.tc, a, 1, 0), sim.scene.t, b.x, b.y);
+                    if (X > Math.abs(T) && !r.beyond) {
+                        parts.push(L.rindlerBody(fmt(Math.hypot(Math.sqrt(X * X - T * T) - 1 / a, Y)), fmt(r.distance)));
+                    } else parts.push(L.pastHorizon);
+                }
+                return parts.join(L.sep);
+            }
+            case 'seenSky': {
+                // On a coast the lamps on the axis are dead ahead and behind: their Doppler
+                // factors from the streak plate's newest row
+                const run = sim.figureRun, eye = run && body(run.select), c = gp?.prescribed.get(run?.select);
+                if (!eye || !c) return '';
+                const g = 1 / Math.sqrt(1 - c.v * c.v);
+                const parts = [L.seenSky(this._k('v', fmt(c.v)), fmt(g))];
+                const s = sim.frames.seeing ? gp.readStreak() : null;
+                if (s) {
+                    const D = run.axis.map((j) => (s.data[j * 4 + 2] > 0.5 ? s.data[j * 4 + 1] : NaN));
+                    if (D.every(Number.isFinite)) parts.push(L.doppler(fmt(Math.max(...D)), fmt(Math.min(...D))));
+                }
+                return parts.join(L.sep);
+            }
+            case 'superluminal': {
+                const run = sim.figureRun;
+                if (!run || !run.blobs) return '';
+                const parts = [L.superluminal(this._k('theta', fmt(run.knobs.theta, 0)), this._k('v', fmt(run.knobs.v)))];
+                const u = sim.frames.seeing ? apparentSpeed(run, gp.readStreak()) : null;
+                if (u) parts.push(L.apparent(fmt(u)));
+                return parts.join(L.sep);
+            }
             case 'wheel': {
                 const rest = body(0), moving = body(1);
                 if (!rest || !moving) return '';
@@ -176,18 +255,24 @@ export default class Caption {
         if (this.titleEl.textContent !== fig) this.titleEl.textContent = fig;
         const parts = [];
         if (key !== 'none' && window._i18n) parts.push(window._i18n.t('preset.' + key + '.name', ''));
-        if (sim.frames.active) {
+        // A figure that opens in its own observer reads out its values there too
+        const run = sim.figureRun, f = sim.frames;
+        const own = !!(run && run.view && f.active && f.kind === run.view.kind
+            && (f.kind !== FRAME_PARTICLE || f.slot === run.view.slot));
+        let desc = '';
+        if (f.active && !own) {
             const st = sim.frames.state;
             const v = st && st.valid ? Math.hypot(st.ux, st.uy) : sim.frames.boostSpeed;
             const g = 1 / Math.sqrt(1 - Math.min(v * v, 0.9999));
             parts.push(L.observer(fmt(g), st && st.valid && st.lag > 0.05 ? fmt(st.lag, 1) : ''));
         } else {
             // A preset reads out its own values; a scene that no longer fits it, its bodies
-            const desc = key !== 'none' ? this._presetText(L, key) : '';
+            desc = key !== 'none' ? this._presetText(L, key) : '';
             parts.push(desc || L.bodies(sim.gpu ? sim.gpu.physics.aliveCount : 0));
         }
+        // The selected body, unless it is the figure's own and its values have named it
         const sel = sim.selectedIdx >= 0 ? sim.stats.selected : null;
-        if (sel) parts.push(L.selected(fmt(sel.speed), fmt(sel.tau, 1)));
+        if (sel && !(desc && run && sim.selectedIdx === run.select)) parts.push(L.selected(fmt(sel.speed), fmt(sel.tau, 1)));
         this._write(parts.filter(Boolean).join(L.sep), this._force);
         this._force = false;
     }

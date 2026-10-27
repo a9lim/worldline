@@ -158,8 +158,10 @@ As of 2026-10-27, after 2.6's sight and the hand:
   fields on 128² grids with grid gravity, Paczyński–Wiita holes with Hawking, Schwinger and
   superradiance, pools of photons, pions and leptons, an expanding torus, and a lensed backdrop with
   a microlensing probe.
-- **The margin** in the plate's notation (2.3), and six figures with knobs in their captions.
-- **Checks.** 69 oracles in `tests/physics-validation.html`; plate screenshots that reproduce byte
+- **The margin** in the plate's notation (2.3), and nine figures in five chapters with knobs in their
+  captions; 2.6 added the Rindler horizon, aberration and apparent superluminal motion, and the
+  twin by its ticks' light and by radar.
+- **Checks.** 73 oracles in `tests/physics-validation.html`; plate screenshots that reproduce byte
   for byte with their physics hashes; colour-vision sheets; benchmarks timed back to back
   (`docs/PERFORMANCE.md`).
 - **The model pass** has landed step 0: ten contained bugs fixed or disabled (the quadrupole sink,
@@ -200,8 +202,8 @@ What each version brings to the list of figures is §4's last column.
 ## 4. The list of figures
 
 Each figure puts one question and answers it with a number. The rows give its knob, the predicted
-number, what is measured, and the version that makes it possible; ✓ marks the six that exist, with
-the version that brings their predictions in brackets; a row beginning with a dash is a variant of
+number, what is measured, and the version that makes it possible; ✓ marks the nine that exist (and
+the variants that do), with the version that brings their predictions in brackets; a row beginning with a dash is a variant of
 the figure above it. Chapters order the Figure tab, each under a hairline rule with its figures'
 drawings (`plateGlyph`) beside them, and the numbering follows the list.
 
@@ -210,18 +212,18 @@ drawings (`plateGlyph`) beside them, and the numbering follows the list.
 | Figure | Knob | Predicted | Measured | Needs |
 |---|---|---|---|---|
 | **The twin** ✓ | v | `Δτ_traveller/Δτ_home = √(1 − v²)` | both clocks at reunion | (2.6) |
-| — by its ticks' light | v | the light of the traveller's ticks reaches home every kT going out and every T/k coming back, `k = √((1 + v)/(1 − v))`; the counts give the ages with no simultaneity at all | ticks counted as their light arrives, both ways | 2.6 |
-| — by radar | v | the traveller's radar surfaces stay continuous through the turn, where its rest frames jump | the radar slices along the traveller's world line | 2.6 |
+| — by its ticks' light ✓ | v | the light of the traveller's ticks reaches home every kT going out and every T/k coming back, `k = √((1 + v)/(1 − v))`; the counts give the ages with no simultaneity at all | ticks counted as their light arrives, both ways | 2.6 |
+| — by radar ✓ | v | the traveller's radar surfaces stay continuous through the turn, where its rest frames jump | the radar slices along the traveller's world line | 2.6 |
 | **The wheel** ✓ | v | twist `2·v·v_rim` across the disk; the rim's clocks at 1/γ | the spoke's angle; τ | (2.6) |
-| **The accelerated observer** | α | a horizon 1/α behind it; a static body's radar distance `(1/α)·arcosh[(α²(ξ² + y²) + 1)/(2αξ)]`, diverging at the horizon | static bodies' radar distances; the last light from a body that crosses the horizon | 2.6 |
+| **The accelerated observer** ✓ (Rindler horizon) | α | a horizon 1/α behind it; a static body's radar distance `(1/α)·arcosh[(α²(ξ² + y²) + 1)/(2αξ)]`, diverging at the horizon | static bodies' radar distances; the last light from a body that crosses the horizon | 2.6 |
 | — Bell's ships and the rigid ruler | g | ships under equal lab accelerations drift apart in their own frame, their proper separation growing as γ; a Born-rigid ruler's ends accelerate as α = 1/ξ and keep their length | separations on the rear's slice | 3.0 |
 
 **II. Light**
 
 | Figure | Knob | Predicted | Measured | Needs |
 |---|---|---|---|---|
-| **The seen sky** | v | aberration `cos θ′ = (cos θ + v)/(1 + v cos θ)`; bolometric intensity ×D⁴ | the streak plate's directions and weights | 2.6 |
-| **Faster than light, seen** | θ | apparent speed `v sin θ/(1 − v cos θ)`, up to γv | the track's slope on the streak plate | 2.6 |
+| **The seen sky** ✓ (Aberration) | v | aberration `cos θ′ = (cos θ + v)/(1 + v cos θ)`; bolometric intensity ×D⁴ | the streak plate's directions and weights | 2.6 |
+| **Faster than light, seen** ✓ (Apparent superluminal motion) | θ, v | apparent speed `v sin θ/(1 − v cos θ)`, up to γv | the track's slope on the streak plate | 2.6 |
 | **A fast disk, seen** | v | Terrell's apparent rotation | the disk's seen outline | 2.6, second stage |
 
 **III. Fields and radiation**
@@ -376,7 +378,9 @@ future is known. Simultaneity at the ticks landed the same day: from each of the
 ticks to each other world line, the rest frame's chord dashed and the radar surface's trace solid
 (`AGENTS.md`, The spacetime view), with the twin's oracle: at the turn the rest frame sweeps
 home's line by 2T_a + 2v(D_a + vT_c) in Δτ 4.4, while radar carries home's time on at between 1/k
-and k, reaching k.
+and k, reaching k. The twin's variants by its ticks' light and by radar then landed as the twin
+opening with its traveller selected, so both draw, with the oracle that counts its ticks on the
+GPU's world lines: they reach home every kT going and T/k coming back.
 
 - **Ticks' light.** A body's beads are its clock's ticks. Selected, its ticks send light: each bead's
   future cone, drawn as a ring growing at c in the plane and a cone in the plate, marked where it
@@ -399,7 +403,10 @@ and k, reaching k.
 ### 6.5 The seen sky and the streak plate
 
 Landed 2026-10-27 (§14): the streak plate with aberration, Doppler, D⁴ weights and the
-approaching/receding pattern, and its oracle. Still open: apparent superluminal motion as a figure.
+approaching/receding pattern, and its oracle; then the figures: Aberration (an eye shuttling
+through a ring of lamps, the Doppler factors ahead and behind read from the plate) and Apparent
+superluminal motion (a jet's blobs, their apparent speed from the slope where each track leaves
+the core).
 Real light moves to 3.0's event log (§7.1): for a body observer a quantum's arrival is its
 absorption, an `EV_ABSORB` record, and a point eye catches none, so arrivals are logged events, not
 an aperture invented for sight.
@@ -433,7 +440,9 @@ an aperture invented for sight.
 
 Landed 2026-10-27 (§14): the observer kind, slices through the corner, the hatched horizons and
 the corner line, radar off the axis, and their oracles; bodies fading with the frame's lapse αξ
-toward the horizon and faint beyond it. Still open: Bell's ships and the rigid ruler (3.0).
+toward the horizon and faint beyond it; then the figure, the Rindler horizon: a Born-rigid lattice
+standing still on the slices with clocks at αξ, the red body's distance by ruler and by radar, two
+bodies dropped toward the horizon. Still open: Bell's ships and the rigid ruler (3.0).
 
 - An observer kind beside the six: constant proper acceleration α along a chosen direction, through
   the camera's centre now. Its world line is the hyperbola x² − t² = 1/α² about a corner, the line
@@ -519,8 +528,11 @@ isn't this effect (Codex); label point-source sight as point-source until this s
 - radar coordinates of an inertial observer equal its Lorentz coordinates; a static body's radar
   distance is its distance; the accelerated observer's radar time equals η and its radar distance
   the arcosh above, off the axis too;
-- the k-calculus interval kT, and the twin's ticks counted against its clocks;
-- apparent transverse speed `v sin θ/(1 − v cos θ)`;
+- the k-calculus interval kT, and the twin's ticks counted against its clocks (landed);
+- apparent transverse speed `v sin θ/(1 − v cos θ)` (landed);
+- the Rindler lattice still on the accelerated slices with clocks at αξ, radar distances by the
+  arcosh, a dropped body seen ever closer to its crossing; aberration and k, 1/k for an eye
+  coasting through a ring of lamps (landed with the figures);
 - a rod's apparent length head-on, `L√((1 + v)/(1 − v))` approaching and `L√((1 − v)/(1 + v))`
   receding (landed);
 - the twin's two slicings: the rest frame's sweep of home's line at the turn, `2T_a + 2v(D_a +
@@ -820,7 +832,7 @@ struct WorldEvent {          // 48 B, 12 words
 ### 12.3 Tests
 
 `tests/physics-validation.html` instantiates the production `GPUPhysics` headlessly, runs each
-analytic oracle and reads back GPU state (69 oracles). Every feature adds its oracle, and every
+analytic oracle and reads back GPU state (73 oracles). Every feature adds its oracle, and every
 figure is one. The WGSL→JS transpiler (`lib/wgsl/transpile.js`, compute only) and `gpu-diff.mjs`
 remain available for Node kernel tests where a kernel is pure compute. The screenshot-diff,
 colour-vision and benchmark harnesses are in `docs/second-pass/tools/`.

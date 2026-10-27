@@ -502,7 +502,8 @@ export default class GPURenderer {
             pass.setBindGroup(0, sp.futureGroup);
             pass.draw(6 * FUTURE_SEGS, st.prescribed);
         }
-        if (st.horizons && st.tilt >= 0.05) {
+        if (st.horizons) {
+            // Seen from above only the corner line, where the horizon stands
             pass.setPipeline(sp.horizon);
             pass.setBindGroup(0, sp.horizonGroup);
             pass.draw(4, 3);

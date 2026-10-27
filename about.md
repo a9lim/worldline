@@ -1,7 +1,7 @@
 ---
 name: Worldline
 title: Worldline — Interactive Particle Physics Simulator
-description: Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in six curated presets, and tilt the plane into spacetime to see the world lines they trace.
+description: Explore relativistic many-body dynamics, electromagnetism, light and scalar fields in nine curated figures, and tilt the plane into spacetime to see the world lines they trace.
 updated: 2026-10-27
 ---
 
@@ -121,7 +121,7 @@ Expansion requires the torus: the periodic domain is the whole universe, a slab 
 
 The view can be drawn for other observers: zero momentum, the selected particle, a boost at a chosen speed and direction, a frame co-rotating at a chosen rate, a constant acceleration, or free fall (the selected particle followed without a Lorentz transformation, so uniform gravity vanishes and tides remain). Worldline cuts every recorded world line with the observer's surface of simultaneity. In a boosted frame, moving rulers contract, lab-synchronized clocks disagree across the view, and a fast wheel seen in its own rest frame is round. The observer's present lags the lab's so that everything drawn has already been computed, and the Measure tab reports the lag. The Figure tab chooses the observer, and the figure bar's lab · observer switches between the lab and it. Frames are only a view: spawning and selection act in the lab, arrows and the field overlays stay lab-only, and a frame that is not a boost draws no world lines.
 
-An accelerating observer keeps a constant proper acceleration α along a chosen direction. Its world line is a hyperbola about a corner 1/α behind it, every one of its slices passes through the corner, and tilted, its two horizons are drawn as hatched null planes. Bodies fade with the frame's lapse αξ as they near the horizon, where their clocks freeze, and stay faint beyond it.
+An accelerating observer keeps a constant proper acceleration α along a chosen direction. Its world line is a hyperbola about a corner 1/α behind it, every one of its slices passes through the corner, and tilted, its two horizons are drawn as hatched null planes; from above, the corner line marks where the horizon stands. Bodies fade with the frame's lapse αξ as they near the horizon, where their clocks freeze, and stay faint beyond it.
 
 Seen, the figure bar's third choice, draws what the observer sees instead of what it measures. Every world line is cut by the observer's past light cone, so a body appears where it was when its light left, in its aberrated direction at the distance the light travelled. Each point of a body is seen at its own retarded time: a fast body approaching head-on looks stretched by √((1 + v)/(1 − v)), one receding looks squeezed by the inverse, and one crossing is turned (Terrell, 1959; Penrose, 1959). History older than a body's first recorded sample is not extrapolated, so a body spawned now appears once its light arrives. Under the scene, the streak plate stacks the observer's one-dimensional sky over its proper time. Each source traces its seen direction; the trace's width reads its intensity, D⁴, and it is solid while the source approaches and dashed while it recedes.
 
@@ -156,16 +156,33 @@ The Fields overlay prints fields the way a textbook figure does:
 
 Higgs and axion fields are hatched one way above zero and the other below, with domain walls drawn in. A key names each mark in the scene, a scale bar gives lengths in units of c = 1, and the caption states what the figure shows, with live values.
 
-## Presets
+## Figures
 
-Six figures, keys 1 to 6, each set their own domain, forces and view. A dotted number in a figure's caption is its knob, and dragging it changes the figure: the cyclotron's B and E and the beam's speed act at once, while the twin's speed, the wheel's speed, the lens's mass and the quench time re-run the figure.
+Nine figures in five chapters, keys 1 to 9, each set their own domain, forces and view, and some their own observer. A dotted number in a figure's caption is its knob, and dragging it changes the figure: the cyclotron's B and E and the beam's speed act at once, and every other knob re-runs the figure.
+
+*Clocks and simultaneity*
+
+- **Twin paradox**: one twin flies to a wall at 0.8c and back, turning at proper acceleration 0.5, and ages 0.6 of the home twin's time while it coasts (√(1 − v²) at the knob's speed). The traveller opens selected, so its ticks send light: home receives them every kT on the way out and every T/k on the way back, and counting each other's ticks gives both ages with no simultaneity at all (Bondi's k-calculus). Tilted, the traveller's rest frame sweeps across home's line at the turn while its radar time stays continuous.
+- **Relativistic wheel**: a wheel with rim speed 0.9c, shown at rest and moving at 0.9c, where its spoke bends by about 93°.
+- **Rindler horizon**: the view belongs to an observer accelerating at α among a lattice of bodies at rest in its frame, each on its own hyperbola about the same corner (Rindler, 1966). On the observer's slices the lattice stands still, its clocks running at αξ, slower toward the horizon 1/α behind the observer, where the corner line is drawn. The caption gives the selected body's distance by ruler, on the observer's slice, and by radar, (1/α)·arcosh[(α²(ξ² + y²) + 1)/(2αξ)], which grows without bound toward the horizon. Two bodies at rest in the lab are dropped from the observer's rest. They fall toward the horizon, slowing and fading, and under Seen they appear ever closer to the moment they cross it without reaching it. The run starts again while the history still reaches back to the corner.
+
+*Light*
+
+- **Aberration**: an eye shuttles at v through the centre of a ring of 24 lamps, and the view is what it sees. The ring crowds forward, cos θ′ = (cos θ + v)/(1 + v cos θ); at the centre it is an ellipse with the eye at a focus, of eccentricity v. On a coast the lamp dead ahead is shifted by D = k = √((1 + v)/(1 − v)), 81 times brighter at 0.8c, and the one behind by 1/k, and the caption reads both from the streak plate. Each turn swings the sky round.
+- **Apparent superluminal motion**: an eye at rest watches a jet 80 away whose core ejects a blob every 10 at v, θ off the line of sight toward the eye. A blob crosses the sky at v sin θ/(1 − v cos θ), faster than light near cos θ = v, where it reaches γv: 3.04c at 0.95c and 18° (Rees, 1966). The caption reads it from the slope of the blob's track on the streak plate where it leaves the core, times the core's distance. It runs at a quarter of the usual speed, since the seen blobs race.
+
+*Fields and radiation*
 
 - **Cyclotron drift**: charges of both signs at about 0.5c gyrate in B_z = 0.8 and drift across an electric field at 0.15c. In spacetime they trace helices of opposite hand, leaning the same way. Their synchrotron light is weak, a few photons a run.
-- **Twin paradox**: one twin flies to a wall at 0.8c and back, ageing 0.6 of the home twin's time (√(1 − v²) at the knob's speed). On the traveller's slice, the home clock jumps ahead by 2vd at the turn.
-- **Relativistic wheel**: a wheel with rim speed 0.9c, shown at rest and moving at 0.9c, where its spoke bends by about 93°.
 - **Bremsstrahlung**: electrons at 0.95c swing past a nucleus of charge 6 and shed forward-beamed light.
-- **Kibble–Zurek walls**: the Higgs quench, with no bodies at all. The Measure tab and the caption report the ordered fraction and the wall density, as the walls formed and now.
+
+*Gravity*
+
 - **Microlensing**: a mass passes 0.3 Einstein radii from a backdrop star, which splits in two and brightens to a peak magnification of about 3.4.
+
+*The universe*
+
+- **Kibble–Zurek walls**: the Higgs quench, with no bodies at all. The Measure tab and the caption report the ordered fraction and the wall density, as the walls formed and now.
 
 ## Energy and what the drift means
 

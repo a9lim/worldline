@@ -1247,7 +1247,8 @@ fn vs_horizon(@builtin(vertex_index) vid: u32, @builtin(instance_index) k: u32) 
     out.position = vec4(0.0, 0.0, 0.0, 1.0);
     out.which = f32(k);
     out.alpha = 0.0;
-    if (params.frameOn == 0u || abs(frameState.kind - 6.0) > 0.5 || frameState.valid < 0.5 || params.tilt < 0.05) { return out; }
+    if (params.frameOn == 0u || abs(frameState.kind - 6.0) > 0.5 || frameState.valid < 0.5) { return out; }
+    if (params.tilt < 0.05 && k != 2u) { return out; }
     let o = observer();
     let a = max(frameState.omega, 1e-6);
     let n = vec2(cos(frameState.phi), sin(frameState.phi));
@@ -1258,14 +1259,15 @@ fn vs_horizon(@builtin(vertex_index) vid: u32, @builtin(instance_index) k: u32) 
     let tc = frameState.tA - wA / a;
     let Y = 0.6 * max(params.domainW, params.domainH);
     if (k == 2u) {
-        // The corner line: on every one of the observer's slices, 1/α behind it
+        // The corner line: on every one of the observer's slices, 1/α behind it, so seen from
+        // above it is where the horizon stands in the observer's space
         let c0 = projectEvent(o, xc - m * Y, tc);
         let c1 = projectEvent(o, xc + m * Y, tc);
         var dir = toPx(c1) - toPx(c0);
         if (dot(dir, dir) < 1e-6) { return out; }
         dir = normalize(dir);
         out.position = offsetClip(select(c0, c1, (vid & 2u) != 0u), vec2(-dir.y, dir.x) * select(-0.7, 0.7, (vid & 1u) != 0u));
-        out.alpha = 0.6 * params.tilt;
+        out.alpha = 0.6 * max(params.tilt, 0.75);
         return out;
     }
     let t = select(params.tNow - params.depth, params.tNow + params.future, (vid & 2u) != 0u);

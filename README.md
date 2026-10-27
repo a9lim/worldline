@@ -74,9 +74,10 @@ substepping advances them.
   run; the selected body's clock, speed and the forces on it; the fields drawn as a
   textbook figure prints them (contours, field lines, ⊙ and ⊗); and a phase-space plot
   and an effective-potential curve for the selected body against the heaviest other.
-- **Figures.** Six curated figures: cyclotron drift, the twin paradox, a relativistic
-  wheel, bremsstrahlung, Kibble–Zurek walls, and microlensing. Each caption says what
-  the figure shows with its live values, and its dotted numbers are knobs you drag.
+- **Figures.** Nine curated figures in five chapters: the twin paradox, a relativistic
+  wheel and the Rindler horizon; aberration and apparent superluminal motion; cyclotron
+  drift and bremsstrahlung; microlensing; and Kibble–Zurek walls. Each caption names the
+  figure with its live values, and its dotted numbers are knobs you drag.
 - **Save and load.** Quick save to the browser, or download and upload the state as
   JSON (domain, particles with their clocks, laws, settings, and camera). Each
   figure sets its own domain size; the window is a camera onto it.

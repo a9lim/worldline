@@ -93,6 +93,99 @@
   }
  },
  {
+  "name": "accelerated",
+  "preset": "accelerated",
+  "bench": {
+   "warm": 2000,
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
+  }
+ },
+ {
+  "name": "accelerated-tilt",
+  "preset": "accelerated",
+  "steps": [
+   {
+    "js": "document.getElementById('view-spacetime').click()",
+    "wait": 1500,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
+  }
+ },
+ {
+  "name": "seenSky",
+  "preset": "seenSky",
+  "bench": {
+   "warm": 2000,
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
+  }
+ },
+ {
+  "name": "seenSky-tilt",
+  "preset": "seenSky",
+  "steps": [
+   {
+    "js": "document.getElementById('view-spacetime').click()",
+    "wait": 1500,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
+  }
+ },
+ {
+  "name": "superluminal",
+  "preset": "superluminal",
+  "bench": {
+   "warm": 2000,
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
+  }
+ },
+ {
+  "name": "superluminal-tilt",
+  "preset": "superluminal",
+  "steps": [
+   {
+    "js": "document.getElementById('view-spacetime').click()",
+    "wait": 1500,
+    "shot": false
+   }
+  ],
+  "bench": {
+   "warm": 2000,
+   "measure": 4000,
+   "budget": {
+    "span": 4.2,
+    "step": 2.1
+   }
+  }
+ },
+ {
   "name": "bremsstrahlung",
   "preset": "bremsstrahlung",
   "bench": {

@@ -28,7 +28,8 @@
 //    in the constructor and setToggles() but not on a theme change, so a flipped page keeps the old
 //    theme's body inks until a setting changes, and differs from a page opened in the theme. The
 //    physics is deterministic, so the two pages hold the same frame; the manifest checks the hashes.
-//  - The zooms are the fitted camera (sim.fitCamera()), 2x and 0.5x about the domain's centre.
+//  - The zooms are the fitted camera (sim.fitCamera()), 2x and 0.5x about its centre: the domain's,
+//    or for a figure in its own observer that observer's view.
 //  - Not stepped: wall-clock animation (the spacetime tilt, unless --view spacetime jumps there with
 //    spacetime.set()), hover, and selection. --jitter MS waits a random time before the freeze, to
 //    check that the frame doesn't remember the opening scene.
@@ -56,8 +57,10 @@ const ZOOMS = { fit: 1, in: 2, out: 0.5 };
 const zooms = opt.zooms.split(',').map((z) => [z, ZOOMS[z] ?? +z]);
 if (zooms.some(([, f]) => !(f > 0))) { console.error('bad --zooms ' + opt.zooms); process.exit(2); }
 // Frames of 1/60 s at the preset's speed; most presets show their figure by 240 (the reduced-
-// motion opening runs the same). The quench needs t > its 120 to order; the lens passes at ~120.
-const FRAMES = { cyclotron: 240, twinBounce: 240, wheel: 240, bremsstrahlung: 240, kibbleZurek: 600, microlensing: 450 };
+// motion opening runs the same). The quench needs t > its 120 to order; the lens passes at ~120;
+// the Rindler figure runs again at t 56, so it is taken before.
+const FRAMES = { cyclotron: 240, twinBounce: 240, wheel: 240, accelerated: 180, seenSky: 240, superluminal: 240,
+  bremsstrahlung: 240, kibbleZurek: 600, microlensing: 450 };
 mkdirSync(out, { recursive: true });
 
 // ── The page side ──
@@ -221,7 +224,7 @@ function driver() {
     await raf(); await raf();                  // layout (the margin) settles before the camera is fitted
     sim.fitCamera();
     const z = sim.camera.zoom * factor;
-    sim.camera.reset(sim.physW / 2, sim.physH / 2, z);
+    sim.camera.reset(sim.camera.x, sim.camera.y, z);   // about the fit's centre: a frame's is its observer's
     return { zoom: sim.camera.zoom };
   }
 

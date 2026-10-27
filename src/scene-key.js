@@ -122,8 +122,9 @@ export default class SceneKey {
         const clocks = bodies.some((b) => b.alive && Math.cbrt(b.m) * sim.camera.zoom >= 5);
         if (clocks && !ph.blackHoleEnabled) rows.push(['clock', L.clock(CLOCK_PERIOD)]);
         const seen = sim.frames.seeing;
-        // The accelerated observer's horizons (spacetime-render.wgsl vs_horizon)
-        if (tilted && sim.frames.active && sim.frames.kind === 6) rows.push(['horizon', L.horizon(Math.round(1 / sim.frames.alpha))]);
+        // The accelerated observer's horizons (spacetime-render.wgsl vs_horizon); from above,
+        // the corner line alone
+        if (sim.frames.active && sim.frames.kind === 6) rows.push(['horizon', L.horizon(Math.round(1 / sim.frames.alpha)), { plane: !tilted }]);
         // The streak plate's tracks, under the scene (src/streak.js)
         if (seen && bodies.length > 1) {
             rows.push(['track', L.approaching, {}]);

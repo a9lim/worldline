@@ -847,17 +847,17 @@ export default class GPUPhysics {
         encoder.copyBufferToBuffer(sk.out, 0, sk.staging, 0, sk.staging.size);
         this.device.queue.submit([encoder.finish()]);
         sk.pending = true;
-        const gen = this.resetGen;
+        const gen = this.resetGen, t = this.conformalTime;
         sk.staging.mapAsync(GPUMapMode.READ).then(() => {
             const data = new Float32Array(sk.staging.getMappedRange().slice(0));
             sk.staging.unmap();
             if (gen === this.resetGen) {
-                sk.latest = { rows: STREAK_ROWS, sources: STREAK_SOURCES, dTau, data, seq: (sk.latest?.seq ?? 0) + 1 };
+                sk.latest = { rows: STREAK_ROWS, sources: STREAK_SOURCES, dTau, t, data, seq: (sk.latest?.seq ?? 0) + 1 };
             }
         }).catch(() => {}).finally(() => { sk.pending = false; });
     }
 
-    /** The latest streak plate readback: { rows, sources, dTau, data, seq }, or null. */
+    /** The latest streak plate readback: { rows, sources, dTau, t (when asked), data, seq }, or null. */
     readStreak() { return this._streak?.latest ?? null; }
 
     /**
@@ -2049,7 +2049,7 @@ export default class GPUPhysics {
         this.prescribed.set(idx, c);
         this._writeCurve(idx);
         this._writePrescribedList();
-        if (bornAt === -Infinity) this._writePast(idx, c, mass, charge, angw, theta);
+        if (bornAt != null && bornAt < now) this._writePast(idx, c, mass, charge, angw, theta, bornAt);
         return idx;
     }
 
@@ -2100,19 +2100,23 @@ export default class GPUPhysics {
         this._prescribedDirty = false;
     }
 
-    /** Fill slot idx's ring with its curve's past, a sample every WORLDLINE_DT up to now. */
-    _writePast(idx, c, m, q, angw, theta) {
+    /**
+     * Fill slot idx's ring with its curve's past, a sample every WORLDLINE_DT up to now, from
+     * its birth at `from` when that is within the ring's reach.
+     */
+    _writePast(idx, c, m, q, angw, theta, from = -Infinity) {
         if (this.scaleA !== 1) return;   // a prescribed past is drawn in a static universe only
-        const n = WORLDLINE_LEN, now = this.conformalTime, f = _pastData;
+        const now = this.conformalTime, f = _pastData;
+        const n = Math.min(WORLDLINE_LEN, 1 + Math.floor((now - from) / WORLDLINE_DT));
         for (let k = 0; k < n; k++) {
-            const t = now - (n - 1 - k) * WORLDLINE_DT;
+            const t = k === 0 && n < WORLDLINE_LEN ? from : now - (n - 1 - k) * WORLDLINE_DT;
             const p = curveAt(c, t), b = k * WL_STRIDE;
             f[b] = t - this.timeEpoch; f[b + 1] = p.x; f[b + 2] = p.y; f[b + 3] = p.wx; f[b + 4] = p.wy;
             f[b + 5] = p.ax; f[b + 6] = p.ay; f[b + 7] = p.tau; f[b + 8] = theta; f[b + 9] = angw;
             f[b + 10] = m; f[b + 11] = q;
         }
         this.device.queue.writeBuffer(this.buffers.wlData, idx * WORLDLINE_LEN * WL_STRIDE * 4, f);
-        _addParticleMetaU32[0] = 0;   // writeIdx: n wraps to 0
+        _addParticleMetaU32[0] = n % WORLDLINE_LEN;   // writeIdx
         _addParticleMetaU32[1] = n;
         this.device.queue.writeBuffer(this.buffers.wlMeta, idx * WL_META_STRIDE * 4, _addParticleMetaBuf, 0, 8);
     }

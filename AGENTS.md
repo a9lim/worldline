@@ -82,7 +82,8 @@ src/scene-key.js         the key at the stage's bottom right (en, ja)
 src/overlay.js           the 2D canvas above the GPU canvas: the field atlas, spawn-drag line, scale bar,
                          the spacetime box with its dimension line and presents
 src/field-atlas.js       the Fields overlay's contours and field lines, from the heatmap readback
-src/presets.js           six curated figures (PRESET_ORDER): data, knobs, a spawn, and an optional tick
+src/presets.js           nine curated figures in five chapters (CHAPTERS, PRESET_ORDER): data, knobs, a
+                         spawn, and an optional observer and tick
 src/prescribed.js        prescribed world lines' curves: evaluation, packing for the GPU
 src/quench.js            the Higgs quench: startQuench(), measureHiggs(), the Measure tab's Quench section
 src/cosmology.js         the scale factor a(t): schedules, the Friedmann closure, horizons
@@ -133,11 +134,17 @@ data: the toggles it turns on (every other is off), the parameters it sets (the 
 default), its knobs, modes, speed, view (what it doesn't turn on is off, except the rulers
 and key) and domain; `presetConfig()` makes its configuration, and `stateConfig()` in
 `save-load.js` a save's. A preset is loaded as a figure (`sim.loadFigure(key)`, `ui.js`),
-which keeps `sim.figure` and the figure's knob values (`sim.knobValues`); then
-`spawn(sim, run)` places the bodies, and a preset with a `tick(sim, run)` (the
-bremsstrahlung beam) sets `sim.presetTick`, which runs after each stepped frame until
-`reset()` clears it; `run` is that load's own state (its knobs as `run.knobs`), so nothing
-outlives the run.
+which keeps `sim.figure` and the figure's knob values (`sim.knobValues`). Loading first leaves
+any observer for the lab (`sim.observe('lab')`, `ui.js`, which also settles the streak band so
+the domain's camera fits the stage it leaves); then `spawn(sim, run)` places the bodies, and may
+select one as the figure's own (`run.select`; the twin's traveller, the eyes, a Rindler lattice
+body); a preset with an `observe(sim, run)` puts the view in its own observer (`sim.observe(key,
+{ seen })`; `run.view`, and `run.fit`, its camera in that observer's coordinates, which
+`fitCamera()` keeps), and any other opens in the lab, or on a re-run in the visitor's observer
+again; and a preset with a `tick(sim, run)` (the bremsstrahlung beam, the jet's blobs, the
+Rindler figure's re-run) sets `sim.presetTick`, which runs after each stepped frame until
+`reset()` clears it. `run` is that load's own state (its knobs as `run.knobs`), kept as
+`sim.figureRun` for the caption, so nothing outlives the run.
 
 The domain is state, not the window: `sim.domainW`/`domainH` in world units, square
 `DEFAULT_DOMAIN` (64) unless a preset sets `domain: [w, h]` or a save carries one.
@@ -467,7 +474,8 @@ curve is a plain object with `t0` on the world-line clock and `tau0`, its proper
 - **Its past and future.** `addPrescribed(curve, opts)` (`GPUPhysics`, `Simulation`) starts the
   body where its curve is now. A figure's prescribed bodies are born at −∞ and get their curve's
   past written into the ring, a sample every `WORLDLINE_DT` (`_writePast`), so they act at once
-  with the field of their whole recorded motion; one added later is born now. Its future is
+  with the field of their whole recorded motion; one added later is born now, or at a `bornAt`
+  in the past with its past from then (the jet's blobs already on their way). Its future is
   known, and the spacetime view draws it (below). Saves keep the curve with t0 relative to the
   save's time; the epoch rebase rewrites every curve's GPU t0.
 - **The hand** (roadmap §6.7): a prescribed line written live. `GPUPhysics.grip(idx, x, y)`
@@ -627,7 +635,7 @@ readouts are on the Measure tab.
   settles the lag on the hyperbola by bisection (the velocity now would overshoot it).
   `FrameState.omega` carries α and `phi` the direction. Tilted, `vs_horizon` hatches the two null
   planes through the corner, (x − c)·n̂ = ±(t − t_c), and draws the corner line, which lies on every
-  one of its slices. Every lab-static body eventually crosses its future horizon, so the scene
+  one of its slices; from above it draws the corner line alone, where the horizon stands. Every lab-static body eventually crosses its future horizon, so the scene
   leaves it within a few 1/α; choosing it again starts it at rest. On its slices a body fades with
   the frame's lapse αξ there (ξ its Rindler distance from the corner, written into `viewClocks.w`,
   which `particle.wgsl` reads in a frame's view): toward the horizon, where its clock freezes, and
@@ -702,7 +710,8 @@ readouts are on the Measure tab.
   world lines.
 - **The camera** in a frame is in observer coordinates with the observer at the origin;
   leaving the lab saves the lab camera and returning restores it. Resizing keeps the
-  observer centred.
+  observer centred, and `fitCamera()` centres it (in a figure's own observer, on the figure's
+  own view, `run.fit`).
 - **The scrubber** (Look back) adds lag while paused, so a paused run can be re-sliced
   further into its past.
 - **The spacetime view** replaced the old Frame tab's side diagram: the canvas itself
@@ -1046,14 +1055,20 @@ narrows the scene.
 · between them (・ in Japanese), rebuilt a few times a second: the figure's name and its own
 values, the same plane or tilted (the cyclotron's B, E and E/B, the twin's and the wheel's
 speed, γ and clocks, the beam's radiated energy, the quench's time, ordered fraction and
-walls, the lens's mass, R_E, u and μ), or the body count once the scene no longer fits it; in
-an observer's frame, its γ and lag instead; then the selected body's speed and τ. It reads
+walls, the lens's mass, R_E, u and μ; the Rindler figure's α, its horizon and the red body's
+distance by ruler and by radar; aberration's speed and the Doppler factors of the lamps dead
+ahead and behind, from the streak plate's newest row; the jet's θ, speed and its blobs'
+apparent speed, from the slope of the newest one's track where it leaves the core), or the body
+count once the scene no longer fits it; in an observer's frame, its γ and lag instead, unless
+the frame is the figure's own (`run.view`), where the figure's values stay; then the selected
+body's speed and τ, unless it is the figure's own selection and the figure's values name it. It reads
 out and never explains (root `AGENTS.md`, Show, don't tell), and repeats nothing the plate
 shows: the depth is the time axis's, the bead step the key's, a moving observer's speed the
 boost scale's, and pause the colophon's. **Knobs** are the numbers a figure's
 caption states that a visitor changes (roadmap §1.3): a preset's `knobs` (`presets.js`) over
 a store key (the cyclotron's B and E, live) or of its own (`run.knobs`: the beam's speed,
-live; the twin's and the wheel's speeds and the lens's mass, `rerun`), or with a `commit`
+live; the twin's, the wheel's, aberration's and the jet's speeds, the jet's angle, the Rindler
+observer's α and the lens's mass, `rerun`), or with a `commit`
 (the quench time re-runs the quench). The line marks a knob with a token (`_k()`), and
 the caption's writer keeps one `Knob` element (`controls.js`) per knob across rewrites,
 changing only the text nodes between them, so a drag survives the rebuilds. A knob drags
@@ -1063,9 +1078,10 @@ sideways (240 px sweeps its range, Shift a tenth of that) or steps with the arro
 **The margin** is four tabs on the same paper, ruled off by a hairline, with Reset, Save and
 Load at its foot; on a narrow window it rises as a sheet.
 
-- **Figure**: the list of figures (keys 1–6), each with a small drawing in the plate's marks
-  (`plateGlyph`), the active one's knobs under its row; the Observer; the layers (the
-  Fields overlay's field, the arrows, the rulers and key).
+- **Figure**: the list of figures (keys 1–9) in its chapters (`CHAPTERS`, each under its
+  numeral and name, ruled off), each with a small drawing in the plate's marks (`plateGlyph`),
+  the active one's knobs under its row; the Observer; the layers (the Fields overlay's field,
+  the arrows, the rulers and key).
 - **Laws**: Mechanics (Newton · relativity · 1PN over `relativityEnabled` and
   `onePNEnabled`); the forces; the Backdrop while Gravity is on; radiation; the scalar fields.
 - **World**: the next body (its scales, and its glyph as a click will place it, `bodyGlyph`);
