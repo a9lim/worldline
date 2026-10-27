@@ -1,10 +1,11 @@
 # Worldline's physics model
 
 The corrected model for 2.5, specified against an audit of the code at `6de3df8`. Status:
-**second draft, after Codex's adversarial review of the first (`fb4d1ab`, 2026-10-27);
-not ratified.** §10 records what the review found and what changed. Once ratified this is the
-plan of record for the model and `ROADMAP.md` §7 points here; until then §7.3 there is the
-list of known boundaries and this file is a proposal.
+**second draft, after Codex's adversarial review of the first (`fb4d1ab`, 2026-10-27).** It is
+the plan for the model pass (`ROADMAP.md` §5), and step 0 has landed from it; its §8 decisions
+are a9's and open, and step 2 ratifies the regimes once they are settled. §10 records what the
+review found and what changed. §2–§5's **Now** are the model's known boundaries, which were
+`ROADMAP.md` §7.3.
 
 Tags as in the roadmap: [standard] is textbook or established practice, [synthesis] is a
 combination made here, [speculation] is a guess to test. **Now** is what the code does (with
@@ -14,12 +15,14 @@ against their source before code; the first draft's were checked in the review (
 
 ## 0. Ordering
 
-Proposed (a9's suggestion, 2026-10-27, refined here): the model pass comes before the record.
-The version names swap: **2.5 is the model** (this file), **3.0 is the laboratory** (the
-record, sight and the instrument, roadmap §4–6). Of the old 3.0 (§7), the corrections move
-into 2.5; the new laboratories (the Schwarzschild and Kerr metric regime, the embedding
-diagram, the gravitational-wave detector ring, fields carrying energy) and the covariance
-meter (§7.2) stay after the record, since they want its instrument.
+Decided (a9's suggestion, 2026-10-27; `ROADMAP.md` §0): the model pass comes before the
+record. **2.5 is the model** (this file), **3.0 the laboratory** (the record and the instrument,
+roadmap §7), and sight, which reads histories and needs none of this pass's dynamics, runs beside
+it as 2.6 behind a shared trajectory contract (roadmap §3, §6). Of the old 3.0, the corrections
+move into 2.5; the new spacetimes (cosmic strings, the Schwarzschild and Kerr metric regime and
+its embedding diagram, the gravitational-wave detector ring, fields carrying energy) stay after
+the record as 3.x, since they want its instrument (roadmap §8), and the covariance meter comes
+with the instrument (roadmap §7.2).
 
 Why the model first:
 
@@ -163,8 +166,8 @@ until its model correction lands.
 **Docs that are wrong** (fixed when the corresponding code is): `AGENTS.md`'s "sized by the
 live counts", "every other law … times the toy aberration factor" (four laws carry it),
 "Paczyński–Wiita … with `BH_SOFTENING`" (unsoftened), "capture with merge bookkeeping" (five
-differences), the pending-radiation description for pions; `ROADMAP.md` §7.3's "the stats'
-energies are … unsoftened" (they use the softened ρ).
+differences), the pending-radiation description for pions; `ROADMAP.md`'s old §7.3 said "the
+stats' energies are … unsoftened" (they use the softened ρ).
 
 **Checked and right:** the force-sign conventions; two-body EIH (with the Boris Bg term) and
 its energy; the kinematic compensation for EIH under relativistic momentum; scalar Breit;
@@ -1005,6 +1008,10 @@ Revised after the review (Codex's order, with the §2 caution folded in):
 1. **Deterministic stepping with sufficient resolution, together** (§4): the state-driven
    schedule, sub-tick subdivision, the complete stiffness bound, RNG and events on simulation
    counters, deterministic conflict resolution, feedback only at step boundaries.
+   - **Then the history's reader** (§3.5's one timelike curve for a sample's position, velocity
+     and acceleration, impulses as segment breaks), as its own change ahead of step 3: sight (2.6)
+     reads the history through it too, so the model lane owns `worldline.wgsl` and
+     `shared-worldline.wgsl` and lands this early (roadmap §5, §6.1).
 2. **Ratify the regimes and their combined actions** (§1.1) before writing their code: the
    SR–PW Hamiltonian and its capture surface, the electromagnetic regularization and the
    packets' meaning, which combinations of laws are allowed together.
@@ -1090,9 +1097,10 @@ Codex's answers to the first draft's sixteen questions (2026-10-27), and what ea
 
 ## 9. After the record (3.x)
 
-The Schwarzschild and Kerr metric regime for test bodies and light, the embedding diagram,
-gravitational waves at a ring of test masses with chirp audio, fields carrying energy through
-a closed surface, the covariance meter. Roadmap §7.1–7.2 hold their detail.
+Cosmic strings and Gott's pair, the Schwarzschild and Kerr metric regime for test bodies and
+light, the embedding diagram, gravitational waves at a ring of test masses with chirp audio,
+fields carrying energy through a closed surface; the covariance meter comes with the instrument.
+Roadmap §7.2 and §8 hold their detail.
 
 ## 10. Review log
 

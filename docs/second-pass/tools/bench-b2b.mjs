@@ -3,7 +3,7 @@
 // alternating: after the scenario's steps and warm-up the loop stops, and 40 calls of
 // sim.gpu.stepOnce (one PHYSICS_DT) or sim.gpu.render run one after another, seven times each,
 // wall time per call after onSubmittedWorkDone. The GPU's clocks are up, so this reads what the
-// work costs rather than what a light scene's idle clocks make it read live (docs/ROADMAP.md §11).
+// work costs rather than what a light scene's idle clocks make it read live (docs/ROADMAP.md §13).
 // Prints the lowest of the seven per run, every run, for A → B. No ?perf.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';

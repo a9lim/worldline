@@ -5,7 +5,7 @@
 // its bodies, and an optional tick(sim, run) keeps the scene going after each stepped frame;
 // `run` is that run's own state, dropped with it by Simulation.reset().
 //
-// Its knobs (roadmap §6.5) are the numbers its caption states that a visitor can change, set in
+// Its knobs (roadmap §1.3) are the numbers its caption states that a visitor can change, set in
 // the caption (caption.js) and under its row in the list of figures (ui.js). A knob over a
 // `store` key is that setting, live; any other holds a value, from `value`, that spawn and tick
 // read as run.knobs[key]: live for what they read every time (the beam's speed), `rerun` for an

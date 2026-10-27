@@ -172,6 +172,6 @@ photon and pion lensing and absorption walks go per boson, up to 16384 + 8192).
 
 - `-bh` scenarios now pin `treeOverride = 'tree'`, the `-pair` and `fields-grav` ones
   `'pairwise'`; θ is the rule's for that count (0.1 at 500, 0.49 at 4000), where the toggle was
-  a fixed 0.5. Numbers in ROADMAP §11 for the 500-body `-bh` rows were at 0.5.
+  a fixed 0.5. Numbers in PERFORMANCE.md §1–§2 for the 500-body `-bh` rows were at 0.5.
 - The scenarios set it by `sim.gpu.physics.treeOverride`, not by the margin's switch, which
   another session removes.

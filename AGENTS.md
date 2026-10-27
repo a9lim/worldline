@@ -8,8 +8,10 @@ KaTeX from jsDelivr renders the reference overlay.
 It is a submodule of the a9l.im repository (`a9lim.github.io`, at `projects/worldline`); the
 root `AGENTS.md` covers the shared layer, design system, build, and deployment.
 
-`docs/ROADMAP.md` is the plan of record: the planar-laboratory thesis, versions 2.1–3.0,
-open decisions, and the model's known boundaries. This file describes the code as it is.
+`docs/ROADMAP.md` is the plan of record: the planar-laboratory thesis, the list of figures,
+versions 2.5 to 3.x and the open decisions. `docs/MODEL.md` is the physics model's plan and its
+known boundaries, and `docs/PERFORMANCE.md` what the performance passes measured. This file
+describes the code as it is.
 
 ## Running and checking
 
@@ -23,7 +25,7 @@ open decisions, and the model's known boundaries. This file describes the code a
 - `tests/physics-validation.html` runs analytic oracles against a headless `GPUPhysics`
   (open `http://localhost:8000/worldline/tests/physics-validation.html` and press Run, or call
   `runAll()` from the console; `runAll('Liénard')` runs the cases whose names contain the
-  string). Every new feature adds its oracle there (`docs/ROADMAP.md` §1.1).
+  string). Every new feature adds its oracle there, and every figure is one (`docs/ROADMAP.md` §1.3).
   The stager skips `tests/`, so it never deploys.
 - `?perf` (`src/gpu/gpu-profiler.js`, `sim.perf`) puts GPU timestamps on every compute and
   render pass by wrapping the encoder's `beginComputePass`/`beginRenderPass` while a frame
@@ -38,7 +40,7 @@ open decisions, and the model's known boundaries. This file describes the code a
   timing back to back: `docs/second-pass/tools/bench-b2b.mjs OUT URL_A URL_B` stops the loop
   after each scenario's warm-up and times `sim.gpu.stepOnce(sim)` and `sim.gpu.render(sim)`
   called many times in a row, the wall time each after `onSubmittedWorkDone()`
-  (`docs/ROADMAP.md` §11).
+  (`docs/ROADMAP.md` §13).
 - Benchmarks: `docs/second-pass/tools/tour.mjs` (Playwright and the WebGPU Chrome; see its
   header) runs any scenario with `bench: { warm, measure }` under `?perf` and writes p50/p95
   per scenario to `OUTDIR/bench.json`; `bench-scenarios.json` beside it is the standing set
@@ -275,7 +277,7 @@ observer, so a positive radial coefficient attracts. The fields, in that convent
   exactly EIH's v₁·v₂ sector, which the 1PN pair force leaves out.
 - Spinning mass: `Bgz = +J/(2r³)` in the plane, which slows prograde orbits
   (Ω_pro = Ω_K − J/r³); the gravitomagnetic dipole force `+3L₁L₂/r⁴` attracts.
-Those signs were reversed until 2026-10-23 (`2187ef4`, `docs/ROADMAP.md` §10); the oracle page pins
+Those signs were reversed until 2026-10-23 (`2187ef4`, `docs/ROADMAP.md` §14); the oracle page pins
 each. 1PN forces are velocity-dependent and break Newton's third law, hence the
 velocity-Verlet correction.
 
@@ -480,7 +482,7 @@ and Spacetime buttons, ease between the two (`EL_SPACETIME` ≈ 30°).
   a world line begins during the run, ends, merges, or takes a kick (a jump in proper
   velocity above `KICK_DW` (0.15) between samples, at its local maximum). `lineKeep` scans
   every sample in the window for them each frame and `lineWrite` lists them (up to 64 a slot
-  of the store on average) for one instanced draw; 2.5's event log (`docs/ROADMAP.md` §4.2)
+  of the store on average) for one instanced draw; 3.0's event log (`docs/ROADMAP.md` §7.1)
   would draw logged events instead.
 - **The sheet of the present.** In the lab's coordinates, world lines and light that pass
   under the tilted plane's fill are drawn at `SEEN` (0.45) (`underSheet()`).
@@ -911,7 +913,7 @@ an observer's frame, its γ and lag instead; then the selected body's speed and 
 out and never explains (root `AGENTS.md`, Show, don't tell), and repeats nothing the plate
 shows: the depth is the time axis's, the bead step the key's, a moving observer's speed the
 boost scale's, and pause the colophon's. **Knobs** are the numbers a figure's
-caption states that a visitor changes (roadmap §6.5): a preset's `knobs` (`presets.js`) over
+caption states that a visitor changes (roadmap §1.3): a preset's `knobs` (`presets.js`) over
 a store key (the cyclotron's B and E, live) or of its own (`run.knobs`: the beam's speed,
 live; the twin's and the wheel's speeds and the lens's mass, `rerun`), or with a `commit`
 (the quench time re-runs the quench). The line marks a knob with a token (`_k()`), and
@@ -998,7 +1000,7 @@ canvas text needs no font-load redraw.
 ## Conventions
 
 - **Naming.** Code, comments, and UI text say "signal delay" or "finite-speed force
-  propagation", never "retarded potential(s)" (a9's rule; `docs/ROADMAP.md` §11 adds
+  propagation", never "retarded potential(s)" (a9's rule; `docs/ROADMAP.md` §13 adds
   "light-cone" and "Liénard–Wiechert").
 - **Force laws.** A force-law change touches `pair-force`, `forces-tree`,
   `compute-stats` (PE), and `heatmap.wgsl`, and `effective-potential.js` for the plot;
@@ -1072,9 +1074,10 @@ canvas text needs no font-load redraw.
 
 ## Open work
 
-`docs/ROADMAP.md` holds the plan. Its §3 lists 2.1's fixes (performance, structure, what
-2.0 shipped) and §7.3 the model's known boundaries, which hold through 2.5. The presets cut
-in 2.0 showed several of those boundaries: the inspiral gained energy under gravity's signal
+`docs/ROADMAP.md` holds the plan: the model pass (2.5, `docs/MODEL.md`) and sight (2.6) in
+parallel, then the laboratory (3.0) and other spacetimes (3.x), ordered by the list of figures.
+`docs/MODEL.md` §2–§5 hold the model's known boundaries, and `docs/PERFORMANCE.md` what 2.1 and
+2.2 measured. The presets cut in 2.0 showed several of those boundaries: the inspiral gained energy under gravity's signal
 delay, the precession preset's planet escaped at once with 1PN on inside the softening
 length, and the nucleus preset's Yukawa well drove bodies to about 3c. Preset facts that
 follow from them:
