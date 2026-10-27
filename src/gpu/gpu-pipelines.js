@@ -9,7 +9,7 @@
  */
 
 /** Shader version — bump to invalidate browser cache after shader edits */
-const SHADER_VERSION = 205;
+const SHADER_VERSION = 206;
 
 /** Fetch a WGSL shader file relative to src/gpu/shaders/ */
 export async function fetchShader(filename, prepend = '') {
@@ -513,7 +513,7 @@ export async function createPhase4Pipelines(device, wgslConstants = '') {
     const prescribedLayouts = [device.createBindGroupLayout({
         label: 'prescribed_g0',
         entries: [uniform0, storage(1), storage(2), storage(3), storage(4, true), storage(5, true),
-                  storage(6, true), storage(7, true), storage(8)],
+                  storage(6), storage(7, true), storage(8)],
     })];
     const applyPrescribed = {
         pipeline: device.createComputePipeline({

@@ -57,7 +57,8 @@ export default class Overlay {
         if (box) this._drawBox(box, rulers);
         if (rulers && rulers.tilt < 0.98) this._drawScaleBar(camera.zoom, 1 - rulers.tilt);
         if (horizons) this._drawHorizons(camera, horizons);
-        if (!input || !input.isDragging) return;
+        // The spawn drag's line; a press on a body is the hand's, which the body itself shows
+        if (!input || !input.isDragging || input.onBody) return;
         const a = camera.worldToScreen(input.dragStart.x, input.dragStart.y);
         const b = camera.worldToScreen(input.currentPos.x, input.currentPos.y);
         ctx.beginPath();

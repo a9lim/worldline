@@ -437,6 +437,10 @@ draws.
 
 ### 6.7 The hand [synthesis on standard pieces]
 
+Landed 2026-10-27 (§14; `AGENTS.md`, Prescribed bodies): grab, pursuit under 0.75c, throw, the
+agent's books, and its oracle. Still open: the band's fronts measured against c (quantitative after
+`MODEL.md` §3.5), and the grip's start and end as acts with light cones (§7.2).
+
 The hand comes last in 2.6, on top of prescribed world lines: it is a prescribed line written live.
 
 - **Grab a body and move it.** Press on a body and drag (touch the same; a drag from empty space

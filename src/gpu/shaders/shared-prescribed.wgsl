@@ -10,6 +10,10 @@
 //   3 circle       cx, cy, r, ω, phase
 //   4 oscillation  cx, cy, nx, ny, amp, ω, phase, G(π)
 //   5 shuttle      x, y (the near apex), nx, ny, W = γv, α, coast, period, τ per period
+//   6 held         the hand's (prescribed.wgsl integrates it; curveAt doesn't know it): the
+//                  pointer's lab position tx, ty, then the pursuit's state on the cover x, y,
+//                  vx, vy (coordinate velocity), a mode (1: take the body's state on the next
+//                  substep, 2: let go) and its proper time τ
 
 const CURVE_VEC4S: u32 = 4u;
 const CURVE_UNIFORM: u32 = 1u;
@@ -17,6 +21,7 @@ const CURVE_HYPERBOLA: u32 = 2u;
 const CURVE_CIRCLE: u32 = 3u;
 const CURVE_OSCILLATION: u32 = 4u;
 const CURVE_SHUTTLE: u32 = 5u;
+const CURVE_HELD: u32 = 6u;
 
 struct Curve {
     kind: u32,

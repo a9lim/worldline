@@ -18,8 +18,15 @@
 //                proper acceleration alpha with `coast` of lab time at speed each way, forever
 //                (the twin's traveller): a period of four turns of W/α (W = γv) and two coasts
 // Speeds stay under c: a circle's r|ω|, an oscillation's amp·ω and a shuttle's v below 1.
+//
+// The hand (roadmap §6.7) is a sixth kind, 'held': no curve but a pursuit of the pointer that
+// prescribed.wgsl integrates, its state in the GPU record (GPUPhysics.grip()). Its future isn't
+// known, and curveAt() doesn't evaluate it.
 
-export const CURVE_KINDS = { uniform: 1, hyperbola: 2, circle: 3, oscillation: 4, shuttle: 5 };
+export const CURVE_KINDS = { uniform: 1, hyperbola: 2, circle: 3, oscillation: 4, shuttle: 5, held: 6 };
+
+/** True for a curve whose future is known (every kind but the hand's). */
+export const isKnown = (c) => c.kind !== 'held';
 export const CURVE_FLOATS = 16;   // the GPU record: kind, t0, tau0, then 13 parameters
 
 // G(θ) = ∫₀^θ √(1 − k² cos² u) du, quasi-periodic: G(θ + π) = G(θ) + G(π), G(π) = 2E(k)
@@ -163,6 +170,8 @@ export function packCurve(c, epoch, out = new Float32Array(CURVE_FLOATS), offset
             p(c.x, c.y, c.nx, c.ny, sh.W, c.alpha, c.coast, sh.period, sh.tauPeriod);
             break;
         }
+        // The pointer, and the mode that takes hold from the body's own state
+        case 'held': p(c.tx, c.ty, 0, 0, 0, 0, 1, 0); break;
     }
     return out;
 }

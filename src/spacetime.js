@@ -65,7 +65,10 @@ export default class SpacetimeView {
      * the depth, while there is one; free bodies' futures are blank.
      */
     future() {
-        return this.sim._gpuPhysics?.prescribed?.size > 0 ? FUTURE_FRACTION * this.depth() : 0;
+        const curves = this.sim._gpuPhysics?.prescribed;
+        if (!curves) return 0;
+        for (const c of curves.values()) if (c.kind !== 'held') return FUTURE_FRACTION * this.depth();
+        return 0;
     }
 
     /** The current projection: everything toScreen and the GPU matrix need. */

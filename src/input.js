@@ -34,6 +34,12 @@ export default class InputHandler {
         // Deferred click: GPU hit tests resolve a frame or two later
         this._pendingClick = null; // { pos: Vec2, rightButton: bool }
 
+        // The hand (roadmap §6.7): a press on a body that then drags moves it, a prescribed line
+        // written live (GPUPhysics.grip, prescribed.wgsl); letting go throws it at its last
+        // velocity. A press waits on its hit test: { hit } once it has resolved
+        this._press = null;
+        this.gripping = -1;         // the held slot
+
         sim.camera.bindWheel(canvas);
         sim.camera.bindMousePan(canvas);
         canvas.addEventListener('mousedown', (e) => this.onMouseDown(e));
@@ -42,7 +48,11 @@ export default class InputHandler {
         canvas.addEventListener('contextmenu', (e) => e.preventDefault());
         // Alt- or Shift-drag turns and tilts the spacetime view (src/spacetime.js)
         this._orbit = null;
-        window.addEventListener('mouseup', () => { this._orbit = null; });
+        window.addEventListener('mouseup', () => {
+            this._orbit = null;
+            // Let go off the canvas too
+            if (this.gripping >= 0) { this.isDragging = false; this._letGo(); }
+        });
         canvas.addEventListener('touchstart', (e) => this.onTouchStart(e), { passive: false });
         canvas.addEventListener('touchmove', (e) => this.onTouchMove(e), { passive: false });
         canvas.addEventListener('touchend', (e) => this.onTouchEnd(e), { passive: false });
@@ -73,6 +83,47 @@ export default class InputHandler {
 
     updateRect() { this.canvasRect = this.canvas.getBoundingClientRect(); }
 
+    /** True while the press (of a left button or a finger) is on a body: the hand's, not a spawn. */
+    get onBody() { return this.gripping >= 0 || (this._press?.hit?.index ?? -1) >= 0; }
+
+    /** A left press or a finger: ask what it is on. */
+    _startPress(pos) {
+        const gp = this.sim._gpuPhysics;
+        if (!gp) return;
+        this._press = { hit: undefined };
+        gp.hitTest(pos.x, pos.y);
+    }
+
+    /** Take hold once a press on a body has dragged past the threshold. */
+    _maybeGrip() {
+        const gp = this.sim._gpuPhysics;
+        const hit = this._press?.hit;
+        if (!gp || this.gripping >= 0 || !hit || hit.index < 0) return;
+        if (this.dragStart.dist(this.currentPos) < DRAG_THRESHOLD) return;
+        if (!gp.grip(hit.index, this.currentPos.x, this.currentPos.y)) return;
+        this.gripping = hit.index;
+        this.sim.select(hit.index);
+        this.canvas.style.cursor = 'grabbing';
+        _haptics.trigger('light');
+    }
+
+    /** The pointer moved while pressed: the held body pursues it. */
+    _dragTo() {
+        if (this.gripping >= 0) this.sim._gpuPhysics?.moveGrip(this.currentPos.x, this.currentPos.y);
+        else if (this._press) this._maybeGrip();
+    }
+
+    /** Let go of the held body, if one is held; true when one was. */
+    _letGo() {
+        this._press = null;
+        if (this.gripping < 0) return false;
+        this.sim._gpuPhysics?.releaseGrip();
+        this.gripping = -1;
+        this.canvas.style.cursor = '';
+        this.sim._dirty = true;
+        return true;
+    }
+
     // ─── Touch events ───
 
     onTouchStart(e) {
@@ -80,6 +131,7 @@ export default class InputHandler {
 
         if (e.touches.length === 2) {
             this.isDragging = false;
+            this._letGo();
             this._pinching = true;
             const t0 = e.touches[0], t1 = e.touches[1];
             this._lastPinchDist = this._pinchDist(t0, t1);
@@ -94,6 +146,7 @@ export default class InputHandler {
             this.isDragging = true;
             this.dragStart = this._getPosNew(t.clientX, t.clientY);
             this.currentPos = this.dragStart.clone();
+            this._startPress(this.dragStart);
             this.sim._dirty = true;
         }
     }
@@ -123,6 +176,7 @@ export default class InputHandler {
         if (e.touches.length === 1 && this.isDragging && !this._pinching) {
             const t = e.touches[0];
             this.currentPos = this._getPosNew(t.clientX, t.clientY);
+            this._dragTo();
             this.sim._dirty = true;
         }
     }
@@ -145,7 +199,16 @@ export default class InputHandler {
                 const endPos = this._getPosNew(t.clientX, t.clientY);
                 const isShortTap = this.dragStart.dist(endPos) < DRAG_THRESHOLD;
                 const amMode = getAntimatterMode();
+                const pressed = this._press?.hit;
+                if (this._letGo()) return;
 
+                if (isShortTap && pressed) {
+                    // The press already knows what it was on
+                    if (pressed.index >= 0) this._resolveClickHit(pressed, amMode);
+                    else this.spawnParticle(endPos, amMode && !this.sim.settings.blackHoleEnabled);
+                    this.sim._dirty = true;
+                    return;
+                }
                 if (isShortTap && this.sim._gpuPhysics) {
                     // Defer the action until the GPU hit test resolves
                     this.sim._gpuPhysics.hitTest(endPos.x, endPos.y);
@@ -195,6 +258,8 @@ export default class InputHandler {
         this._rightButton = isRight;
         this.dragStart = pos;
         this.currentPos = pos.clone();
+        this._press = null;
+        if (!isRight) this._startPress(pos);
         this.sim._dirty = true;
     }
 
@@ -210,7 +275,11 @@ export default class InputHandler {
         this._screenX = e.clientX;
         this._screenY = e.clientY;
 
-        if (this.isDragging) this.sim._dirty = true;
+        if (this.isDragging) {
+            this._dragTo();
+            this.sim._dirty = true;
+            return;   // no hover readout while pressed: the press's hit test is the one in flight
+        }
 
         // A8: Defer hover search to rAF (120-240Hz mousemove → ~60Hz search)
         if (!this._hoverPending) {
@@ -237,9 +306,18 @@ export default class InputHandler {
         this.sim._dirty = true;
 
         const endPos = this._getPosNew(e.clientX, e.clientY);
+        const pressed = this._press?.hit;
+        if (this._letGo()) return;
 
-        // Short click: select, delete, or spawn, once the GPU hit test resolves
-        if (this.dragStart.dist(endPos) < DRAG_THRESHOLD && this.sim._gpuPhysics) {
+        // Short click: select, delete, or spawn, at once if the press's hit test has resolved,
+        // else once one does
+        const short = this.dragStart.dist(endPos) < DRAG_THRESHOLD;
+        if (short && pressed) {
+            if (pressed.index >= 0) this._resolveClickHit(pressed, this._rightButton);
+            else this.spawnParticle(endPos, this._rightButton && !this.sim.settings.blackHoleEnabled);
+            return;
+        }
+        if (short && this.sim._gpuPhysics) {
             this.sim._gpuPhysics.hitTest(endPos.x, endPos.y);
             this._pendingClick = { pos: endPos, rightButton: this._rightButton };
             return;
@@ -279,6 +357,14 @@ export default class InputHandler {
 
         const pending = this._pendingClick;
         this._pendingClick = null;
+        if (pending) this._press = null;
+
+        // A press waiting to learn whether it is on a body (the hand)
+        if (!pending && this._press && this._press.hit === undefined) {
+            this._press.hit = result;
+            if (this.isDragging) this._maybeGrip();
+            return;
+        }
 
         if (result.index >= 0) {
             if (pending) {
@@ -287,11 +373,13 @@ export default class InputHandler {
                 const speed = Math.sqrt(result.velX * result.velX + result.velY * result.velY);
                 const spin = (result.angVel * result.radius).toFixed(3);
                 this.tooltip.show(this._screenX, this._screenY, `m=${result.mass.toFixed(2)}  q=${result.charge.toFixed(2)}  s=${spin}c  v=${speed.toFixed(3)}c`);
+                if (this.gripping < 0) this.canvas.style.cursor = 'grab';
             }
         } else if (pending) {
             this.spawnParticle(pending.pos, pending.rightButton && !this.sim.settings.blackHoleEnabled);
         } else {
             this.tooltip.hide();
+            if (this.gripping < 0) this.canvas.style.cursor = '';
         }
     }
 

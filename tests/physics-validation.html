@@ -2444,6 +2444,43 @@ cases.push({
     },
 });
 
+cases.push({
+    name: 'The hand: a held body pursues the pointer under 0.75c on a timelike path, the agent pays Δ(γm), and let go it flies on',
+    async run() {
+        const m = 2;
+        const gp = await makeSim({ on: ['relativityEnabled'], domainW: 256, domainH: 256 });
+        gp.addParticle({ x: 100, y: 128, mass: m });
+        await run(gp, 1, 0.25);
+        gp.grip(0, 160, 128);
+        // A shake: the pointer jumps about
+        for (let k = 0; k < 16; k++) {
+            gp.moveGrip(120 + (k % 2) * 40, 118 + (k % 3) * 10);
+            await run(gp, 5, 0.125);
+        }
+        const ring = await readRing(gp, 0);
+        let top = 0, topV = 0;
+        for (let j = 1; j < ring.length; j++) {
+            const w2 = ring[j].wx ** 2 + ring[j].wy ** 2;
+            topV = Math.max(topV, Math.sqrt(w2 / (1 + w2)));
+            top = Math.max(top, hermiteTopSpeed(ring[j - 1], ring[j]));
+        }
+        const held = (await readParticles(gp))[0];
+        const L = (await statsNow(gp)).ledger;
+        const want = m * (Math.sqrt(1 + held.wx ** 2 + held.wy ** 2) - 1);
+        gp.releaseGrip();
+        await run(gp, 10, 0.25);
+        const free = (await readParticles(gp))[0];
+        gp.destroy();
+        const g = Math.sqrt(1 + held.wx ** 2 + held.wy ** 2);
+        const dx = free.x - held.x - held.wx / g * 10, dy = free.y - held.y - held.wy / g * 10;
+        const dw = Math.hypot(free.wx - held.wx, free.wy - held.wy);
+        return { expected: `|v| ≤ 0.75; W = ${fmt(want, 4)}; flies on at w (${fmt(held.wx, 3)}, ${fmt(held.wy, 3)})`,
+                 measured: `top ${fmt(topV, 4)}, interpolant ${fmt(top, 4)}; W = ${fmt(L.agentE, 4)}; |Δw| ${fmt(dw, 2)}`,
+                 metric: `W ${fmt(Math.abs(L.agentE / want - 1) * 100, 2)}%, path ${fmt(Math.hypot(dx, dy), 2)}`,
+                 pass: topV <= 0.7501 && top < 0.8 && Math.abs(L.agentE / want - 1) < 1e-3 && dw < 1e-5 && Math.hypot(dx, dy) < 0.05 };
+    },
+});
+
 async function runAll(filter = '') {
     rowsEl.textContent = '';
     logEl.textContent = '';

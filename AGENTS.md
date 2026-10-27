@@ -466,6 +466,16 @@ curve is a plain object with `t0` on the world-line clock and `tau0`, its proper
   with the field of their whole recorded motion; one added later is born now. Its future is
   known, and the spacetime view draws it (below). Saves keep the curve with t0 relative to the
   save's time; the epoch rebase rewrites every curve's GPU t0.
+- **The hand** (roadmap §6.7): a prescribed line written live. `GPUPhysics.grip(idx, x, y)`
+  writes a record of kind `held` (no curve: the pointer's lab position and a pursuit state that
+  `prescribed.wgsl` integrates), `moveGrip` the pointer, `releaseGrip` a mode the next substep
+  acts on. Taking hold starts from the body's own state and sets `FLAG_PRESCRIBED` on the GPU,
+  letting go clears it there, so the host never writes a body's flags. The body pursues the
+  pointer in simulation time: the velocity it would like, (target − x)/3 capped at 0.75c, under
+  the speed where `LW_KAPPA_MIN` starts to suppress the forward field (about 0.78c), and an
+  acceleration toward it over 1.5, capped at 0.6, so its path is smooth and its samples timelike.
+  Its future isn't known and isn't drawn; saves keep it as a free body. Shaken with the Fields
+  overlay on Electric, the field lines kink in bands that run outward at c.
 - **Contract** (roadmap §6.1): flat and open first. A prescribed past isn't written in an
   expanding universe, where a curve would be read in comoving coordinates and conformal time.
 
@@ -1105,7 +1115,10 @@ canvas text needs no font-load redraw.
 - **Input.** The antimatter mode (X, a touch-only button) drives touch only; mouse users spawn
   antimatter with right-click. Click resolution is `InputHandler._resolveClickHit()`:
   a click of the particle's own kind selects, the other kind deletes; black-hole mode
-  never spawns antimatter.
+  never spawns antimatter. A left press (or a finger) asks its hit test at once; on a body, a
+  drag past `DRAG_THRESHOLD` takes hold of it with the hand (Prescribed bodies) and selects it,
+  and letting go (anywhere, the window's mouseup included) throws it; elsewhere it spawns as
+  before. Hover hit tests pause while pressed, so the press's result is the one that returns.
 - **CSS.** `styles.css` makes `[hidden]` win over every display rule (`base.css` gives
   `.panel-section` and others a display), so the margin's rows and sections are shown and
   hidden with the `hidden` attribute alone, never `style.display`. A mark's own svg may

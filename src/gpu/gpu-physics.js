@@ -46,7 +46,7 @@ import { WORLDLINE_DT, WORLDLINE_LEN, GPU_MAX_PHOTONS, GPU_MAX_PIONS, GPU_MAX_LE
 import { installFieldMethods } from './gpu-fields.js';
 import Cosmology, { SCHEDULE_KEYS, slabVolume } from '../cosmology.js';
 import { GPU_PARAMETER_SLOTS } from '../physics-contract.js';
-import { curveAt, packCurve, CURVE_FLOATS } from '../prescribed.js';
+import { curveAt, packCurve, isKnown, CURVE_FLOATS } from '../prescribed.js';
 
 
 const MAX_PARTICLES = GPU_MAX_PARTICLES;
@@ -129,6 +129,7 @@ const _ledgerAU32 = new Uint32Array(_ledgerAData.buffer);
 const EMPTY_LEDGER = Object.freeze({ escapedE: 0, escapedPx: 0, escapedPy: 0, escapedMatterE: 0, expansionWork: 0,
                                      agentE: 0, agentPx: 0, agentPy: 0 });
 const _curveData = new Float32Array(CURVE_FLOATS);
+const _gripData = new Float32Array(2);
 const _prescribedListData = new Uint32Array(PRESCRIBED_CAP + 1);
 const _pastData = new Float32Array(WORLDLINE_LEN * WL_STRIDE);
 const _expansionUniformData = new ArrayBuffer(32);   // ExpansionUniforms
@@ -231,6 +232,8 @@ export default class GPUPhysics {
         this._slotGeneration = new Uint32Array(GPU_MAX_PARTICLES);
         // Prescribed bodies (src/prescribed.js): slot → its curve, t0 on the world-line clock
         this.prescribed = new Map();
+        this.held = null;             // the slot the hand holds (grip())
+        this._letGo = null;           // a slot let go of, which leaves the list after a step
 
         // Defaults matching CPU path
         this.boundaryMode = 0;  // despawn
@@ -1727,7 +1730,7 @@ export default class GPUPhysics {
         pass.end();
         this.device.queue.submit([encoder.finish()]);
         this.timeEpoch += EPOCH_STEP;
-        for (const slot of this.prescribed.keys()) this._writeCurve(slot);
+        for (const [slot, c] of this.prescribed) if (isKnown(c)) this._writeCurve(slot);
     }
 
     /**
@@ -1988,6 +1991,38 @@ export default class GPUPhysics {
         this._writePrescribedList();
         if (bornAt === -Infinity) this._writePast(idx, c, mass, charge, angw, theta);
         return idx;
+    }
+
+    /**
+     * The hand (roadmap §6.7): take hold of slot idx, pursuing the pointer at lab (x, y) from the
+     * body's own state on the next substep (prescribed.wgsl). One body is held at a time.
+     */
+    grip(idx, x, y) {
+        if (this.held != null) this.releaseGrip();
+        if (this.prescribed.size >= PRESCRIBED_CAP && !this.prescribed.has(idx)) return false;
+        if (this._letGo === idx) this._letGo = null;
+        this.prescribed.set(idx, { kind: 'held', tx: x, ty: y });
+        this._writeCurve(idx);
+        this._writePrescribedList();
+        this.held = idx;
+        return true;
+    }
+
+    /** Move the held body's target to lab (x, y). */
+    moveGrip(x, y) {
+        if (this.held == null) return;
+        _gripData[0] = x;
+        _gripData[1] = y;
+        this.device.queue.writeBuffer(this.buffers.curves, this.held * CURVE_FLOATS * 4 + 12, _gripData);
+    }
+
+    /** Let go: the next substep frees the body at its last velocity, and the slot leaves the list. */
+    releaseGrip() {
+        if (this.held == null) return;
+        _gripData[0] = 2;
+        this.device.queue.writeBuffer(this.buffers.curves, this.held * CURVE_FLOATS * 4 + 36, _gripData, 0, 1);
+        this._letGo = this.held;
+        this.held = null;
     }
 
     /** Slot idx's curve record (shared-prescribed.wgsl), its t0 as GPU time. */
@@ -2754,6 +2789,12 @@ export default class GPUPhysics {
 
         this._frameCount++;
         this._stepsSinceChange++;
+        // A body let go of was freed by this frame's first substep
+        if (this._letGo != null) {
+            if (this.prescribed.get(this._letGo)?.kind === 'held') this.prescribed.delete(this._letGo);
+            this._letGo = null;
+            this._writePrescribedList();
+        }
 
         // Post-substep passes (once per frame)
         {
@@ -3196,7 +3237,8 @@ export default class GPUPhysics {
                 tau: clockF32[i * 4],         // proper time
                 theta: clockF32[i * 4 + 2],   // spoke angle
                 // A prescribed body's curve, its t0 relative to the save's time
-                ...(this.prescribed.has(i) ? { curve: { ...this.prescribed.get(i), t0: this.prescribed.get(i).t0 - this.conformalTime } } : {}),
+                ...(this.prescribed.has(i) && isKnown(this.prescribed.get(i))
+                    ? { curve: { ...this.prescribed.get(i), t0: this.prescribed.get(i).t0 - this.conformalTime } } : {}),
             });
         }
 
@@ -3427,6 +3469,8 @@ export default class GPUPhysics {
         this._pendingKugelblitzEvents = [];
         this._cpuFreeSlots = [];
         this.prescribed.clear();
+        this.held = null;
+        this._letGo = null;
         this._writePrescribedList();
         this.device.queue.writeBuffer(this.buffers.agentAccum, 0, new Float32Array(4));
         // Reset GPU free stack (reuse pre-allocated zero buffer)

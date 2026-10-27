@@ -1253,6 +1253,7 @@ fn vs_future(@builtin(vertex_index) vid: u32, @builtin(instance_index) k: u32) -
     let o = observer();
     let cb = s * CURVE_VEC4S;
     let c = curveFrom(curves[cb], curves[cb + 1u], curves[cb + 2u], curves[cb + 3u]);
+    if (c.kind == CURVE_HELD) { return collapsed(); }   // the hand's future isn't known
     let mb = s * WL_META_STRIDE;
     let bits = wlMeta[mb + 4u];
     let deck = vec4(select(1.0, -1.0, (bits & 1u) != 0u), select(1.0, -1.0, (bits & 2u) != 0u),
