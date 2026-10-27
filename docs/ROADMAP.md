@@ -688,8 +688,8 @@ The input to the decision. Each is current behaviour, documented so experiments 
   O(v) the pull points where the source was, so a pair gains about 4πv of its binding energy
   per orbit (Laplace's argument; in GR velocity-dependent terms cancel it, Carlip 2000).
   Measured 2026-10-23: an equal-mass binary at v = 0.16 loses 80% of its binding energy in
-  one orbit. Barnes–Hut aggregates use present positions, so tree and pairwise paths
-  disagree here.
+  one orbit. A tree node's aggregate has no world line, so with Relativity every force runs
+  pairwise at any count (`_chooseForceSum`, since 2.3).
 - **Several gravities coexist** without defining one spacetime: the particle lapse, the
   fields' exponential metric, Paczyński–Wiita holes, the thin lens and FRW. Each supports
   an experiment; their combinations aren't certified.
@@ -713,7 +713,12 @@ The input to the decision. Each is current behaviour, documented so experiments 
   τ = 2q²/3m = 6.7, comparable to a pass); Schwinger and extremal-shedding leptons carry
   kinetic energy the hole never pays; superradiance runs at α².
 - **Fields:** damping is ether-like (a preferred frame) and kills self-bound lumps; the
-  Higgs Z₂ is biased (reset to +1, exterior cells +1, a positive linear source); the slab's
+  Higgs Z₂ is biased (reset to +1, exterior cells +1, a positive linear source); the Higgs
+  coupling isn't one action: a body's mass follows `baseMass·|φ|`, heavier toward the
+  vacuum, while its force `+g·baseMass·∇|φ|` and its source `+g·baseMass` are a linear
+  coupling under which it is lighter there, so the force drives bodies to where they are
+  heavier and the rest energy the modulation adds is paid by nothing (`field-forces.wgsl`;
+  `HIGGS_MASS_MAX_DELTA` rate-limits the result); the slab's
   projection corrections and the self-gravity source's thickness normalization are absent;
   the fields' energy is booked flat-space, with no field–particle gravitational energy; the
   quench and bath do unbooked work.
