@@ -28,6 +28,7 @@ three serial sessions, and parallel lanes (subagents, worktrees) fit a whole ver
 
 | Date | Decision |
 |---|---|
+| 2026-10-27 | **No bitwise determinism** (a9): it was for replay, which is gone. The model's step 1 is the state-driven step schedule, sub-tick subdivision and time slowing (a figure behaves the same at any frame rate and never loses accuracy silently); reproducibility to the bit isn't pursued (§5). |
 | 2026-10-27 | **3.0 is a causal, observational sandbox** (a9): the live run is the experiment. No checkpoints, replay, recipes, side-by-side runs or provenance, and no apparatus objects (beacons, detectors, mirrors); a visitor acts through the hand, prescribed bodies, editing and composing, and reads the history through events and their cones (§7). Supersedes the record (2026-10-24). |
 | 2026-10-27 | **The list of figures grows by acceptance criteria** (§1.3, §4): §4's two dozen are candidates; a figure ships when its measured number meets its prediction, and earns its place by putting a question no other figure puts; variants share a figure. |
 | 2026-10-27 | **Sight beside the model:** 2.6 runs in parallel with 2.5, behind the trajectory contract (§3, §6.1). |
@@ -67,10 +68,6 @@ through 2.5, the 2026-10-24 version order) are in git history.
 3. **The first other spacetime** (§8): a static cosmic string, exact and drawn whole by the plate,
    then a moving one, with Gott's pair as a separate geometric explorer (recommended); or the
    black-hole metric first.
-4. **The model's step 1 without replay** (§5, `MODEL.md` §4): keep the state-driven step schedule,
-   sub-tick subdivision and time slowing, which a live model needs, with bitwise determinism only
-   where it is cheap or a test needs it (recommended); or keep the full deterministic-stepping
-   target.
 
 ## 1. Thesis
 
@@ -268,9 +265,7 @@ plan:
    (encounters, gyration, field stiffness, the reaction's τ₀), subdivided below the tick where
    needed; when the budget runs out a frame runs less simulated time and the caption says so. So a
    figure behaves the same at any frame rate and never loses accuracy silently. Bitwise
-   reproducibility was for replay, which is gone: RNG on step counters, deterministic conflict
-   resolution and fixed-order ledger sums are done where cheap or where a test needs them (open
-   decision 4).
+   reproducibility was for replay, which is gone, and isn't pursued (§0).
 2. **The regimes ratified,** once open decision 1 is settled.
 3. **Conservative gravity, the kernels and the Higgs action,** with their energies and momenta. It
    brings the binary, perihelion and walls-and-matter figures; with gravity off the world lines,
@@ -684,9 +679,6 @@ What 2.1 and 2.2 measured, changed and cleared is in `docs/PERFORMANCE.md`. Open
   so periodic domains stay pairwise (`TREE_ON_PERIODIC`). Finding the cause (the half-domain
   criterion opening every node near a plane, or group boxes that Morton order's jumps make large)
   would let the torus use the tree.
-- **Ledger accumulators** add f32 by compare-and-swap across workgroups (`cullBosons`,
-  `expansion.wgsl`), so those words aren't bitwise reproducible; that matters to tests only now
-  (open decision 4).
 - **2.6's costs:** the streak plate's light-cone solves (observer samples × sources) and the ticks'
   light arrival searches, budgeted against the presets'.
 - **Kugelblitz in Hawking gas** collapses at its one-a-frame limit: whether that is the experiment or
@@ -775,8 +767,7 @@ struct WorldEvent {          // 48 B, 12 words
 
 - Append into a ring of 16,384 records (768 KB) that overwrites its oldest; births and deaths from
   the CPU go through a one-thread append pass, so the counter has one owner.
-- Appends within a substep go in slot order (a prefix sum, not an `atomicAdd`), so the log is the
-  same every run; readers bin by t.
+- Unordered within a substep, ordered between substeps; readers bin by t.
 - If boson events crowd out lifecycle events (Hawking-heavy scenes), they move to their own ring;
   decide on measurement.
 - Annihilation is not a merge: both bodies lose the lighter one's mass, a body left with none logs

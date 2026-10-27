@@ -904,20 +904,15 @@ the closure's matter content is stated as an approximation.
 
 **Target:**
 
-- **A deterministic step schedule** [synthesis]: the substep is a function of the state
+- **A state-driven step schedule** [synthesis]: the substep is a function of the state
   alone, chosen by the physics criteria below, and a frame only decides how many substeps to
-  run in its wall time, so a figure behaves the same at any frame rate. *Replay was set aside on
-  2026-10-27, so the rest of this item, bitwise reproducibility, is for tests and is done where it
-  is cheap or a test needs it (roadmap open decision 4).* It was necessary for replay, not
-  sufficient (Codex): frame dependence
-  also enters through the emission RNG (keyed by `u.frameCount`), merge identities, post-frame
-  reactions, the delayed Friedmann density and the event readbacks, and atomic claims make
-  collision outcomes and emission allocation depend on scheduling (`collision.wgsl:180–188`).
-  So physics events and RNG move to simulation-step and event counters, conflicts resolve
-  deterministically (lowest slot, as absorption already does), and state feeds back to the GPU
-  only at deterministic step boundaries, never from whichever readback arrives. Same-device
-  reproducibility is the target; cross-device agreement isn't promised (transcendentals differ
-  between GPUs).
+  run in its wall time, so a figure behaves the same at any frame rate. **Bitwise
+  reproducibility isn't pursued** (a9, 2026-10-27: it was for replay, which was set aside), so
+  the emission RNG keyed by `u.frameCount`, atomic claims in collisions and emission
+  (`collision.wgsl:180–188`) and merge identities stay as they are. What still changes is
+  feedback that makes the *dynamics* depend on the frame rate: the step's a_max read back from an
+  older frame and the Friedmann density from a delayed readback move onto the GPU or to step
+  boundaries, because they bias results, not for bit-equality (Codex listed both).
 - **Step control** [standard criteria; synthesis to combine them]: dt = η·min over the
   encounter time of every pair within a few contact lengths (min of r/|v_rel| and
   √(r³/(m_a + m_b)), reduced in the pair loop the force pass already runs), |v|/|a| from every
@@ -925,14 +920,12 @@ the closure's matter content is stated as an approximation.
   the time scale of a scalar-driven mass change, the fields' oscillation stiffness (spatial CFL
   alone doesn't bound a massive, nonlinear Klein–Gordon oscillator: the potential's curvature
   enters), and the radiation reaction's τ₀, all from the current substep and none from an
-  asynchronous readback. The substep may go below the nominal tick, deterministically
-  subdivided; a state that still can't be resolved is refused rather than run coarse. When the
+  asynchronous readback. The substep may go below the nominal tick, subdivided; a state that still can't be resolved is refused rather than run coarse. When the
   budget can't cover a frame, the frame runs less simulated time and the caption says time is
   slowed and by how much. Block steps or regularization only for a measured close-binary
   bottleneck (§7.1).
 - Thomas precession reads a stored non-gravitational force, so the clocks can run after the
   1PN correction; `vvKick1PN` refreshes `derived.vel`; spin–orbit reads the kicked velocity.
-- Determinism stays: every new reduction in a fixed order.
 
 ## 5. The ledger
 
@@ -997,8 +990,9 @@ Larmor spiral, synchrotron power, coherent two-source radiation measured indepen
 ledger; §3.6 the SR–PW orbit sequence, capture through the barrier, the 1-and-8 edit, the
 charged-hole swarm, finite charged extraction per event, overlapping superradiance; §3.7 the
 wall crossing, the mirror run, the subcell force against the discrete energy; §3.12 a full
-pool of live packets with multi-product decays; §4 simultaneous multi-contact collisions and
-frame-rate-independent RNG and event histories, and independent refinement of the step, the
+pool of live packets with multi-product decays; §4 simultaneous multi-contact collisions, a
+figure's numbers statistically the same at 30, 60 and 120 frames a second, and independent
+refinement of the step, the
 grid spacing, the tree's opening angle and the world-line cadence; §2 single Fourier modes up
 to Nyquist; §5 the closed ledger per preset with each column against its prediction.
 
@@ -1012,10 +1006,9 @@ Revised after the review (Codex's order, with the §2 caution folded in):
    pion over-booking; the holes' double-booked spin; one canonical J; the discrete field
    energy. The quadrupole sink and the pair modulations are *disabled*, not repaired.
 1. **The step schedule with sufficient resolution** (§4): the state-driven schedule, sub-tick
-   subdivision, the complete stiffness bound, time slowing when the budget runs out. RNG and events
-   on simulation counters, deterministic conflict resolution and feedback only at step boundaries
-   were for replay; with replay set aside they are done where cheap or where a test needs them
-   (roadmap open decision 4).
+   subdivision, the complete stiffness bound, time slowing when the budget runs out, and the
+   readback feedback that makes the dynamics frame-rate dependent moved to the GPU. Bitwise
+   reproducibility isn't pursued (a9, 2026-10-27).
    - **Then the history's reader** (§3.5's one timelike curve for a sample's position, velocity
      and acceleration, impulses as segment breaks), as its own change ahead of step 3: sight (2.6)
      reads the history through it too, so the model lane owns `worldline.wgsl` and
