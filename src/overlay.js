@@ -37,7 +37,7 @@ export default class Overlay {
     /** Words drawn on the canvas, in the page's language (main.js sets them). */
     _labels = {
         now: 'now', ago: (s) => `${s} ago`,
-        observer: 'the observer’s present', lab: 'the lab’s present',
+        observer: 'observer’s present', lab: 'lab’s present',
         length: 'length, c = 1',
     };
 

@@ -31,7 +31,6 @@ const knob = (key, spec) => ({ label: 'knob.' + key, step: 0.01, fmt: fmt2, ...s
 export const PRESETS = {
     cyclotron: {
         name: 'Cyclotron drift',
-        desc: 'Charges of both signs circle a uniform magnetic field and drift together across an electric one: in spacetime, helices of opposite hand leaning the same way',
         toggles: ['coulombEnabled', 'magneticEnabled', 'relativityEnabled', 'radiationEnabled'],
         settings: { extBz: 0.8, extElectric: 0.12, extElectricAngle: PI / 2 },
         knobs: {
@@ -57,7 +56,6 @@ export const PRESETS = {
 
     twinBounce: {
         name: 'Twin paradox',
-        desc: 'One twin flies to a wall at 0.8c and back, returning younger; on the traveller’s slice the home clock leaps 2vd at the turn',
         toggles: ['relativityEnabled'],
         modes: { collision: 'pass', boundary: 'bounce' },
         speed: 16,
@@ -80,7 +78,6 @@ export const PRESETS = {
 
     wheel: {
         name: 'Relativistic wheel',
-        desc: 'A wheel spinning at 0.9c, moving at 0.9c: contracted, its spoke bent, its clock slow',
         toggles: ['relativityEnabled'],
         modes: { collision: 'pass', boundary: 'loop', topology: 'torus' },
         speed: 16,
@@ -96,7 +93,6 @@ export const PRESETS = {
 
     bremsstrahlung: {
         name: 'Bremsstrahlung',
-        desc: 'A beam of electrons at 0.95c swings past a heavy nucleus, and each, bent, sheds light beamed along its path',
         toggles: ['coulombEnabled', 'magneticEnabled', 'relativityEnabled', 'radiationEnabled'],
         modes: { collision: 'pass', boundary: 'despawn' },
         speed: 32,
@@ -121,7 +117,6 @@ export const PRESETS = {
 
     kibbleZurek: {
         name: 'Kibble–Zurek walls',
-        desc: 'A Higgs field quenched through its symmetry-breaking transition freezes into ±v domains; a slower quench leaves fewer walls',
         domain: [128, 128],
         toggles: ['higgsEnabled'],
         settings: { higgsMass: 0.75, quenchTime: 120 },
@@ -139,7 +134,6 @@ export const PRESETS = {
 
     microlensing: {
         name: 'Microlensing',
-        desc: 'A mass drifts in front of a backdrop star: the star splits into two images and brightens along the Paczyński light curve',
         domain: [96, 96],
         toggles: ['gravityEnabled'],
         modes: { collision: 'pass', boundary: 'loop', topology: 'torus' },

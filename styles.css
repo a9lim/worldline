@@ -135,7 +135,6 @@ body.wl.margin-open { grid-template-columns: minmax(0, 1fr) var(--margin-w); }
 .touch-only { display: none; }
 @media (pointer: coarse) {
     .touch-only { display: inline-block; }
-    .no-touch { display: none; }
 }
 
 /* The margin's own × closes it, so its opener stays out of the way meanwhile */
@@ -394,8 +393,6 @@ body.wl:not(.margin-open) .margin { visibility: hidden; }
     font-style: italic;
     color: var(--text-muted);
 }
-
-.group-label small { font-size: 0.84rem; }
 
 .margin-foot {
     display: flex;
@@ -760,8 +757,7 @@ kbd.tick-law {
 
 /* ─── Japanese: labels upright and tracked, as base.css sets the group labels ─── */
 :lang(ja) .tick-law,
-:lang(ja) .scale-row > output,
-:lang(ja) .group-label small { font-style: normal; }
+:lang(ja) .scale-row > output { font-style: normal; }
 :lang(ja) .field-k,
 :lang(ja) .scale-row > label { letter-spacing: 0.05em; }
 

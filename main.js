@@ -63,11 +63,10 @@ function showWebGPURequired() {
                 <h2 id="webgpu-title" class="stats-title"></h2>
                 <button class="tool-btn"></button>
             </div>
-            <div class="sim-overlay-body"><p class="webgpu-body"></p><p class="webgpu-browsers"></p></div>
+            <div class="sim-overlay-body"><p class="webgpu-browsers"></p></div>
         </div>`;
     const fill = () => {
         overlay.querySelector('#webgpu-title').textContent = tI18n('webgpu.title');
-        overlay.querySelector('.webgpu-body').textContent = tI18n('webgpu.body');
         overlay.querySelector('.webgpu-browsers').textContent = tI18n('webgpu.browsers');
         const close = overlay.querySelector('button');
         close.setAttribute('aria-label', tI18n('webgpu.close'));

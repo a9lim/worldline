@@ -902,14 +902,19 @@ row). `resize()` sizes the canvases to the stage (a ResizeObserver), so opening 
 narrows the scene.
 
 **The caption** (`caption.js`) is "Fig. N.", N the figure's place in the list of figures
-("Fig." alone for a scene of the visitor's own), the figure's name, then what it shows with
-its live values, or the view, the observer and the selected body, rebuilt a few times a
-second; tilted, the twin and Kibble–Zurek keep their own text, the twin's read off the
-beads, and the other figures give way to the plate's. **Knobs** are the numbers a figure's
+("Fig." alone for a scene of the visitor's own), then one line of names and live values with
+· between them (・ in Japanese), rebuilt a few times a second: the figure's name and its own
+values, the same plane or tilted (the cyclotron's B, E and E/B, the twin's and the wheel's
+speed, γ and clocks, the beam's radiated energy, the quench's time, ordered fraction and
+walls, the lens's mass, R_E, u and μ), or the body count once the scene no longer fits it; in
+an observer's frame, its γ and lag instead; then the selected body's speed and τ. It reads
+out and never explains (root `AGENTS.md`, Show, don't tell), and repeats nothing the plate
+shows: the depth is the time axis's, the bead step the key's, a moving observer's speed the
+boost scale's, and pause the colophon's. **Knobs** are the numbers a figure's
 caption states that a visitor changes (roadmap §6.5): a preset's `knobs` (`presets.js`) over
 a store key (the cyclotron's B and E, live) or of its own (`run.knobs`: the beam's speed,
 live; the twin's and the wheel's speeds and the lens's mass, `rerun`), or with a `commit`
-(the quench time re-runs the quench). A sentence marks a knob with a token (`_k()`), and
+(the quench time re-runs the quench). The line marks a knob with a token (`_k()`), and
 the caption's writer keeps one `Knob` element (`controls.js`) per knob across rewrites,
 changing only the text nodes between them, so a drag survives the rebuilds. A knob drags
 sideways (240 px sweeps its range, Shift a tenth of that) or steps with the arrow keys
@@ -948,9 +953,11 @@ The plate's furniture, all hidden with the rulers by G ("Rulers and key"):
   drawing now, from `sim.scene` (a slow snapshot of the bodies, `GPUBackend._readScene`), the
   settings and the view: bodies by kind, the selection, world lines and their bead step,
   clocks, light (photons in the pool), the cone and events when tilted, the Fields layers, the
-  scalar hatching, a uniform external field with its value, the lensed backdrop and its star.
-  Swatches are inline SVG with the scene's own marks in `var(--ink-*)` (`marks.js`); the DOM
-  is rebuilt only when the rows change. The margin's ticks show the same marks, so the Laws
+  scalar hatching, a uniform external field (its direction in the swatch; its value is the
+  World tab's, and the cyclotron's caption's), the lensed backdrop and its star. Each row is
+  the mark and a word or two; the world line's and the clock's add their Δτ. The DOM is
+  rebuilt when a row's words or swatch change. Swatches are inline SVG with the scene's own
+  marks in `var(--ink-*)` (`marks.js`). The margin's ticks show the same marks, so the Laws
   tab reads as the scene's legend; one ink per force, margin and scene alike (1PN mulberry,
   boson interaction mulberry, the modes graphite). The clock's row shows once a body is
   drawn 5 px in radius.

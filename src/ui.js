@@ -191,9 +191,9 @@ export function setupUI(sim) {
         sim.figure = key;
         loadPreset(key, sim, { quiet: sim._openingScene || keep, knobs: sim.knobValues, settings: kept });
         sim.knobs = makeKnobs(key);
+        sim.caption?.rebuildKnobs();   // before buildKnobs, whose sync reads the caption's knobs
         buildKnobs();
         showFigure();
-        sim.caption?.rebuildKnobs();
         sim._dirty = true;
         _haptics.trigger('medium');
     };
@@ -206,9 +206,9 @@ export function setupUI(sim) {
         sim.stats.resetBaseline();
         sim.figure = 'none';
         sim.knobs = [];
+        sim.caption?.rebuildKnobs();
         buildKnobs();
         showFigure();
-        sim.caption?.rebuildKnobs();
         sim._dirty = true;
         showToast(_T('toast.cleared', 'Simulation cleared'));
         _haptics.trigger('warning');
@@ -254,7 +254,6 @@ export function setupUI(sim) {
 
     // ─── Mechanics: Newton, relativity (signal delay), or relativity with the 1PN forces ───
     const mechChoice = $('mechanics-choice');
-    const mechHint = $('mechanics-hint');
     const mechOf = () => S.relativityEnabled ? (S.onePNEnabled ? 'onepn' : 'relativity') : 'newton';
     bindChoice(mechChoice, (v) => {
         S.relativityEnabled = v !== 'newton';
@@ -327,7 +326,6 @@ export function setupUI(sim) {
     // ─── Edges ───
     const edgeChoice = $('edge-choice');
     for (const g of edgeChoice.querySelectorAll('.edge-glyph')) g.innerHTML = edgeGlyph(g.dataset.edge, 'currentColor');
-    const edgeHint = $('edge-hint');
     bindChoice(edgeChoice, (v) => {
         if (v === 'open') sim.boundaryMode = BOUND_DESPAWN;
         else if (v === 'wall') sim.boundaryMode = BOUND_BOUNCE;
@@ -388,7 +386,6 @@ export function setupUI(sim) {
     _forms.bindToggle(dampingToggle, (v) => { S.fieldDamping = v ? 1 : 0; syncGPU(); });
 
     // ─── One pass over the store: prerequisites, locks, and every control shown ───
-    const edgeHints = { open: 'edge.hint.open', wall: 'edge.hint.wall', torus: 'edge.hint.torus', klein: 'edge.hint.klein', rp2: 'edge.hint.rp2' };
     function update() {
         // Prerequisites, in order
         const ok = {};
@@ -411,14 +408,12 @@ export function setupUI(sim) {
         }
         showChoice(mechChoice, mechOf());
         enableChoice(mechChoice, 'onepn', S.magneticEnabled || S.gravitomagEnabled || S.yukawaEnabled);
-        mechHint.textContent = _T('mech.hint.' + mechOf());
 
         showChoice(collisionChoice, COL_NAMES[sim.collisionMode]);
         for (const v of COL_NAMES) enableChoice(collisionChoice, v, !S.blackHoleEnabled || v === 'merge');
         const edge = EDGE_OF(sim);
         showChoice(edgeChoice, edge);
         for (const v of ['open', 'wall', 'torus', 'klein', 'rp2']) enableChoice(edgeChoice, v, !S.expansionEnabled || v === 'torus');
-        edgeHint.textContent = _T(edgeHints[edge]);
         showChoice(universeChoice, S.expansionEnabled ? 'expanding' : 'static');
 
         $('yukawa-sliders').hidden = !S.yukawaEnabled;
@@ -685,11 +680,9 @@ export function setupUI(sim) {
 
     // ─── Info tips (hover a law's formula, or a section's ?) ───
     const INFO_KEYS = [
-        'energy', 'conserved', 'spin', 'gravity', 'coulomb', 'magnetic',
-        'gravitomag', 'relativity', 'radiation', 'spinorbit',
-        'barneshut', 'collision', 'boundary', 'topology', 'charge', 'blackhole',
-        'onepn', 'yukawa', 'axion', 'expansion', 'higgs', 'external', 'pion',
-        'fieldExcitation', 'bosoninter', 'frames', 'lensing',
+        'energy', 'conserved', 'gravity', 'coulomb', 'magnetic', 'gravitomag', 'relativity',
+        'radiation', 'spinorbit', 'barneshut', 'collision', 'topology', 'blackhole', 'yukawa',
+        'axion', 'expansion', 'higgs', 'external', 'fieldExcitation', 'bosoninter', 'frames', 'lensing',
     ];
     const _buildInfoData = () => {
         const data = {};
