@@ -1,15 +1,16 @@
 # Worldline's physics model
 
 The corrected model for 2.5, specified against an audit of the code at `6de3df8`. Status:
-**draft for Codex's adversarial review (2026-10-27).** Once ratified it is the plan of record
-for the model, and `ROADMAP.md` §7 points here; until then §7.3 there is the list of known
-boundaries and this file is a proposal.
+**second draft, after Codex's adversarial review of the first (`fb4d1ab`, 2026-10-27);
+not ratified.** §10 records what the review found and what changed. Once ratified this is the
+plan of record for the model and `ROADMAP.md` §7 points here; until then §7.3 there is the
+list of known boundaries and this file is a proposal.
 
 Tags as in the roadmap: [standard] is textbook or established practice, [synthesis] is a
 combination made here, [speculation] is a guess to test. **Now** is what the code does (with
 `file:line`), **Target** what it should do, **Books** where its energy goes, **Oracle** the
 number that certifies it. Equations quoted from memory are marked *verify* and are checked
-against their source before code.
+against their source before code; the first draft's were checked in the review (§10).
 
 ## 0. Ordering
 
@@ -22,9 +23,11 @@ meter (§7.2) stay after the record, since they want its instrument.
 
 Why the model first:
 
-1. **Replay is the dynamics.** The record keeps runs reproducible by link and replay. Changing
-   the dynamics after links ship either breaks them or makes the record version the physics,
-   a second schema held for old runs. Model first, and the record archives dynamics it keeps.
+1. **Replay is the dynamics.** The record keeps runs reproducible by link and replay, so a
+   shared run names the dynamics version it ran under, whatever the order. Changing the
+   dynamics after links ship means carrying the old version or breaking the links; model
+   first, and the record starts on the dynamics it will keep longest. (Codex: the swap doesn't
+   remove the need for a version stamp, only how many versions the record must carry.)
 2. **The instrument would exhibit the faults.** §6.5 puts a predicted number beside every
    measured one. On the held model the gravitating figures miss their own predictions: an
    equal-mass binary at v = 0.16 loses 80% of its binding energy per orbit, and Plummer
@@ -43,22 +46,33 @@ them (§3.2).
 
 ## 1. Principles
 
-1. **One action per coupling.** Every conservative interaction is a pair potential, a pair
-   Lagrangian or a field Lagrangian term. The force, the field source and any mass
-   modulation are its derivatives, and the stats book that same function. Nothing
-   conservative is written as a force alone.
+1. **One combined action per regime.** The couplings allowed together come from one action:
+   pair potentials, pair Lagrangians and field terms, with the force, the field source and
+   any mass modulation as its derivatives and the stats booking that same function. Order
+   reduction in velocity-dependent terms (EIH, Breit, Bažański) uses the combined theory's
+   leading acceleration, not each law's own, and mixed derivatives are kept (a
+   Higgs-dependent mass enters gravity, Yukawa, inertia and spin, and each of those sources
+   the field). Where a combination isn't derived, it is restricted in the UI or its omitted
+   cross terms are named. Nothing conservative is written as a force alone.
 2. **Declared regimes.** Each law states its approximation and the caption and `about.md` can
    name it: gravity and the Yukawa scalar are near-zone post-Newtonian (instantaneous, gated
    causally); electromagnetism is Liénard–Wiechert from the world lines, to all orders in v;
    the Higgs and axion fields are a slab's Klein–Gordon on a grid; a hole is
    Paczyński–Wiita (pseudo-Newtonian) until 3.x's metric regime.
-3. **A closed ledger.** E_total is the conservative energies plus metered columns, one per
-   non-conservative exchange, each metered on the GPU at the operator that does the
-   exchange (as `hubbleFriction` already is). Drift then measures integration error alone.
+3. **A closed ledger, certified independently.** E_total is the conservative energies plus
+   metered columns, one per non-conservative exchange, each metered on the GPU at the
+   operator that does the exchange (as `hubbleFriction` already is). A column is never
+   defined as whatever makes the sum close: each is checked against an independently
+   predicted number (a flux, a rate, a balance law), or closure is a tautology. Physical
+   energies are kept apart from accounting reservoirs (edits, historical work); only the
+   former are stress-energy (they feed the Friedmann density). The remaining drift mixes
+   integration error with spatial, tree, history and truncation errors, which are separated
+   by refining each independently (§4).
 4. **One kernel per pair.** Every 1/r law (force, potential, lapse, Liénard–Wiechert's field,
    Darwin, the heatmap) uses the same pair kernel, sized by the two bodies (§3.1).
 5. **Time slows before accuracy goes.** When the step budget runs out, simulated time per
-   frame shrinks and the caption says so; the step never silently coarsens (§4).
+   frame shrinks and the caption says so; the step never silently coarsens, and a state that
+   can't be resolved is subdivided below the nominal tick or refused, never run coarse (§4).
 6. **Causality as a gate.** No source acts before light from its creation reaches the
    observer, and a removed source acts from its death state until light from its removal has
    passed. Gating is an edit, metered, and outside conservation oracles (Codex, §7.1).
@@ -74,23 +88,44 @@ reaction were each confirmed by reading the code again, and the pass order also 
 axion field with `axMod` = 1.25 left the Coulomb kick unchanged to 0.5%). Each section's
 **Now** has its detail; the headlines:
 
-**Bugs that don't wait for 2.5** (each a contained fix with an oracle):
+**Bugs that don't wait for 2.5.** Codex confirmed each of 1–10 by reading the code. Its
+caution governs the list: a wiring fix that switches on a defective coupling makes things
+worse, so where the coupling behind a bug is itself wrong, the immediate fix *disables* it
+until its model correction lands.
 
 1. The boson pools only append: after 16384 photons (8192 pions and leptons) since the last
    reset every emission fails and decay, annihilation and Hawking-burst energy is destroyed
-   (§3.12).
+   (§3.12). Fix: compaction, and transactional saturation (a full pool of live packets
+   defers an event or keeps a conserved reservoir; a decay never consumes its parent before
+   its products are secured).
 2. The Higgs and axion modulations never reach the pair or tree forces: pass 0 resets
-   `axYukMod` before the force pass reads it, since 2026-03-14 (§3.2).
+   `axYukMod` before the force pass reads it, since 2026-03-14 (§3.2). **Don't reorder:** that
+   switches on an axion pair coupling of the wrong sign with no source and no force from ∇a
+   (§3.8), and a Higgs-modulated Yukawa range with no force from ∇μ (§3.4). Remove the pair
+   modulations, from the stats too (they book a coupling no force applies), until §3.4 and
+   §3.8 settle them.
 3. The quadrupole sink advances `PHYSICS_DT` once a frame, about 34× too little at the default
-   speed and frame-rate dependent, and books energy it doesn't take (§3.2).
+   speed and frame-rate dependent, and books energy it doesn't take (§3.2). **Don't fix the dt
+   alone:** that makes a sink with the wrong formula, a spurious lone-body drag and no momentum
+   conservation 34× stronger. Disable it until the reaction of §3.2 and §3.5 replaces it.
 4. Boson → body gravity is computed into a buffer that is cleared before it's read (§3.12).
 5. Pion and lepton Coulomb kicks lack 1/m (§3.12).
 6. Bounce mode's second-body spin torque has the wrong sign (§3.6).
 7. The 1PN recompute skips retired sources the force pass includes (§3.2).
-8. Pending radiation vanishes when its body merges or dies (§3.5).
+8. Pending radiation vanishes when its body merges or dies (§3.5); the surviving slot's
+   balance stays, the consumed slot's goes.
 9. Pion emission books its energy as pending before taking it from the body (§5).
 10. A black hole's spin kinetic energy is booked on top of its mass, which already contains it,
-    so superradiance reads as an 11% energy loss (measured, §3.6).
+    so superradiance reads as an 11% energy loss (measured by audit D, §3.6).
+11. **Two spin angular momenta** (found by Codex): `cache-derived.wgsl:43–58` takes J = I·angVel
+    for gravitomagnetism and the Kerr parameter, while the stats, merges and superradiance take
+    J = I·angW; they differ relativistically, and subtracting dJ/I_old then changing I doesn't
+    remove dJ. Fix: store one canonical J and derive a = J/M and the drawn rate from it.
+12. **The stats' field energy misses the stiffest modes** (Codex; audit F had it as a small
+    seam effect): `compute-stats.wgsl:545–580` takes centred gradients, which vanish on a
+    checkerboard, while the evolution's 5-point Laplacian is stiffest there. Fix: the
+    edge-difference quadratic energy whose derivative is that Laplacian, with the actual
+    boundary conditions; oracle, single Fourier modes up to Nyquist.
 
 **Model faults beyond §7.3:**
 
@@ -125,7 +160,9 @@ energies are … unsoftened" (they use the softened ρ).
 its energy; the kinematic compensation for EIH under relativistic momentum; scalar Breit;
 Majumdar–Papapetrou balance; Liénard–Wiechert's formula and its O(v⁴) agreement with Darwin
 at ε = 0; the expansion split and its exact kinetic, photon and field work; the dipoles'
-energies; merge and capture four-momentum.
+energies; the sum of the bodies' translational four-momenta through a capture (before any
+potential accounting; an ordinary merge fixes the remnant's rest mass and routes the lost
+kinetic energy to an event, which isn't by itself a conservation result).
 
 ## 3. The laws
 
@@ -143,11 +180,22 @@ Monaghan and Lattanzio as GADGET uses it (Springel 2001), potential −u(r; h) w
 r ≥ h. The pair's support is the contact distance, `h_ij = R_i + R_j` with R = ∛(baseMass)
 the drawn body radius (the horizon in black-hole mode), so the kernel acts only where the
 bodies overlap and every law is exact between bodies that don't touch: the softening is the
-size the glyph shows. R comes from `baseMass`, not the Higgs-modulated mass, so h changes
-only at events (merges, accretion), each booked as an edit. Every 1/r in every law becomes u:
-the force is −∇ of the same function, the lapse uses it, Liénard–Wiechert's velocity field
-scales by S(R) = R²·|u′(R)| (1 outside contact), and the Darwin and EIH Lagrangians are
-written in u (§3.2, §3.5) so their energies stay conserved.
+size the glyph shows. R comes from `baseMass`, not the Higgs-modulated mass, so for ordinary
+bodies h changes only at events (merges, accretion), each booked as an edit, and the glyph
+draws that same radius. A hole's horizon changes continuously (Hawking loss, discharge,
+superradiance), so in black-hole mode the kernel's time dependence is part of the model,
+not an edit. Scalar laws (Newtonian gravity, Yukawa, Coulomb) take −u and its gradient.
+
+**Tensor terms need their own kernels** (Codex). Replacing 1/r by a finite u(r) doesn't
+regularize a velocity-dependent term: u(r)(v_a·n)(v_b·n) stays direction-dependent at r = 0
+where u(0) ≠ 0, and its gradient can diverge as 1/r; e^{−μr}u(r) has a cusp at the origin.
+So the EIH, Darwin, Breit and dipole terms take smooth radial *and* tensor kernels with
+regular limits at the origin and the exact exterior fields, derived with their derivatives.
+Liénard–Wiechert's softening is §3.5's.
+
+**What the kernel is:** a regularization chosen for the code, not an extended-body
+derivation, and contact isn't a weak-field criterion (r > R_a + R_b doesn't make M/r ≪ 1).
+Each law's weak-field and slow-motion validity is stated separately.
 
 **Cost:** bodies now get close; encounters need the step control of §4, and every preset is
 retuned (its physics hash moves).
@@ -201,14 +249,16 @@ force = −∇V by finite differences across the kernel edge; third law to round
   before clipping it to the body's kinetic energy, so a clipped body creates energy.
 
 **Target.** Collisional N-body practice: gravity is instantaneous in the near zone, with
-post-Newtonian corrections, and radiation reaction is its own term.
+post-Newtonian corrections, and radiation reaction is its own term. This gives up propagating
+gravitational disturbances and any genuinely causal gravitational response; the gates of
+§1.6 are editing conventions and restore neither (Codex). That is the declared regime.
 
 - **Present positions, gated.** Gravity, the Yukawa scalar and the dipole laws act from the
   source's present state under Relativity too, gated by §1.6. The world-line search and the
   aberration factor leave every law but electromagnetism. Gravity no longer needs world lines,
   so Barnes–Hut can serve it with Relativity on; only electromagnetism stays pairwise there.
-- **N-body EIH from one Lagrangian.** Landau and Lifshitz's §106 form (*verify*), with each
-  1/r written as u(r; h_ij):
+- **N-body EIH from one Lagrangian.** Landau and Lifshitz's Eq. 106.17 (Codex checked the
+  unsoftened form against it), each 1/r written in the kernel of §3.1:
 
       L = Σ_a m_a v_a²/2 + Σ_a m_a v_a⁴/8 + Σ_{a<b} m_a m_b u_ab
           + Σ_{a<b} (m_a m_b u_ab / 2)[3(v_a² + v_b²) − 7 v_a·v_b − (v_a·n_ab)(v_b·n_ab)]
@@ -216,49 +266,65 @@ post-Newtonian corrections, and radiation reaction is its own term.
 
   The last term is the whole G² sector, the two-body and the three-body terms together:
   Σ_{b≠a} Σ_{c≠a} m_b m_c/(r_ab r_ac) = Φ_a². [synthesis: an identity, but it is what makes
-  the three-body terms cheap.] Its force is a pair force, F_k = −m_k Σ_b m_b (Φ_k + Φ_b)
-  ∇_k u_kb, equal and opposite, so the G² sector costs one extra pass for Φ. The velocity
-  terms' equations of motion carry the other bodies' accelerations, replaced by their
-  Newtonian values as the N-body EIH equations do (Newhall, Standish and Williams 1983, the
-  JPL ephemerides; REBOUNDx's `gr_full` iterates instead). So: pass 1 sums Φ_a and a_a^N,
-  pass 2 sums the EIH acceleration from them. The stats book this Lagrangian's energy
-  function, which closes §7.3's "pairwise EIH misses three-body terms".
+  the three-body terms cheap; Codex confirmed it and its derivative for fixed masses and a
+  symmetric fixed kernel.] Its force is a pair force, ∂L/∂x_k = −m_k Σ_b m_b (Φ_k + Φ_b)
+  ∇_k u_kb, equal and opposite, so the G² sector costs one extra pass for Φ. Its energy is
+  **+½Σ_a m_a Φ_a²** (a velocity-free term enters the energy with the opposite sign). The
+  velocity terms' equations of motion carry the other bodies' accelerations, replaced by the
+  *combined* theory's leading accelerations (gravity, Coulomb and Yukawa together, §1.1), as
+  the N-body EIH equations do with Newtonian ones (Newhall, Standish and Williams 1983, the JPL
+  ephemerides; REBOUNDx's `gr_full` iterates instead). So: pass 1 sums Φ_a and the leading
+  accelerations, pass 2 the EIH acceleration from them. The stats book this Lagrangian's energy
+  function and canonical momentum, with the free kinetic part as the Σmγ already booked (not
+  the expansion's m v⁴/8 on top of it). Inside the kernel this is a modified conservative
+  model, not EIH; its tensor terms take §3.1's tensor kernels.
 - **Kinematics without double counting.** EIH gives a coordinate acceleration that already
   holds special relativity's kinematics to 1PN; the integrator keeps proper velocity w. The
   code's compensation (+ ½v²a_N + v(v·a_N)) is the 1PN expansion of the exact identity
-  dw/dt = γ[a + γ²(v·a)v]; keep it, with a_N the same Newtonian acceleration the EIH pass uses
-  (present positions, the kernel), so Codex's condition in §7.1 holds by construction.
+  dw/dt = γ[a + γ²(v·a)v]; keep it, with a_N the same leading acceleration the EIH pass uses.
 - **The gravitomagnetic split stays.** EIH's v₁·v₂ sector through the Boris rotation 4m v × Bg
-  is exact and time-centred; Bg comes from present positions like the rest, and the heatmap
-  and key draw it.
-- **The modulations reach the forces:** `axYukMod` is written before the force pass that reads
-  it (or not reset in pass 0), with an oracle (axion on, two charges, the force scales by
-  (1 + g·a₀)²). A fix that doesn't wait for 2.5.
-- **2.5PN radiation reaction, pairwise,** replacing the quadrupole sink (`quadrupole.wgsl`).
-  For a pair in harmonic gauge (*verify*, Blanchet's Living Review):
+  is time-centred and agrees with EIH to the retained order (not exactly at arbitrary γ, Codex);
+  the EIH residual is derived once with that sector removed, from the same states and leading
+  accelerations. Bg comes from present positions like the rest, and the heatmap and key draw it.
+- **The modulations:** the pair modulations are removed (§2, bug 2) until §3.4 and §3.8 give
+  them an action; their regression oracle then follows that action.
+- **2.5PN radiation reaction for identified binaries,** replacing the quadrupole sink. For a
+  pair in harmonic gauge (Codex checked the coefficients against Blanchet's Living Review,
+  Eqs. 219–220):
 
       a_RR = (8/5) ν (m²/r³) [ ṙ (3v² + (17/3) m/r) n − (v² + 3m/r) v ]
 
   on the relative coordinate, m = m_a + m_b, ν = m_a m_b/m², the force μ·a_RR on a and its
-  negative on b. On a circular orbit (ṙ = 0, v² = m/r) its power is −(32/5) ν² (m/r)⁵, Peters'
-  flux, which checks the v-coefficient. Its work is metered into the gravitational-radiation
-  column and the gravitational quanta are emitted from that meter, so quanta and ledger are
-  one quantity. Pairwise is local; a system quadrupole (Burke–Thorne, Schäfer's N-body
-  Hamiltonian) is exact for an isolated system but mixes binaries farther apart than a
-  wavelength, which Worldline's scenes are. Question 3 (§8).
+  negative on b; on a circular orbit its power is Peters' −(32/5)ν²(m/r)⁵. Two corrections from
+  the review:
+  - **It applies to identified, approximately isolated binaries, not to every pair.** Summed
+    over all pairs it damps a rotating equilateral triple of equal masses, whose mass
+    quadrupole is constant (three-fold symmetry makes it isotropic in the plane) and which
+    radiates nothing at this order. A compact group radiates through its collective
+    quadrupole; a scene of several such sources farther apart than a wavelength is a set of
+    explicitly identified incoherent sources. How sources are identified (bound subsystems by
+    a tree of binding energies, say) is open: Question 3.
+  - **Work isn't flux.** Mechanical work differs from the outgoing flux by a Schott term:
+    E_Schott = (8/5)ν²m³ṙv²/r² at leading order, with d(E_cons + E_Schott)/dt = −F_GW, and on
+    a radial infall the reaction's work is positive while the flux isn't. So quanta are
+    emitted from the non-negative flux (the quadrupole formula's), the signed near-field
+    exchange (E_Schott) is its own column, and orbit-averaged balance is certified before the
+    instantaneous one.
 - **2PN last,** pairwise and two-body, only if an oracle shows the staged 1PN + 2.5PN model
   short (Codex's condition: without it the model is staged, not accurate through 2.5PN).
 
-**Books:** the EIH energy (kinetic, rest, Newtonian and 1PN potential, the −½Σm_aΦ_a² term) and
-the EIH canonical momentum Σ∂L/∂v_a, which is what 1PN conserves (Σm·w isn't: the
-order-reduced pair force isn't reciprocal); radiation reaction's work and impulse as
-gravitational radiation; gating's jumps as edits.
+**Books:** the EIH energy (Σmγ, the Newtonian and 1PN potentials, +½Σm_aΦ_a²) and canonical
+momentum Σ∂L/∂v_a, which is what 1PN conserves (Σm·w isn't: the order-reduced pair force isn't
+reciprocal); the reaction's flux as gravitational radiation and its Schott term apart; gating's
+jumps as edits.
 
 **Oracles:** an equal-mass binary at v = 0.16 keeps its binding energy to integration error
 over ten orbits (the regression for §7.3's 80%); perihelion advance 6πM/p with 1PN and πM/p
 from special relativity alone (exists: "1PN perihelion advance"); the EIH energy on an
-eccentric binary (exists) and on a hierarchical triple; a circular binary's inspiral and an
-eccentric one's da/dt and de/dt against Peters 1964, orbit-averaged and leading order.
+eccentric binary (exists) and on a hierarchical triple; a circular binary's inspiral, and an
+eccentric one's da/dt and de/dt against Peters 1964, orbit-averaged; the eccentric and radial
+binaries' instantaneous Schott balance; the rotating equilateral triple loses nothing at
+leading order.
 
 ### 3.3 Spin [standard]
 
@@ -271,14 +337,24 @@ reaction on the source is only the Boris term. Tidal torque and frame drag act o
 with no orbital reaction, so total angular momentum isn't conserved; the frame-drag torques
 of a pair sum to 2(ω_j − ω_i)(L_j − L_i)/ρ³, not zero (audit A).
 
-**Target:** the 1PN spin–orbit and spin–spin Hamiltonian (Barker and O'Connell 1975; Kidder
-1995), restricted to the plane: spins along z, so every spin term is a scalar times the
-orbital angular momentum or the spins' product. The forces and the spoke's precession
-come from the same Hamiltonian, which supplies the companion term and makes the spoke and
-the orbit agree. Electromagnetic spin terms (the magnetic dipole and its spin–orbit) stay
-Darwin-order magnetostatics (§3.5). Tidal torque and frame drag take an equal and opposite
-orbital torque on the pair, so total angular momentum is conserved, and the tidal torque's
-dissipation is metered.
+**Target:** first, **one canonical spin J** per body (§2, bug 11), from which the Kerr
+parameter a = J/M, the moments and the drawn rate all follow, and which every event updates.
+Then two separate things (Codex):
+
+- **Conservative spin transport:** the leading spin–orbit and spin–spin Hamiltonian (Barker
+  and O'Connell 1975; Kidder 1995), restricted to the plane: spins along z, so every term is a
+  scalar times the orbital angular momentum or the spins' product. The forces and the spoke's
+  precession come from the same Hamiltonian, which supplies the companion term and makes the
+  spoke and the orbit agree. For compact bodies spin–orbit is 1.5PN and spin–spin 2PN, above
+  the 1PN the orbit carries, so this is a declared partial order (Worldline's bodies aren't
+  compact; the counting says what the terms are, not that they're small).
+- **Tidal dissipation, phenomenological:** no conservative Hamiltonian gives the present
+  spin-synchronizing torque. It stays a labelled dissipative model with an equal and opposite
+  orbital torque (total angular momentum conserved) and its dissipated energy metered.
+  Frame drag as a torque goes: its conservative content is in the spin Hamiltonian.
+
+Electromagnetic spin terms (the magnetic dipole and its spin–orbit) stay Darwin-order
+magnetostatics (§3.5).
 
 **Oracles:** the gravitomagnetic clock effect (exists); a spinning binary's orbital-plane
 precession is absent (z-spins) while its periastron advance carries the spin–orbit
@@ -295,8 +371,8 @@ in §3.2 the forces never see the modulation. The range is truncated four differ
 stats at softened μρ < 6, the 1PN recompute not at all), so the force jumps by about e⁻⁶ at
 the cutoff and pair and tree disagree past it.
 
-**Target:** the instantaneous potential V_ab = −g_Y m_a m_b e^{−μr}·u(r; h_ij), exact Yukawa
-outside contact, gated like gravity, with scalar Breit at 1PN from its Lagrangian, and one
+**Target:** the instantaneous potential V_ab = −g_Y m_a m_b e^{−μr}/r outside contact, with a
+kernel inside that is smooth at the origin (e^{−μr}·u(r) has a cusp there, §3.1), gated like gravity, with scalar Breit at 1PN from its Lagrangian, and one
 smooth range window shared by force, recompute, tree and stats in place of the four cutoffs.
 **Decision:** the Higgs-modulated range is not a field theory (a pair potential
 whose range is the geometric mean of the field at its two ends has no source and no force
@@ -349,58 +425,82 @@ physical reading to protect.
   kinetic energy with no potential, and doesn't conserve angular momentum.
 
 **Target.** Liénard–Wiechert from the world lines stays. With the Lorentz force through the
-Boris push, special-relativistic kinematics and a correct self-force, it is complete classical
-electromagnetism for point charges, every multipole's radiation included: the mutual
-retarded fields carry the system's radiation reaction beyond each charge's own. The fixes:
+Boris push, special-relativistic kinematics and a consistent self-force, ideal mutual
+retarded fields carry the system's radiation reaction beyond each charge's own, every
+multipole included (Codex agrees). The fixes:
 
-- **One trajectory.** Interpolate the retarded state by quintic Hermite from each sample's
-  position, velocity and acceleration at both ends, so position, velocity and acceleration
-  come from one polynomial. A sample's acceleration is what the integrator did, the
-  substep's Δw/Δt converted to dv/dt and centred with the positions, so spin–orbit kicks,
-  radiation reaction, the magnetic rotation and impulses are all in β̇.
-- **Time-even softening.** Soften by the invariant ρ = −u·R = γκR, which for uniform motion
-  is the distance in the source's rest frame (φ = q/(κR) = γ·q/r′), so the softened field is
-  the boosted rest-frame kernel field and stays even under v → −v. With the contact kernel
-  S(ρ) = 1 outside contact, and the Darwin Lagrangian is written in the same kernel so the
-  stats' Darwin energy is the conserved quantity of the softened O(v²) dynamics.
-- **The self-force: reduced-order Abraham–Lorentz–Dirac** (Landau–Lifshitz when the external
-  force is the Lorentz force) [standard]: F_rad^μ = τ[dK^μ/dτ + (K·K/m)u^μ] (sign by the metric,
-  *verify*), with K the non-gravitational four-force *including* q v × B, and dK/dτ the finite
-  difference of K along the trajectory between substeps (the field's change along the path,
-  LL's (∂_t + v·∇)E, without per-law jerks). Gravity is left out, the equivalence-principle
-  choice: a free-falling charge has no local self-force (its tail is DeWitt–Brehme's, out of
-  scope). Its work is booked signed, no clamp; photons are emitted from the positive balance,
-  and the body takes as recoil the difference between the four-momentum the reaction removed
-  and what the photon carries, so each emission closes.
+- **One trajectory, with events apart.** Interpolate the retarded state so position,
+  velocity and acceleration come from one curve, and keep it timelike: arbitrary quintic
+  Hermite data can overshoot to superluminal velocity and give several light-cone roots
+  (Codex), so the interpolant is constrained (or its segment refined) to |v| < 1. A sample's
+  acceleration is what the integrator did, centred with the positions, so spin–orbit,
+  radiation reaction and the magnetic rotation are in β̇. Impulses (collisions, bounces,
+  walls, absorption) aren't smooth: they split the world line into segments at an event,
+  each with its own fit, and an instantaneous velocity jump has singular radiation, so an
+  event gets either a resolved duration or an explicit event-radiation model.
+- **Time-even softening, as an approximation.** ρ = −u·R = γκR is the distance in the
+  source's rest frame for uniform motion (φ = q/(κR) = γ·q/r′; Codex confirmed), so S(ρ)
+  times the field is the boosted rest-frame kernel field and stays even under v → −v. Under
+  acceleration ρ refers to the instantaneous rest frame at the *retarded* event, and S(ρ)·F
+  violates the homogeneous Maxwell equations (d(SF) = dS ∧ F ≠ 0). So this is a stated
+  interior-contact prescription, with uniform motion as its oracle, not an extended-charge
+  theory; outside contact S = 1 and nothing is approximated. The Darwin Lagrangian takes the
+  kernels of §3.1.
+- **The self-force: reduced-order Abraham–Lorentz–Dirac** [standard; Poisson, Pound and Vega,
+  Eq. 1.5]. With signature (−+++), u² = −1, constant mass and K·u = 0,
+  f^μ = τ₀(δ^μ_ν + u^μu_ν) dK^ν/dτ = τ₀[dK^μ/dτ − (K·K/m)u^μ], τ₀ = 2q²/3m, and the three-force
+  on the momentum is f^i/γ. K is the external four-force *including* q v × B and gravity: the
+  model is flat Maxwell with gravity as an external mechanical force, and flat
+  Liénard–Wiechert fields see the accelerated trajectory whatever force caused it, so leaving
+  gravity out of the self-force while its acceleration still radiates through the mutual
+  fields would be inconsistent. (The draft's equivalence-principle argument was wrong: in
+  curved spacetime a geodesic charge still has a self-force from curvature and tails,
+  Pfenning and Poisson.) Reduction of order evaluates dK/dτ from the lower-order equations
+  (the field's change along the unreacted path), not by differencing forces along the
+  already reacted trajectory, which is a history-dependent approximation (Codex). Validity
+  needs τ₀/T ≪ 1 for the motion's timescale T, which an electron of m 0.1, q −1 (τ₀ = 6.7)
+  fails on a pass: such figures are outside the approximation and say so. A Higgs-varying
+  mass needs its own derivation. The reaction's work is booked signed, with no clamp.
+- **Packets are diagnostics first** (Codex). Coherent radiation has interference terms and
+  generally no unique positive share per emitter, so per-body photons can't be the radiation
+  itself without counting it twice: the mutual LW fields already exchange it, and an
+  absorbed packet would deposit it again. First, photons are drawn representations of an
+  explicitly defined flux and don't act. A field-to-packet conversion with an absorption
+  model that doesn't double count is a decision of its own (Question 6).
 - **Pending radiation outlives its body:** a merge carries it to the survivor, a death or
   absorption emits it.
-- **No EM quadrupole sink under signal delay** [synthesis]: with the mutual fields retarded,
-  the sink counts the system's quadrupole radiation twice. Without signal delay (Relativity
-  off, instantaneous Coulomb) the quadrupole sink stays, fixed: Q_ij = Σq(3x_i x_j − r²δ_ij),
-  P = (1/180)Σ(Q⃛_ij)² (LL §71, *verify*), per substep, booked after its clip.
+- **No EM quadrupole sink under signal delay:** with ideal mutual retarded fields it counts the
+  system's quadrupole radiation twice (Codex agrees). Without signal delay (Relativity off,
+  instantaneous Coulomb) a sink stays, fixed: Q_ij = Σq(3x_i x_j − r²δ_ij), P = (1/180)Σ(Q⃛_ij)²
+  (LL Eq. 71.5, checked by Codex), Q_zz included, per substep, booked after its clip; even
+  then it and per-body Larmor miss the coherent dipole interference, so that regime is
+  labelled approximate.
 - **The tree's charge aggregates** carry the dipole and current, or the tree stays out of
   electromagnetism (a mixed-sign node's monopole is often zero).
-- **The field in transit, metered.** Beyond O(v²) the pair exchanges energy with the field:
-  the mutual radiation (the interference term −(4/3)q₁q₂a₁·a₂ of two dipoles' power, §7.3)
-  and energy in flight. Meter −∫Σ(F_LW − F_Darwin)·v dt into an "electromagnetic field"
-  column, and −∫Σ F_LW dt into a field-momentum column, so energy and momentum close.
-  The meter needs the Darwin force beside the Liénard–Wiechert one in the same pair loop.
-  Question 6 (§8).
+- **The residual exchange, metered and named as such.** For an autonomous Darwin Lagrangian
+  dE_D/dt = Σ_i v_i·[d/dt(∂L_D/∂v_i) − ∂L_D/∂x_i], so the energy meter is
+  −∫Σ_i v_i·(F_LW,i − F_D,i) dt with F_D the *acceleration-dependent* Darwin Euler–Lagrange
+  force evaluated along the actual trajectory, not a separately order-reduced one (Codex). The
+  momentum meter subtracts the Darwin field momentum already booked. Both are called residual
+  exchange, with their approximation order stated, until an independent field-energy
+  calculation matches them (§1.3).
 - **Magnetic dipoles and spin–orbit:** Darwin-order magnetostatics from the present state,
   gated, from one Lagrangian (the dipole–dipole energy and the μ·B coupling to the moving
   charges' field), so their forces are gradients of booked energies and angular momentum,
   orbital plus spin, is conserved.
-- **The κ floor** (sources above about 0.785c have suppressed forward fields) stays as a
-  stated boundary; it binds only at speeds the step control should resolve.
+- **The κ floor** (sources above about 0.785c have suppressed forward fields) is a model
+  alteration that refining the step can't remove: the domain claimed for Liénard–Wiechert
+  excludes where it acts, and the caption says when it binds.
 
-**Oracles:** "a uniformly moving charge acts from its present position" (exists); the same
-at R < ε: the force even under v → −v; a hyperbolically accelerated charge's field against the
-analytic one; a cyclotron orbit in pure B radiates Larmor's power and spirals in at its rate;
-synchrotron power at 0.1c–0.9c; two antiphase and in-phase oscillating dipoles: the field
-column's average equals (4/3)q₁q₂⟨a₁·a₂⟩; two like charges in a symmetric orbit (no dipole)
-lose energy at quadrupole order (photons and field column together), not twice Larmor;
-Darwin energy plus the field column constant
-(extends the existing "Darwin energy" oracle).
+**Oracles:** "a uniformly moving charge acts from its present position" (exists), and the
+same at R < ε: the force even under v → −v; constant-motion, accelerated and boosted cases
+with the softening and the κ floor varied independently; a hyperbolically accelerated charge's
+field against the analytic one; a cyclotron orbit in pure B radiates Larmor's power and
+spirals in at its rate; synchrotron power at 0.1c–0.9c; two antiphase and in-phase
+oscillating dipoles, and two like charges in a symmetric orbit (no dipole: quadrupole-order
+loss, not twice Larmor), each measured by an independently computed coherent flux, not by the
+residual ledger; Darwin energy plus the residual exchange constant (extends the existing
+"Darwin energy" oracle).
 
 ### 3.6 Black holes [synthesis on standard pieces]
 
@@ -447,54 +547,78 @@ a CPU transcription reproduces the measured 25.1):
 
 **Target:**
 
+- **First, the Hamiltonian.** Paczyński–Wiita's 4M marginally bound and 6M marginally stable
+  radii hold with Newtonian kinetic energy (Relativity off). Worldline under Relativity uses
+  relativistic momentum, and for H = √(m² + p_r² + L²/r²) − Mm/(r − 2M) the marginally bound
+  circular orbit is at (3 + √3)M = 4.732M and the ISCO at 7.212M (Codex derived these; checked
+  here numerically). So the complete kinetic-plus-potential model comes first, and its capture
+  and orbit oracles are derived from it, not imported from Schwarzschild.
 - **One pair function, sized by contact.** V_ab = −m_a m_b/(r − c_ab) with c_ab = r₊,a + r₊,b,
   the horizons' contact distance (the kernel's h_ij in black-hole mode, §3.1). It is symmetric,
-  reduces to Paczyński–Wiita for a test body, and diverges where the horizons touch, which is
-  where collision detection already looks. The force is −∇V_ab, equal and opposite, from the
-  present state (gated), and the stats, the heatmap and the effective-potential plot all use
-  V_ab. No plateau: captures are resolved before the force pass, so no body is ever evaluated
-  inside a horizon.
-- **One capture rule.** Paczyński–Wiita reproduces Schwarzschild's marginally bound radius 4M
-  and marginally stable radius 6M by construction (Paczyński and Wiita 1980), and in
-  Schwarzschild every orbit with E ≤ m that reaches inside 4M plunges. So a pair that is bound
-  or marginally bound (relative energy with V_ab ≤ 0) is captured when it crosses
-  r_mb,ab = 2·c_ab (4M for a test body), where |V| is bounded (m/2 for a test body); an unbound
-  pair is captured on contact. Every black-hole merge takes this one rule.
-- **The remnant is lighter than its parts.** Its mass is the pair's energy in its centre of
-  momentum frame including V_ab at capture, at the centre of energy, with `FLAG_WL_BREAK`;
-  the deficit leaves as gravitational quanta (booked), as a merger's remnant is lighter than
-  its parents. Codex's objection to booking the pair potential (an engulfed body got −7.5)
-  came from the plateau, which capture at r_mb never reaches. Orbital plus spin angular
-  momentum goes to the remnant up to the Kerr–Newman bound; the excess leaves with the quanta.
+  reduces to Paczyński–Wiita for a test body, and diverges where the horizons touch. The force
+  is −∇V_ab, equal and opposite, from the present state (gated), and the stats, the heatmap and
+  the effective-potential plot all use V_ab. No plateau: captures are resolved before the force
+  pass, so no body is ever evaluated inside a horizon.
+- **One capture rule, on a surface where V is finite.** For each inward-moving pair, capture
+  where it passes the peak of its own effective-potential barrier (the unstable circular orbit
+  for its angular momentum, in the chosen Hamiltonian): past the peak an inward pair can't turn
+  back, and V there is finite, so no pair ever feels the divergence at contact. Bound pairs
+  reach it inside the marginally bound radius; a pair with too little angular momentum for a
+  barrier has no turning point inside the ISCO and is captured there. [synthesis; Question 7]
+  Every black-hole merge
+  takes this one rule, and the event is located within the step (the step control resolves the
+  approach). The Schwarzschild fact behind it holds for geodesics (an inward timelike geodesic
+  with E/m ≤ 1 can't turn around below 4M, Codex); for the SR–PW Hamiltonian and for charged,
+  spinning or comparable-mass pairs it is derived again, regime by regime.
+- **Energy closes at capture, once.** E_before = E_remnant + E_emitted, every interaction
+  that changes included (the pair's V at the capture surface and the third bodies' potentials
+  with each parent, which become potentials with the remnant). The remnant takes what isn't
+  emitted, at the centre of energy, with `FLAG_WL_BREAK`. A merger burst, if modelled, is an
+  explicit E_emitted taken from the remnant, not added: the draft's "remnant at the pair's
+  energy, and the deficit as quanta" counted the binding twice (Codex). Orbital plus spin
+  angular momentum goes to the remnant's canonical J up to the Kerr–Newman bound; the excess
+  leaves with the burst.
 - **Bodies engulfed at switch-on or spawn** merge before the first force with rest masses
   summed and no potential: an edit, metered.
-- **Charge emission pays its whole energy** (rest, kinetic, and its potential in the hole's
-  fields at launch) from the hole, with exact recoil. The first law picks the energy
-  [synthesis: the area theorem used as the emission rule]: charge-to-mass falls with an
-  emission of charge e and energy E iff E < e·M/Q, and the area theorem asks E ≥ e·Φ_H,
-  Φ_H = Q·r₊/(r₊² + a²). Below extremality E = e·Φ_H satisfies both, since by the Kerr–Newman
-  identity r₊² + a² = 2Mr₊ − Q² the condition Φ_H < M/Q is Q²(r₊ + M) < 2M²r₊, true for r₊ > M.
-  So Schwinger keeps its launch energy and the hole pays it, which can't raise Q/M. An
-  over-extremal hole has no area theorem to respect, only E < e·M/Q: shedding emits near the
-  lepton's rest mass, stops when the hole can't pay, and the clamp stays the backstop with its
-  charge change booked. (`AGENTS.md` records that paying the lepton's kinetic energy made the
-  discharge run away; by this argument paying e·Φ_H can't, so what was paid then is Question 8.)
+- **Charge emission pays its whole energy, and the area theorem bounds it** [standard: the first
+  law; Wald's review]. With dM = (κ/8π)dA + Ω_H dJ + Φ_H dQ, Φ_H = Q·r₊/(r₊² + a²), an emission of
+  energy E at infinity, charge e and angular momentum j keeps the area from shrinking iff
+  E ≤ Φ_H e + Ω_H j: the reversible limit is the *most* a hole can give (the draft had the
+  inequality reversed). Charge-to-mass falls iff E < e·M/Q. For a sub-extremal hole
+  Φ_H < M/Q, since 2M²r₊ − Q²(r₊ + M) = r₊²(r₊ − M) + a²(r₊ + M) > 0 (the draft's "⟺ r₊ > M"
+  was wrong: spinning extremal holes satisfy it too), so any area-respecting emission with
+  j = 0 lowers Q/M. The first law doesn't choose a spectrum; the model does, and has to keep
+  four energies apart: the lepton's energy at infinity, its launch energy, the recoil, and
+  the pair's electrostatic energy. For a finite quantum the reversible bound isn't e·Φ_H: at
+  fixed Reissner–Nordström horizon radius the reversible mass decrease is e·Φ_H − e²/(2r₊).
+  So each emission is tested on the actual post-emission (M, J, Q) with recoil, and a lepton
+  whose rest mass exceeds what the hole may give isn't emitted: a threshold, as Schwinger's
+  has. An over-extremal hole has no area to respect, only E < e·M/Q; it sheds near the
+  lepton's rest mass, stops when it can't pay, and the clamp stays the backstop with its
+  charge change booked. (Why paying the kinetic energy once made the discharge run away,
+  as `AGENTS.md` records, this argument doesn't identify: launch versus asymptotic energy,
+  finite quanta, recoil and changing J all enter. The plateau-and-capture loop is the mass
+  runaway, independently.)
 - **Hawking** recoils exactly (M₁² = M₀² − 2M₀e for an isotropic rest-frame photon), and the
   final burst's leptons recoil and are paid.
 - **Superradiance** keeps its α² rate (visibility), labelled. A hole's mass M is its whole
   energy, rotation included (Kerr), so the stats stop adding a separate spin kinetic energy for
-  holes; then dM = dE with dJ = dE/μ is already right, and the field's angular momentum and
-  the hole's recoil are booked. (Measured: a hole of 0.5 over 80 time units kept dM = μ·dJ
-  to 2%, but the booked total fell 11% because spin kinetic energy, counted on top of M, fell
-  14× the field's gain.)
+  holes (bug 10). The deposit itself is a positive scalar pulse that carries no angular
+  momentum, so the J the hole loses goes nowhere; real superradiance pumps an m = 1 rotating
+  mode with dJ/dE = 1/ω (Codex). Either the deposit excites such a mode, carrying both, or
+  superradiance is labelled as an energy-only phenomenology with the angular momentum booked as
+  a column. Overlapping holes' independently normalized impulses add quadratic cross energy;
+  the deposit is normalized jointly.
 - **Bounce** takes the sign fix now, Hertz energy ⅖δ^{5/2} booked and friction metered.
 
-**Oracles:** force = −∇V and the third law for unequal holes; a test body released at rest
-just outside r_mb falls in and the remnant is M + m/2, at every frame rate; the 1 and 8 at rest
-10 apart give 9 (an edit) with the ledger closed; 200 small charged holes don't run away;
-Schwinger and shedding lower Q/M monotonically and the area never shrinks below extremality
-(extends the censorship oracles); a stable circular orbit at 6M, none inside; a bounce
-conserves total angular momentum.
+**Oracles:** force = −∇V and the third law for unequal holes; the SR–PW circular-orbit
+sequence (4.732M, 7.212M) under Relativity and 4M, 6M without, derived from the Hamiltonian in
+use; a test body released at rest outside the capture surface falls in and the ledger closes,
+at every frame rate; the 1 and 8 at rest 10 apart give 9 (an edit) with the ledger closed;
+200 small charged holes don't run away; finite charged-hole extraction: recoil, area,
+extremality and charge each checked per event, Q/M falling monotonically; overlapping
+superradiant deposits checked for energy and angular momentum; a bounce conserves total
+angular momentum.
 
 ### 3.7 The Higgs field [standard: the Standard Model's Yukawa structure]
 
@@ -508,8 +632,8 @@ conserves total angular momentum.
   +g·baseMass·sign(φ)·∇φ (no 1/γ) and the source +g·baseMass/γ, never odd in φ
   (`field-forces.wgsl:121–184`, `field-deposit.wgsl:97–116`). The mass alone,
   L = −baseMass·|φ|·dτ, would give F = −baseMass·∇|φ|/γ and J = −baseMass·sgn(φ)/γ; the code's F
-  and J have the opposite signs, and with each other derive from L = +g·baseMass·φ/γ, a
-  different coupling. Measured: on a ramp of |φ| from 0.6 to 1.4 a body of 0.1 is pushed toward
+  and J have the opposite signs and don't come from one action between them either (the force
+  carries sign(φ) and lacks 1/γ, the source lacks the sign; Codex). Measured: on a ramp of |φ| from 0.6 to 1.4 a body of 0.1 is pushed toward
   larger |φ| (+0.00125 a frame) and grows heavier as it goes; a body of 2 dresses itself to
   φ = 1.51 and mass 2.99.
 - **The ledger hides it.** The field–particle interaction is booked as −baseMass(|φ| − 1), so
@@ -536,23 +660,32 @@ conserves total angular momentum.
 - the source is −m′(φ)/γ per cell area, odd in φ, so Z₂ holds;
 - the mass follows φ exactly, in the force pass's own substep, with no rate limit and no
   separate coupling g; spin angular momentum is conserved through it (ω rescaled);
-- the energy is Σ m_a γ_a plus the field's, conserved by the action up to the deposit and the
-  interpolation being adjoint (both PQS, so they are); no separate interaction term.
+- the energy is Σ m_a γ_a plus the field's, with no separate interaction term;
+- **the discrete force is the derivative of the discrete energy** (Codex): the body's mass is
+  m(Σ_g S_g(x)φ_g), so its force needs Σ_g (∇S_g)φ_g, the gradient of the PQS weights. The code
+  interpolates a precomputed central-difference grid gradient (`field-forces.wgsl:55–88`), a
+  different operator even in the interior; that is what has to change for the action to
+  conserve energy on the grid.
 
 Bodies are drawn to small |φ|, so to the walls, where they are light, and dense matter
 pushes φ toward zero around itself: walls gather matter and matter pins walls, a new
-Kibble–Zurek observable. [synthesis] The action also does what the thermal term was for: a
-gas of bodies adds n·⟨m(φ)/γ⟩ to the field's effective potential, which near φ = 0 is a
-positive mass term n·baseMass·⟨1/γ⟩/(2f)·φ², so dense matter restores the symmetry. It is
-density-driven, and a hotter classical gas couples less (1/γ), unlike the quantum thermal
-mass's T². So the thermal term goes. [synthesis] Viscosity goes, or, if the deposit's noise
+Kibble–Zurek observable: walls pin to bodies (a smooth Z₂ wall can't end on a point body, since
+φ stays defined through it). [synthesis] The action also does part of what the thermal term
+was for: at fixed momenta a gas of bodies adds V_matter(φ) = n·⟨√(p² + m(φ)²)⟩ to the field's
+effective potential (Codex's correction of the draft's n·⟨m/γ⟩; its derivative is the m′/γ
+source). Since m·m′ = baseMass²·φ, near φ = 0 it is V_matter ≈ const + ½·n·baseMass²·⟨1/E⟩·φ²,
+a positive mass term, so dense matter restores the symmetry. That is density-driven, and a
+hotter classical gas couples less, unlike quantum thermal restoration, a different mechanism
+this model doesn't claim. The unbalanced thermal term goes. [synthesis] With gravity on, the
+vacuum energy's offset is stated once (§3.9). Viscosity goes, or, if the deposit's noise
 needs it, it is metered. Without the energy pump the rate limit was damping, the "resonant
 throb" shouldn't return. [speculation, testable] The reset, the guards and the open boundary
 stop choosing +1 (§3.10).
 
 **Oracles:** a body crossing a static wall conserves its energy plus the field's; the
 mirror run (φ → −φ) is the bitwise negation; a self-dressed body's mass is the action's
-stationary point; a quench with matter: walls end on bodies.
+stationary point; the force equals a finite difference of the discrete energy at arbitrary
+subcell positions; a quench with matter: walls pin to bodies.
 
 ### 3.8 The axion field
 
@@ -573,25 +706,42 @@ stationary point; a quench with matter: walls end on bodies.
 - The field is clamped to ±2 without zeroing ȧ (`field-evolve.wgsl:247`).
 
 **The name.** In the symmetry plane the electric field lies in the plane and the magnetic
-field along z, so E·B = 0 and the axion's aF F̃ coupling vanishes identically. What Worldline
+field along z, so E·B = 0 on the reflection plane and the axion's aF F̃ coupling vanishes
+there. (Only there: in a slab of finite thickness an odd transverse pseudoscalar mode can
+couple to off-plane E·B, so the plane rules out this reduction of the axion, not every one;
+Codex.) What Worldline
 calls the axion couples to F², the electromagnetic Lagrangian: a varying-α modulus in
 Bekenstein's sense (Bekenstein 1982), which for point charges couples to their self-energy
 and their interaction energies. [standard] Its misalignment and superradiance hold for any
 light scalar. Whether to rename it is a9's call; the model should say which it is.
 
-**Target:** one action, Bekenstein's form. Each charge carries q·√f(a(x)) at its position,
-f = 1/(1 + ga) as `config.js` documents (so the coupling falls as a grows), and every
-electromagnetic energy follows from it: the self-energy q²f/(2r_c) and the pair energies
-q_a q_b √(f_a f_b)·u(r) (Liénard–Wiechert with the factor at emission, the retarded a at the
-source, and at absorption). The force on a charge is −Σ ∂U/∂a·∇a; the field's source is
-−∂U/∂a summed per cell, pair energies included; both carry 1/γ as proper-time couplings. The
+**Target.** Bekenstein's theory, L_EM = −Z(a)F²/4, has Maxwell's equation ∂_μ[Z(a)F^{μν}] = j^ν
+(Bekenstein, Eqs. 14–16): Z's variation changes propagation through the whole intervening
+field, so it is *not* a factor q·√f(a) at each charge, at emission and absorption (the draft's
+proposal; Codex). Two honest options:
+
+- **A quasistatic variable-coefficient field.** Solve ∇·(Z(a)∇φ_E) = −ρ_q on the grid for the
+  electrostatic part, with the force on charges and the source for a from that one energy,
+  ½∫Z(a)|E|²: a substantial project, beside Liénard–Wiechert rather than inside it.
+- **A labelled phenomenological endpoint model.** Keep a pair energy with endpoint factors,
+  derive its force on the charges (including −∂U/∂a·∇a) and its source in a from that one
+  energy, and call it what it is, without claiming Bekenstein. Generic pair energies don't
+  acquire a universal 1/γ.
+
+Until one is chosen, the pair modulation stays removed (§2, bug 2) and the single-body
+channel (force, source, booked interaction, consistent with each other as U = −J·a) stays. The
+Peccei–Quinn term is dropped or derived the same way; I'd drop it (two unrelated terms, no
+reading to protect). The clamp zeroes ȧ, and is metered.
+
+The
 Peccei–Quinn term is either a vertex factor on the Yukawa coupling, derived the same way, or
 dropped; I'd drop it (two unrelated terms, no reading to protect). The clamp zeroes ȧ, and is
 metered.
 
-**Oracles:** two charges in a uniform a₀ feel (1 + ga₀)⁻¹ of Coulomb; a charge crossing an
-axion gradient conserves its energy plus the field's; the field's source matches the
-energy's derivative by finite differences.
+**Oracles:** a charge crossing an axion gradient conserves its energy plus the field's; the
+field's source matches the energy's derivative by finite differences; for whichever pair
+model is chosen, its force against a finite difference of its energy (two charges in a
+uniform a₀ feeling Z(a₀)⁻¹ of Coulomb is necessary and far from sufficient, Codex).
 
 ### 3.9 Grid gravity
 
@@ -599,18 +749,26 @@ energy's derivative by finite differences.
 the bodies' mass, each convolved with −1/√(r² + ℓ²) by circular FFT for every boundary (an open
 domain sees image masses). The fields feel Φ_F + Φ_P; the bodies feel −m∇Φ_F, Newtonian, no γ
 or e^Φ, dispatched once (the header says once per field). The particle's own Φ_P sources only
-the field, and the particle's lapse ignores Φ_F. For the metric ansatz the field's action
-gives ∂L/∂Φ = 2φ̇² − 2V, which is ρ + 3p, Tolman's active mass [standard], not ρ: here a false
-vacuum (V > 0) attracts where the action has it repel. Field–particle and field–field
+the field, and the particle's lapse ignores Φ_F. For the metric ansatz the field's Lagrangian
+density is ½e^{−4Φ}φ̇² − ½|∇φ|² − e^{−2Φ}V, so ∂L/∂Φ at Φ = 0 is −2φ̇² + 2V = −(ρ + Σp): the
+active source is ρ + Σp = 2φ̇² − 2V, Tolman's active mass [standard], not ρ, with all three
+pressures counted (Codex corrected the draft's sign). Here a false vacuum (V > 0) attracts
+where the action has it repel. A moving point body sources mγ(1 + v²) in the same ansatz, not m. Field–particle and field–field
 gravitational energy is booked nowhere. The deposit's fixed point caps at ±2048 a cell
 (suspected reachable for a heavy hole).
 
-**Target:** one gravitational coupling: Φ from every source, ρ + 3p for the fields and mass for
-the bodies, and both feel the same Φ (minus each body's own term), so the forces are
-reciprocal and the interaction energy ½∫ρ_active Φ is booked. The slab's own kernel F(kℓ)
-(roadmap §1.2) in place of Plummer; a zero-padded convolution on open domains (Hockney and
-Eastwood) and circular only on the torus; Φ_F in the bodies' lapse; a deposit format that
-can't overflow.
+**Target:** one gravitational coupling from the complete projected action, varied *before*
+projecting onto the slab: Φ from every source (ρ + Σp for the fields, mγ(1 + v²) for the bodies),
+both feeling the same Φ (minus each body's own term), so the forces are reciprocal; the energy
+is the Hamiltonian of that action with the momentum π = e^{−4Φ}φ̇, not today's flat energy plus
+½∫ρ_active Φ (Codex). Projecting φ = ψχ(z) brings transverse-gradient energy and confinement
+stresses; the transverse gradient cancels from T₀₀ + ΣT_ii, so treating it afterwards as an
+ordinary effective potential gives the wrong active source, and particle–slab and slab–slab
+couplings take different transverse-profile integrals. The slab kernel F(kℓ) changes the
+spatial response, not the active stress. A single scalar Φ is itself an approximation when the
+stresses are anisotropic. This is a substantial project of its own (§7). Meanwhile: a
+zero-padded convolution on open domains (Hockney and Eastwood) and circular only on the torus;
+Φ_F in the bodies' lapse; a deposit format that can't overflow.
 
 ### 3.10 Field boundaries and damping [standard]
 
@@ -649,9 +807,11 @@ already stretched (≤ H·dt/2, about 1%; suspected). The headers of `expansion.
 no cap that can bind silently; pending radiation redshifted in `expansion.wgsl`; the bath's
 temperature rescaled; each law's share of the stretch metered around the stretch operator
 exactly (the energy before and after, as the fields' already is) instead of the first-order
-Σ d·∂V/∂d that lags a readback; the Friedmann density from every booked energy by its own
-equation of state (kinetic energy as radiation-like at high γ, a field's potential energy as
-vacuum-like).
+Σ d·∂V/∂d that lags a readback; the Friedmann density from the physical energies only, each by
+its own equation of state (kinetic energy radiation-like at high γ, a field's potential energy
+vacuum-like). Accounting columns (edits, historical work, residual exchange) aren't
+stress-energy, and gravitational binding energy has no universal equation of state (Codex), so
+the closure's matter content is stated as an approximation.
 
 ### 3.12 Bosons and pools
 
@@ -688,7 +848,8 @@ vacuum-like).
 **Target:**
 
 - Live-count pools: a stream compaction (prefix sum, the trees' machinery) once a frame
-  after the culls, so counts are live and slots are reused. A fix that doesn't wait for 2.5.
+  after the culls, so counts are live and slots are reused, and transactional saturation for
+  a pool full of live packets (§2, bug 1). A fix that doesn't wait for 2.5.
 - Bosons gravitate the bodies, through `totalForce`, equal and opposite to the lensing they
   feel; pion and lepton Coulomb divides by mass and recoils on the body; boson–boson terms
   kick per substep.
@@ -728,17 +889,28 @@ vacuum-like).
 **Target:**
 
 - **A deterministic step schedule** [synthesis]: the substep is a function of the state
-  alone, a whole number of `PHYSICS_DT` ticks chosen by the physics criteria below, and a
-  frame only decides how many substeps to run in its wall time. The same initial state then
-  takes the same steps on every machine and at every frame rate, which the record's replay
-  (3.0) depends on, and which is a further reason to settle the model first.
+  alone, chosen by the physics criteria below, and a frame only decides how many substeps to
+  run in its wall time. That is necessary for replay, not sufficient (Codex): frame dependence
+  also enters through the emission RNG (keyed by `u.frameCount`), merge identities, post-frame
+  reactions, the delayed Friedmann density and the event readbacks, and atomic claims make
+  collision outcomes and emission allocation depend on scheduling (`collision.wgsl:180–188`).
+  So physics events and RNG move to simulation-step and event counters, conflicts resolve
+  deterministically (lowest slot, as absorption already does), and state feeds back to the GPU
+  only at deterministic step boundaries, never from whichever readback arrives. Same-device
+  reproducibility is the target; cross-device agreement isn't promised (transcendentals differ
+  between GPUs).
 - **Step control** [standard criteria; synthesis to combine them]: dt = η·min over the
   encounter time of every pair within a few contact lengths (min of r/|v_rel| and
-  √(r³/(m_a + m_b)), reduced in the pair loop the force pass already runs), the gyroperiod
-  γm/(|q|B), and the fields' CFL, from the current substep's forces, every force included.
-  When the budget can't cover a frame, the frame runs fewer ticks of simulated time and the
-  caption says time is slowed and by how much. Block steps or regularization only for a
-  measured close-binary bottleneck (§7.1).
+  √(r³/(m_a + m_b)), reduced in the pair loop the force pass already runs), |v|/|a| from every
+  acceleration (electric included), the gyroperiod γm/(|q|B) and the gravitomagnetic rotation,
+  the time scale of a scalar-driven mass change, the fields' oscillation stiffness (spatial CFL
+  alone doesn't bound a massive, nonlinear Klein–Gordon oscillator: the potential's curvature
+  enters), and the radiation reaction's τ₀, all from the current substep and none from an
+  asynchronous readback. The substep may go below the nominal tick, deterministically
+  subdivided; a state that still can't be resolved is refused rather than run coarse. When the
+  budget can't cover a frame, the frame runs less simulated time and the caption says time is
+  slowed and by how much. Block steps or regularization only for a measured close-binary
+  bottleneck (§7.1).
 - Thomas precession reads a stored non-gravitational force, so the clocks can run after the
   1PN correction; `vvKick1PN` refreshes `derived.vel`; spin–orbit reads the kicked velocity.
 - Determinism stays: every new reduction in a fixed order.
@@ -765,11 +937,15 @@ vacuum-like).
   friction; wall impulses and despawns (mass, energy, momentum, angular momentum and charge
   leave with no column); boson–boson gravity and pion Coulomb (no potential, photons pulled 2×
   and bodies 1×); photon lensing (no recoil, no redshift). There is no charge ledger at all.
-- Three discrete gradient energies (stats with clamped edges, the ledger wrapping, the
-  evolution's 5-point Laplacian) disagree at the seams (suspected, small).
+- Three discrete gradient energies (stats with clamped edges and centred differences, the
+  ledger wrapping, the evolution's 5-point Laplacian) disagree, and not only at the seams: a
+  checkerboard mode has zero centred gradient and the Laplacian's largest stiffness (§2, bug
+  12; Codex).
 - Relativity off, the stats book ½mv² while capture, merge, absorption and Larmor use (γ−1)m.
 
-**Target:** E_total = conservative energies + Σ metered columns; drift = integration error.
+**Target:** E_total = conservative energies + Σ metered columns, each column certified by an
+independently predicted number (§1.3); the residual drift is then refined apart into
+integration, spatial (grid), tree, history (world-line cadence) and truncation error (§4).
 
 - Conservative: rest and kinetic (Σ m γ), the EIH energy (§3.2), Darwin, Yukawa and Breit,
   the dipole and spin energies, Paczyński–Wiita, the fields' energies and their
@@ -787,94 +963,159 @@ vacuum-like).
   aren't central about any point), so there it isn't conserved and isn't shown.
 - One kinetic energy per mode: every pass computes it as the stats do.
 
-Oracle: every preset, with every column on, holds |drift| under its integration tolerance.
+Oracle: every preset, with every column on, holds |drift| under its integration tolerance,
+and each metered column matches its independent prediction (the quadrupole flux, Larmor,
+the bath's fluctuation–dissipation balance, the expansion's exact work).
 
 ## 6. Oracles
 
-New ones by section, in `tests/physics-validation.html`, each with its analytic number:
-§3.1 kernel; §3.2 binary binding at v = 0.16, hierarchical triple's EIH energy, Peters'
-da/dt and de/dt; §3.3 spin–orbit periastron and the spoke's precession; §3.5 the
-hyperbolic charge, synchrotron power, the two dipoles' mutual radiation; §3.6 the
-Paczyński–Wiita gradient, the capture at r_mb, the 1-and-8 edit, the charged-hole swarm,
-monotone Q/M; §3.7 the wall crossing and the mirror run; §5 the closed ledger per preset.
+New ones by section, in `tests/physics-validation.html`, each with its analytic number: §3.1 the
+kernels (scalar and tensor) against finite differences; §3.2 binary binding at v = 0.16, the
+hierarchical triple's EIH energy, Peters' da/dt and de/dt, the instantaneous Schott balance,
+the rotating equilateral triple's zero loss; §3.3 spin–orbit periastron and the spoke's
+precession; §3.5 the softened field's time symmetry, the hyperbolic charge, the cyclotron's
+Larmor spiral, synchrotron power, coherent two-source radiation measured independently of the
+ledger; §3.6 the SR–PW orbit sequence, capture through the barrier, the 1-and-8 edit, the
+charged-hole swarm, finite charged extraction per event, overlapping superradiance; §3.7 the
+wall crossing, the mirror run, the subcell force against the discrete energy; §3.12 a full
+pool of live packets with multi-product decays; §4 simultaneous multi-contact collisions and
+frame-rate-independent RNG and event histories, and independent refinement of the step, the
+grid spacing, the tree's opening angle and the world-line cadence; §2 single Fourier modes up
+to Nyquist; §5 the closed ledger per preset with each column against its prediction.
 
 ## 7. Order of work
 
-0. **The bugs of §2** now, before the model pass, each with its oracle: they are wrong under
-   any model. (The pools and the modulations' pass order first: the first destroys energy in
-   any long run with radiation, the second has silently disabled three couplings since March.)
-1. **Corrections that fit any model** (small, local): the deterministic step schedule; the
-   1PN ordering; the Higgs action; Paczyński–Wiita as one symmetric pair function with one
-   capture rule and captures before forces; charge emission by the first law; the
-   radiation reaction as reduced-order ALD with v × B.
-2. **Gravity and the kernel together** (they couple: 1PN inside the kernel): present
-   positions with gating, N-body EIH in two passes, the contact kernel for every law, step
-   control with slowed time, the presets retuned.
-3. **Radiation and the ledger:** 2.5PN radiation reaction for the quadrupole sink, capture at
-   r_mb, the metered columns, the electromagnetic field in transit.
-4. **Spins and fields:** the 1PN spin Hamiltonian, field boundaries and damping, the slab
-   kernel, the axion's action, cosmology's per-substep stretch, pools by escape.
-5. **2PN** only if an oracle asks for it.
+Revised after the review (Codex's order, with the §2 caution folded in):
 
-Files overlap: step 2 touches `pair-force`, `forces-tree`, `shared-1pn`, `onePN` and
+0. **Contained bugs, without switching on defective couplings** (§2): the pools with
+   transactional saturation; pending balances carried through merges and deaths; boson
+   gravity; pion Coulomb's 1/m; the bounce torque's sign; the 1PN recompute's sources; the
+   pion over-booking; the holes' double-booked spin; one canonical J; the discrete field
+   energy. The quadrupole sink and the pair modulations are *disabled*, not repaired.
+1. **Deterministic stepping with sufficient resolution, together** (§4): the state-driven
+   schedule, sub-tick subdivision, the complete stiffness bound, RNG and events on simulation
+   counters, deterministic conflict resolution, feedback only at step boundaries.
+2. **Ratify the regimes and their combined actions** (§1.1) before writing their code: the
+   SR–PW Hamiltonian and its capture surface, the electromagnetic regularization and the
+   packets' meaning, which combinations of laws are allowed together.
+3. **Conservative gravity, kernels and the Higgs, with their energies and momenta in the same
+   change:** present positions with gating, N-body EIH in two passes, the scalar and tensor
+   kernels, the Higgs action with its discrete-gradient force, Paczyński–Wiita as one
+   symmetric pair function with captures before forces; the presets retuned.
+4. **Radiation and exchange columns, each certified independently:** the binary reaction with
+   its flux and Schott column, the electromagnetic self-force by reduction of order, charge
+   emission by the area bound, the residual exchange, the remaining ledger columns.
+5. **Separate projects:** varying-α electromagnetism with retardation (§3.8) and
+   self-consistent slab gravity (§3.9); 2PN only if an oracle asks for it.
+
+Files overlap: step 3 touches `pair-force`, `forces-tree`, `shared-1pn`, `onePN` and
 `compute-stats`, so it is one lane; the fields (`field-*`), charge emission (`radiation`,
 `extremal`) and cosmology (`expansion`, `cosmology.js`) are separate lanes.
 
-## 8. Questions for review
+## 8. Questions, with the review's answers
 
-1. Near-zone PN with causal gating, against a gravitational Liénard–Wiechert (the linearized
-   retarded field), which would keep §1.1's thesis whole. My objection to the latter: summed
-   pairwise without a self-field, the 1.5PN near-zone term doesn't cancel. Each body feels
-   −(2/3)m_i Σ_{j≠i} m_j x⃛_j, which momentum conservation (Σ_j m_j x⃛_j = 0) turns into
-   +(2/3)m_i² x⃛_i, a dipole radiation reaction that GR forbids because the self-field cancels
-   it; inspirals would run about 1/v² too fast. And linearized gravity isn't self-consistent
-   for bound sources. Is that right, and is anything lost by dropping signal delay for gravity?
-2. The −½Σ_a m_a Φ_a² form of EIH's G² sector, its pair force with weight (Φ_k + Φ_b), and the
-   two-pass N-body EIH: correct, and correct with u(r) in place of 1/r?
-3. 2.5PN pairwise against a system or clustered quadrupole: which, for scenes larger than a
-   wavelength? Verify the coefficients above.
-4. The kinematic map dw/dt = γ[a + γ²(v·a)v] for EIH's coordinate acceleration: right, and
-   consistent with the Boris push carrying the electromagnetic and gravitomagnetic rotations?
-5. The contact kernel h_ij = R_i + R_j: does a kernel whose support moves with the bodies
-   (merges, Higgs-free) break anything, and is baseMass the right anchor?
-6. The electromagnetic field column: is −∫Σ(F_LW − F_Darwin)·v dt the energy in the field
-   beyond Darwin, given Darwin is velocity-dependent (its energy function isn't T + V)? And
-   coherence: photons are emitted per body from its self-force, so two like charges in a
-   symmetric orbit emit twice Larmor in photons while the mutual field returns it (true
-   radiation is quadrupole order). Emit from each body's net of self and mutual radiative
-   work instead, and how to separate "radiative" from "in flight" in the mutual part?
-   Also: is the claim that mutual Liénard–Wiechert plus a correct self-force makes the EM
-   quadrupole sink redundant right?
-7. Capture at r_mb = 2(r₊,a + r₊,b) with the remnant at the pair energy and the gap
-   c_ab = r₊,a + r₊,b: sound for bound pairs and the test-body limit, and what for
-   comparable-mass holes, where Paczyński–Wiita means little?
-8. The emission rule from the first law and the area theorem (the Kerr–Newman step
-   Q²(r₊ + M) < 2M²r₊ ⟺ r₊ > M), and the over-extremal case. `AGENTS.md` says paying the
-   Schwinger lepton's kinetic energy made the discharge run away; if paying e·Φ_H can't raise
-   Q/M below extremality, what produced that runaway?
-9. The Higgs action's consequences for the Kibble–Zurek figure (matter on walls), and whether
-   anything relied on the old coupling.
-10. The self-force as reduced-order ALD with K the non-gravitational four-force including
-    v × B and dK/dτ by finite difference along the path: right sign and form, stable at the
-    step sizes in use (τ = 6.7 for an electron of m 0.1, q −1, comparable to a pass), and is
-    leaving gravity out (the equivalence-principle choice) defensible here?
-11. Time-even softening by the invariant ρ = −u·R = γκR: is that the rest-frame distance for
-    uniform motion as claimed, and what does it do under acceleration?
-12. The deterministic step schedule (the substep a function of the state, the frame only
-    choosing how many): anything in the expansion split, the world-line cadence or the
-    readbacks that assumes a frame's dt?
-13. The thermal term's removal: does the action's density-driven symmetry restoration
-    (n·⟨m(φ)/γ⟩ in the effective potential) cover what the term was for, and is a classical
-    gas coupling less as it heats acceptable?
-14. Tolman's ρ + 3p for a field confined to a slab in one transverse mode: which pressures
-    count, and does the slab kernel F(kℓ) change the active mass?
-15. The axion in Bekenstein's form with vertex factors √f(a) at each charge, f = 1/(1 + ga): is
-    the pair energy's a-dependence (and so its source) right for Liénard–Wiechert, where the
-    emitting vertex is at the retarded point?
-16. The ordering in §0, and whether the §2 bugs should land before any of it.
+Codex's answers to the first draft's sixteen questions (2026-10-27), and what each leaves open.
+
+1. **Near-zone PN with gating, against a gravitational Liénard–Wiechert.** Agreed, with the
+   gates as explicitly nonphysical edits. The draft's argument against the alternative (a
+   pairwise linearized field leaves a +(2/3)m_i²x⃛_i dipole reaction) was wrong as a GR claim:
+   2/3 is electromagnetism's coefficient, linearized gravitational self-force has an
+   Abraham-type −11/3, and the cancellation runs through the supporting dynamics (Pfenning and
+   Poisson). The defensible objection: accelerated point dust fails linearized stress
+   conservation, and the nonlinear and binding contributions are missing. *Settled.*
+2. **The −½Σm_aΦ_a² identity and two passes.** Right for fixed masses and a symmetric fixed
+   kernel; its energy is +½Σm_aΦ_a²; inside support it is a modified model with tensor terms to
+   regularize; order reduction uses the combined dynamics. *Settled, folded in.*
+3. **2.5PN pairwise or collective.** Coefficients right (Blanchet 219–220); every-pair
+   application wrong (the equilateral triple). *Open:* how sources are identified, isolated
+   binaries and compact groups, in a scene larger than a wavelength.
+4. **The kinematic identity.** Right; the code's compensation is its 1PN expansion; the Boris
+   split agrees to the retained order. *Settled.*
+5. **The contact kernel on baseMass.** A defensible numerical convention for ordinary bodies,
+   with the glyph drawn at the same radius; holes' horizons change and need their own
+   treatment. *Settled for bodies; holes open.*
+6. **The field meter and packets.** The energy meter needs the acceleration-dependent Darwin
+   force on the actual trajectory, the momentum meter must subtract the booked Darwin
+   momentum; per-body positive radiative attribution generally doesn't exist. Ideal mutual LW
+   plus a consistent self-force does make an electric-quadrupole sink redundant. *Open:*
+   whether packets ever act (a field-to-packet conversion and absorption without double
+   counting), or stay diagnostic.
+7. **Capture at r_mb.** Disagreed: the Schwarzschild statement holds for geodesics, not for the
+   SR–PW Hamiltonian (whose radii are 4.732M and 7.212M) or for charged, spinning or
+   comparable-mass pairs. *Open:* the barrier-peak capture surface of §3.6 is the replacement
+   proposal, to be derived per regime.
+8. **The emission rule.** The area inequality was reversed (E ≤ Φ_H e + Ω_H j) and the
+   equivalence was wrong; finite quanta need the post-emission state. The historical Schwinger
+   runaway isn't identified by this argument. *Settled as rewritten; the old runaway open.*
+9. **The Higgs action.** Attraction to small |φ| and density suppression agreed; matter
+   behaviour changes, so presets need retuning; test pinning, not wall endpoints, with
+   inertia and the other mass-dependent laws included. *Settled, folded in.*
+10. **The self-force.** Right only with the sign for (−+++) and genuine reduction of order;
+    stability unverified; leaving gravity out is inconsistent with flat Liénard–Wiechert;
+    variable mass needs a new derivation. *Folded in; the variable-mass form open.*
+11. **ρ = γκR.** Right for uniform motion; under acceleration a stated approximation, not
+    Maxwell-consistent. *Settled as an approximation.*
+12. **Deterministic stepping.** Right direction, insufficient alone (RNG, events, atomics,
+    feedback). *Folded into §4.*
+13. **The thermal term.** Remove it; the action doesn't reproduce quantum thermal
+    restoration, and needn't. *Settled.*
+14. **Tolman for a slab.** All three pressures, and confinement stresses kept before
+    reduction; the kernel doesn't change the active stress. *Folded into §3.9; a project.*
+15. **The axion's vertex factors.** Wrong: Bekenstein's field equation has a variable
+    coefficient everywhere. *Open:* quasistatic solve or a labelled endpoint model (§3.8).
+16. **The ordering.** The model before public replay links, and contained bugs early, but
+    without switching on the quadrupole sink at 34× or the inconsistent axion coupling.
+    *Folded into §2 and §7.*
+
+**Decisions for a9** (none blocks step 0):
+
+- the axion's name, given that its coupling here is to F², not to E·B (§3.8);
+- the axion's pair coupling: a quasistatic variable-coefficient solve, a labelled endpoint
+  model, or none (§3.8);
+- the Peccei–Quinn term and the Higgs-modulated Yukawa range: derive or drop (I'd drop both,
+  §3.4, §3.8);
+- whether photons stay diagnostic or come to act, with a conversion model (§3.5);
+- whether Paczyński–Wiita holes keep relativistic kinetics (radii 4.732M, 7.212M) or the
+  textbook pair is wanted (Newtonian kinetics near holes), §3.6.
 
 ## 9. After the record (3.x)
 
 The Schwarzschild and Kerr metric regime for test bodies and light, the embedding diagram,
 gravitational waves at a ring of test masses with chirp audio, fields carrying energy through
 a closed surface, the covariance meter. Roadmap §7.1–7.2 hold their detail.
+
+## 10. Review log
+
+**Codex (astra, extra-high effort, read-only), 2026-10-27, on `fb4d1ab`:** "Do not ratify this
+draft yet. The main §2 bug reports are real, but several target equations and conservation
+claims are wrong." It confirmed bugs 1–10 by reading the code and found two more (11, 12); it
+checked the EIH Lagrangian (LL 106.17), the 2.5PN coefficients (Blanchet 219–220), the EM
+quadrupole power (LL 71.5), ρ = γκR for uniform motion and E·B = 0 on the plane; and it found
+these wrong, each corrected above:
+
+- the area theorem's inequality, reversed, and an equivalence that should be an implication
+  (§3.6);
+- Paczyński–Wiita's 4M and 6M under relativistic kinetics, where they are 4.732M and 7.212M
+  (§3.6; checked here numerically);
+- the remnant booked at the pair's energy *and* a binding deficit emitted (§3.6);
+- the self-force's sign for the signature in use, differencing along the reacted path called
+  reduction of order, and the equivalence-principle argument for leaving gravity out (§3.5);
+- reaction work emitted as flux, ignoring the Schott term; every-pair 2.5PN, refuted by the
+  rotating equilateral triple (§3.2);
+- Bekenstein as endpoint factors (§3.8); scalar softening for tensor terms (§3.1); the G²
+  energy's sign (§3.2); the Tolman derivative's sign and the point body's source (§3.9);
+- the discrete force for the Higgs action, and the field energy's checkerboard blind spot
+  (§3.7, §2);
+- the matter effective potential and "walls end on bodies" (§3.7);
+- the gravitational-LW 2/3 argument (§8.1);
+- "one action per coupling" without the combined theory's order reduction and mixed
+  derivatives (§1.1);
+- replay guaranteed by the step schedule alone, and the step criteria's gaps (§4);
+- pool compaction as the whole fix (§2, §3.12); quintic Hermite through impulses (§3.5);
+- a ledger closed by definition, and accounting columns as Friedmann stress-energy (§1.3,
+  §3.11);
+- and, most consequentially, that two of the "contained" bug fixes would switch on defective
+  couplings (§2, bugs 2 and 3).
+
+Where this file says "Codex" without more, the point came from this review. The thread is
+`worldline-model-review` (gaslamp), job `cx-20261027-085629-c762`.
