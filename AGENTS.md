@@ -540,6 +540,15 @@ and Spacetime buttons, ease between the two (`EL_SPACETIME` ≈ 30°).
   fall under 6 px), its beads hollow, fading as it rises; seen from above, the path ahead. Free
   bodies' futures stay blank. `SpacetimeView.future()` makes room for it in the fit while a
   prescribed body exists.
+- **Ticks' light** (`vs_tickRing`, `vs_tickRay`, `vs_tickMark`; roadmap §6.4): the selected
+  body's beads are its clock's ticks, and the newest `TICKS` (32) within the depth send light.
+  Where each tick's future cone crosses the present (the lab's, or the observer's once its
+  coordinates show) is an accent ring growing at c, fading out as it crosses the domain; tilted,
+  with at most `TICK_RECEIVERS` (24) bodies, the null ray from the tick to where its light meets
+  each other world line (bisected on h = (t − t_k) − |x − x_k|, which rises along a timelike line),
+  and a mark there. A prescribed receiver's reception still to come is found on its curve, above
+  the present. On the twin the receptions read the k-calculus: kT apart going out, T/k coming back.
+  The light interacts with nothing; it is the tick seen.
 - **The sheet of the present.** In the lab's coordinates, world lines and light that pass
   under the tilted plane's fill are drawn at `SEEN` (0.45) (`underSheet()`).
 - **The plane and box.** `grid-render.wgsl` keeps the rulers to the domain and gives it a faint

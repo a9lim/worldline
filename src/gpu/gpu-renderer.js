@@ -14,6 +14,8 @@ import { buildWGSLConstants, paletteRGB } from './gpu-constants.js';
 import { HEATMAP_SENSITIVITY, HEATMAP_MAX_ALPHA, GPU_MAX_PHOTONS, GPU_MAX_PIONS, GPU_MAX_LEPTONS, WORLDLINE_LEN, WORLDLINE_DT } from '../config.js';
 
 const FUTURE_SEGS = 96;   // the known future's segments (spacetime-render.wgsl)
+const TICKS = 32;         // ticks' light: the newest ticks drawn, and the bodies that receive them
+const TICK_RECEIVERS = 24;
 
 // Pre-allocated typed arrays for per-frame writeBuffer calls (eliminate GC pressure)
 const _cameraData = new ArrayBuffer(256);
@@ -357,6 +359,10 @@ export default class GPURenderer {
                 pierceGroup: group(p.pierce, 'spacetimePierce', [...line, [5, b.color], [11, b.particleAux]]),
                 future: p.future,
                 futureGroup: group(p.future, 'spacetimeFuture', [[3, b.wlMeta], [4, b.particleState], [5, b.color], [10, fs], [20, b.curves], [21, b.prescribedList]]),
+                tickRing: p.tickRing, tickRay: p.tickRay, tickMark: p.tickMark,
+                tickRingGroup: group(p.tickRing, 'spacetimeTickRing', line),
+                tickRayGroup: group(p.tickRay, 'spacetimeTickRay', [...line, [20, b.curves]]),
+                tickMarkGroup: group(p.tickMark, 'spacetimeTickMark', [...line, [20, b.curves]]),
                 eventGroup: group(p.event, 'spacetimeEvents', [[5, b.color], [19, lists.events]]),
                 keepGroup: group(p.keep, 'lineKeep', [...line, [12, lists.bits], [13, lists.counts]]),
                 scanGroup: group(p.scan, 'lineScan', [[13, lists.counts], [14, lists.offsets], [15, lists.args], [17, lists.events]], [[1, this._spacetimeUniformBuffer]]),
@@ -445,6 +451,21 @@ export default class GPURenderer {
                 pass.setPipeline(sp.event);
                 pass.setBindGroup(0, sp.eventGroup);
                 pass.drawIndirect(sp.args, 16);
+            }
+        }
+        // The selected body's ticks' light: rings at the present, and tilted, its rays and where
+        // they arrive, while the scene is small enough to read them (spacetime-render.wgsl)
+        if (st.selected >= 0 && slots > 0) {
+            pass.setPipeline(sp.tickRing);
+            pass.setBindGroup(0, sp.tickRingGroup);
+            pass.draw(2 * (72 + 1), TICKS);
+            if (st.tilt >= 0.05 && slots <= TICK_RECEIVERS) {
+                pass.setPipeline(sp.tickRay);
+                pass.setBindGroup(0, sp.tickRayGroup);
+                pass.draw(4, TICKS * TICK_RECEIVERS);
+                pass.setPipeline(sp.tickMark);
+                pass.setBindGroup(0, sp.tickMarkGroup);
+                pass.draw(4, TICKS * TICK_RECEIVERS);
             }
         }
         if (st.prescribed > 0 && st.future > 0) {

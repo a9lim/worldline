@@ -365,7 +365,8 @@ future drawn, and the twin rebuilt on them with turns of finite duration.
 ### 6.4 Ticks' light and radar
 
 No beacons or mirrors (a9, 2026-10-27): the signals are the light of events the plate already
-draws.
+draws. Ticks' light landed 2026-10-27 (§14): rings at the present, rays and reception marks, a
+prescribed receiver's receptions found in its known future. Radar is open.
 
 - **Ticks' light.** A body's beads are its clock's ticks. Selected, its ticks send light: each bead's
   future cone, drawn as a ring growing at c in the plane and a cone in the plate, marked where it

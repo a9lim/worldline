@@ -36,6 +36,10 @@
 //   vs_future  prescribed bodies × 6·FUTURE_SEGS, triangle list: a prescribed body's known
 //              future, from its curve (shared-prescribed.wgsl), above the present, dashed, its
 //              beads hollow; seen from above, its path ahead
+//   vs_tickRing  TICKS × 2·(CONE_SEGS + 1), triangle strip: the selected body's ticks' light
+//              where it crosses the present, a ring growing at c from each tick
+//   vs_tickRay TICKS·RECEIVERS × 4, triangle strip: tilted, the null ray from each tick to where
+//              its light reaches another world line; vs_tickMark × 4 marks that event
 //
 // In lab coordinates, lines below the sheet of the present are seen through it, lighter.
 //
@@ -1314,6 +1318,240 @@ fn fs_future(in: VOut) -> @location(0) vec4<f32> {
     let a = in.color.a * cover;
     if (a < 0.003) { discard; }
     return vec4(in.color.rgb * a, a);
+}
+
+// ─── Ticks' light (roadmap §6.4) ───
+// The selected body's beads are its clock's ticks, and each tick's light is drawn: where its
+// future light cone crosses the present, a ring growing at c, and tilted, the null ray to the
+// event where it reaches each other world line (h = (t − t_k) − |x(t) − x_k| rises along a
+// timelike line, so the event is bisected as the slicer's), which is marked. A prescribed
+// receiver's future is known, so a reception still to come is found on its curve, above the
+// present. The light interacts with nothing: it is the tick seen, not a signal sent. Rays and
+// marks only while the scene has at most RECEIVERS bodies; the newest TICKS ticks within the depth.
+
+const TICKS: u32 = 32u;
+const RECEIVERS: u32 = 24u;
+
+/** The point on line l where its proper time is tau (between samples, linearly). */
+fn pointAtTau(s: u32, l: Line, tau: f32) -> LinePoint {
+    var lo = 0u;
+    var hi = l.n - 1u;
+    for (var it = 0; it < 12; it++) {
+        if (hi - lo <= 1u) { break; }
+        let mid = (lo + hi) >> 1u;
+        if (pointOf(s, l, mid).tau <= tau) { lo = mid; } else { hi = mid; }
+    }
+    let a = pointOf(s, l, lo);
+    let b = pointOf(s, l, hi);
+    let k = select(0.0, clamp((tau - a.tau) / (b.tau - a.tau), 0.0, 1.0), abs(b.tau - a.tau) > 1e-9);
+    var p: LinePoint;
+    p.pos = mix(a.pos, b.pos, k);
+    p.t = mix(a.t, b.t, k);
+    p.tau = tau;
+    return p;
+}
+
+/** The point on line l at lab time t (between samples, linearly). */
+fn pointAtT(s: u32, l: Line, t: f32) -> LinePoint {
+    var lo = 0u;
+    var hi = l.n - 1u;
+    for (var it = 0; it < 12; it++) {
+        if (hi - lo <= 1u) { break; }
+        let mid = (lo + hi) >> 1u;
+        if (pointOf(s, l, mid).t <= t) { lo = mid; } else { hi = mid; }
+    }
+    let a = pointOf(s, l, lo);
+    let b = pointOf(s, l, hi);
+    let k = select(0.0, clamp((t - a.t) / (b.t - a.t), 0.0, 1.0), abs(b.t - a.t) > 1e-9);
+    var p: LinePoint;
+    p.pos = mix(a.pos, b.pos, k);
+    p.t = t;
+    p.tau = mix(a.tau, b.tau, k);
+    return p;
+}
+
+/** Tick k back from the newest of the selected body's line (k = 0 the newest), if within the depth. */
+struct Tick {
+    ok: bool,
+    e: LinePoint,
+};
+
+fn tickOf(sel: u32, l: Line, k: u32) -> Tick {
+    var out: Tick;
+    out.ok = false;
+    let now = pointOf(sel, l, l.n - 1u);
+    let first = pointOf(sel, l, 0u);
+    let step = params.beadStep;
+    let tau = (floor(now.tau / step) - f32(k)) * step;
+    if (tau < first.tau) { return out; }
+    out.e = pointAtTau(sel, l, tau);
+    out.ok = out.e.t >= params.tNow - params.depth;
+    return out;
+}
+
+/** Where tick e's light meets slot j's world line: in its recorded past, or a prescribed body's
+ *  known future up to params.future. */
+fn receptionOf(e: LinePoint, j: u32, o: Obs) -> Tick {
+    var out: Tick;
+    out.ok = false;
+    let l = lineOf(j, o);
+    if (!l.ok || !l.alive) { return out; }
+    let last = pointOf(j, l, l.n - 1u);
+    let hLast = (last.t - e.t) - length(last.pos - e.pos);
+    if (hLast >= 0.0) {
+        var lo = 0u;
+        var hi = l.n - 1u;
+        let first = pointOf(j, l, 0u);
+        if ((first.t - e.t) - length(first.pos - e.pos) >= 0.0) { return out; }
+        for (var it = 0; it < 12; it++) {
+            if (hi - lo <= 1u) { break; }
+            let mid = (lo + hi) >> 1u;
+            let p = pointOf(j, l, mid);
+            if ((p.t - e.t) - length(p.pos - e.pos) < 0.0) { lo = mid; } else { hi = mid; }
+        }
+        let a = pointOf(j, l, lo);
+        let b = pointOf(j, l, hi);
+        let ha = (a.t - e.t) - length(a.pos - e.pos);
+        let hb = (b.t - e.t) - length(b.pos - e.pos);
+        let k = select(0.0, clamp(ha / (ha - hb), 0.0, 1.0), abs(ha - hb) > 1e-9);
+        out.e.pos = mix(a.pos, b.pos, k);
+        out.e.t = mix(a.t, b.t, k);
+        out.e.tau = mix(a.tau, b.tau, k);
+        out.ok = true;
+        return out;
+    }
+    // Still to come: on a prescribed body's known curve
+    if ((particles[j].flags & FLAG_PRESCRIBED) == 0u || params.future <= 0.0) { return out; }
+    let cb = j * CURVE_VEC4S;
+    let c = curveFrom(curves[cb], curves[cb + 1u], curves[cb + 2u], curves[cb + 3u]);
+    if (c.kind == CURVE_HELD) { return out; }
+    var lo = params.tNow;
+    var hi = params.tNow + params.future;
+    let pHi = futurePoint(c, l.deck, hi, l.anchor);
+    if ((pHi.t - e.t) - length(pHi.pos - e.pos) < 0.0) { return out; }
+    for (var it = 0; it < 24; it++) {
+        let mid = 0.5 * (lo + hi);
+        let p = futurePoint(c, l.deck, mid, l.anchor);
+        if ((p.t - e.t) - length(p.pos - e.pos) < 0.0) { lo = mid; } else { hi = mid; }
+    }
+    out.e = futurePoint(c, l.deck, hi, l.anchor);
+    out.ok = true;
+    return out;
+}
+
+/** The selected body's line, when its ticks' light is drawn. */
+fn tickLine(o: Obs) -> Line {
+    var l: Line;
+    l.ok = false;
+    let sel = params.selected;
+    if (sel >= params.maxParticles) { return l; }
+    l = lineOf(sel, o);
+    if (!l.alive || l.n < 2u) { l.ok = false; }
+    return l;
+}
+
+/** Where tick e's light crosses the present now, in direction phi: the lab's present, or the
+ *  observer's once its coordinates are shown. */
+fn tickFront(o: Obs, e: LinePoint, phi: f32) -> LinePoint {
+    let n = vec2(cos(phi), sin(phi));
+    var lam = params.tNow - e.t;
+    if (o.observing && o.s > 0.5) {
+        lam = (o.tA - e.t + dot(o.u, e.pos - o.xA)) / max(1.0 - dot(o.u, n), 1e-4);
+    }
+    var p: LinePoint;
+    p.pos = e.pos + max(lam, 0.0) * n;
+    p.t = e.t + max(lam, 0.0);
+    p.tau = NO_TAU;
+    return p;
+}
+
+@vertex
+fn vs_tickRing(@builtin(vertex_index) vid: u32, @builtin(instance_index) k: u32) -> VOut {
+    let o = observer();
+    let l = tickLine(o);
+    if (!l.ok) { return collapsed(); }
+    let tk = tickOf(params.selected, l, k);
+    if (!tk.ok) { return collapsed(); }
+    let j = vid >> 1u;
+    let side = select(-1.0, 1.0, (vid & 1u) != 0u);
+    let ang = f32(j) * TWO_PI / f32(CONE_SEGS);
+    let e = 0.01;
+    let p = tickFront(o, tk.e, ang);
+    let r = p.t - tk.e.t;
+    if (r <= 0.0) { return collapsed(); }
+    let c = projectEvent(o, p.pos, p.t);
+    let ahead = toPx(projectEvent(o, tickFront(o, tk.e, ang + e).pos, tickFront(o, tk.e, ang + e).t));
+    let behind = toPx(projectEvent(o, tickFront(o, tk.e, ang - e).pos, tickFront(o, tk.e, ang - e).t));
+    var dir = ahead - behind;
+    if (dot(dir, dir) < 1e-8) { dir = vec2(1.0, 0.0); }
+    dir = normalize(dir);
+    var out: VOut;
+    out.position = offsetClip(c, vec2(-dir.y, dir.x) * side * 1.5);
+    // Fainter as it spreads: gone once it has crossed the domain (or the depth)
+    let reach = min(length(vec2(params.domainW, params.domainH)), params.depth);
+    let fade = clamp(1.0 - r / reach, 0.0, 1.0);
+    if (fade <= 0.0) { return collapsed(); }
+    out.color = vec4(accent(), 0.45 * fade * fade);
+    out.across = side * 1.5;
+    out.tau = NO_TAU;
+    out.pxPerTau = 0.0;
+    out.core = 0.5;
+    return out;
+}
+
+@vertex
+fn vs_tickRay(@builtin(vertex_index) vid: u32, @builtin(instance_index) idx: u32) -> VOut {
+    if (params.tilt < 0.05) { return collapsed(); }
+    let o = observer();
+    let l = tickLine(o);
+    if (!l.ok) { return collapsed(); }
+    let j = idx % RECEIVERS;
+    if (j == params.selected || j >= params.maxParticles) { return collapsed(); }
+    let tk = tickOf(params.selected, l, idx / RECEIVERS);
+    if (!tk.ok) { return collapsed(); }
+    let r = receptionOf(tk.e, j, o);
+    if (!r.ok) { return collapsed(); }
+    let c0 = projectEvent(o, tk.e.pos, tk.e.t);
+    let c1 = projectEvent(o, r.e.pos, r.e.t);
+    var dir = toPx(c1) - toPx(c0);
+    if (dot(dir, dir) < 1e-8) { return collapsed(); }
+    dir = normalize(dir);
+    let side = select(-1.0, 1.0, (vid & 1u) != 0u);
+    var out: VOut;
+    out.position = offsetClip(select(c0, c1, (vid & 2u) != 0u), vec2(-dir.y, dir.x) * side * 1.5);
+    out.color = vec4(accent(), 0.32 * params.tilt);
+    out.across = side * 1.5;
+    out.tau = NO_TAU;
+    out.pxPerTau = 0.0;
+    out.core = 0.45;
+    return out;
+}
+
+@vertex
+fn vs_tickMark(@builtin(vertex_index) vid: u32, @builtin(instance_index) idx: u32) -> POut {
+    var out: POut;
+    out.position = vec4(0.0, 0.0, 0.0, 1.0);
+    out.color = vec4(0.0);
+    out.uv = vec2(0.0);
+    out.ring = 0.0;
+    out.px = 1.0;
+    if (params.tilt < 0.05) { return out; }
+    let o = observer();
+    let l = tickLine(o);
+    if (!l.ok) { return out; }
+    let j = idx % RECEIVERS;
+    if (j == params.selected || j >= params.maxParticles) { return out; }
+    let tk = tickOf(params.selected, l, idx / RECEIVERS);
+    if (!tk.ok) { return out; }
+    let r = receptionOf(tk.e, j, o);
+    if (!r.ok) { return out; }
+    let corner = vec2(select(-1.0, 1.0, (vid & 1u) != 0u), select(-1.0, 1.0, (vid & 2u) != 0u));
+    let R = 2.2;
+    out.position = offsetClip(projectEvent(o, r.e.pos, r.e.t), corner * (R + 1.0));
+    out.uv = corner * (R + 1.0) / R;
+    out.px = R;
+    out.color = vec4(accent(), 0.9 * params.tilt);
+    return out;
 }
 
 // ─── Shared fragment: hairline core, proper-time beads ───

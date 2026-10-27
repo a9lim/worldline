@@ -91,6 +91,12 @@ const SWATCH = {
         + path('M4,11.5 A9,2 0 0 0 22,11.5', ACCENT, 1)
         + path('M4,11.5 A9,2 0 0 1 22,11.5', ACCENT, 1, ' stroke-dasharray="1.5 2"'),
     event: () => line(13, 0, 13, 14, MUTED, 1) + circle(13, 7, 3.3, TEXT, GROUND, 1),
+    // A tick's light: the ray from a bead to where it arrives on another line, marked
+    tick: () => line(4, 0, 4, 14, ACCENT, 1) + circle(4, 10, 1.7, 'none', ACCENT, 0)
+        + line(4, 10, 20, 2, ACCENT, 0.8, ' stroke-opacity="0.6"') + line(20, 0, 20, 14, MUTED, 1)
+        + circle(20, 2, 2.2, 'none', ACCENT, 0),
+    // The known future: dashed above, hollow beads (spacetime-render.wgsl fs_future)
+    future: () => line(1, 7, 25, 7, MUTED, 1, ' stroke-dasharray="3 3"') + [7, 19].map((x) => circle(x, 7, 1.9, MUTED, GROUND, 0.9)).join(''),
     gravity: () => path('M1,10 C7,3 17,3 25,9', ink('umber'), 1.3)
         + line(7.5, 5.6, 8.6, 7.9, ink('umber')) + line(13, 4.3, 13.2, 6.8, ink('umber')) + line(18.6, 4.9, 17.8, 7.3, ink('umber')),
     efield: () => path('M1,10 C8,10 14,4 25,4', ink('prussian'), 1)

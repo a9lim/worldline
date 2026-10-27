@@ -20,6 +20,8 @@ const WORDS = {
         clock: (p) => `Clock · turn Δτ ${p}`,
         light: 'Light',
         cone: 'Past light cone',
+        tick: 'Light of its ticks, arriving',
+        future: 'Known future',
         event: 'Event',
         gravity: 'Gravitational potential',
         efield: 'Electric field lines',
@@ -43,6 +45,8 @@ const WORDS = {
         clock: (p) => `時計・一周 Δτ ${p}`,
         light: '光',
         cone: '過去光円錐',
+        tick: '刻みの光、到着',
+        future: '既知の未来',
         event: '事象',
         gravity: '重力ポテンシャル',
         efield: '電気力線',
@@ -104,6 +108,10 @@ export default class SceneKey {
         const clocks = bodies.some((b) => b.alive && Math.cbrt(b.m) * sim.camera.zoom >= 5);
         if (clocks && !ph.blackHoleEnabled) rows.push(['clock', L.clock(CLOCK_PERIOD)]);
         if (tilted && sim.selectedIdx >= 0) rows.push(['cone', L.cone]);
+        // The selected body's ticks' light, and its rays where the scene is small enough
+        // (GPURenderer TICK_RECEIVERS); a prescribed body's known future (src/prescribed.js)
+        if (tilted && sim.selectedIdx >= 0 && bodies.length > 1 && bodies.length <= 24) rows.push(['tick', L.tick]);
+        if (tilted && sim.spacetime.future() > 0) rows.push(['future', L.future]);
         if (tilted && any) rows.push(['event', L.event]);
         if ((sim.stats.photonE || 0) > 1e-6) rows.push(['light', L.light]);
 
