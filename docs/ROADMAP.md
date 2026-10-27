@@ -871,3 +871,6 @@ colour-vision and benchmark harnesses are in `docs/second-pass/tools/`.
 | 2.5 | 2026-10-27 | `fb4d1ab`, `95039c1` | `docs/MODEL.md`: a six-lane audit of the physics and the model's plan, after Codex's adversarial review. |
 | 2.5 | 2026-10-27 | `aee6699`, `a3bdc7b` | Step 0: ten contained bugs fixed or disabled (pion and lepton Coulomb's 1/m, the bounce torque's sign, the 1PN recompute's sources, pending radiation through deaths, pion over-booking, holes' double-booked spin, one canonical J; the quadrupole sink, pair modulations and boson pull disabled), pools compacted every frame, the fields' energy from edge differences. |
 | — | 2026-10-27 | `5009c17` | Show, don't tell: each figure's caption is its name and live values, in both languages. |
+| 2.6 | 2026-10-27 | `e2d56c2` | Prescribed world lines (§6.2): five curves, the pass that keeps a body on its curve, the agent's books, a figure's known past in the ring and the known future drawn above the present; the twin on prescribed bodies with turns of finite duration. |
+| 2.6 | 2026-10-27 | `653d83b` | The hand (§6.7): grab, pursuit under 0.75c, throw; field lines kink in bands running outward at c. |
+| 2.6 | 2026-10-27 | `ed88573` | Ticks' light (§6.4): rings at the present, rays and reception marks; the k-calculus on the twin. |
