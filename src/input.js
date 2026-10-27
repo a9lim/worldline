@@ -40,6 +40,11 @@ export default class InputHandler {
         this._press = null;
         this.gripping = -1;         // the held slot
 
+        // The sheet as a handle (roadmap §6.8): tilted, in the lab's coordinates, an edge of the
+        // sheet of the present drags; the time it leads by over its distance from the camera's
+        // centre is the observer's velocity, so the observer's present tilts with it
+        this._sheet = null;         // { n, d, y0, u0 } while dragging
+
         sim.camera.bindWheel(canvas);
         sim.camera.bindMousePan(canvas);
         canvas.addEventListener('mousedown', (e) => this.onMouseDown(e));
@@ -50,6 +55,7 @@ export default class InputHandler {
         this._orbit = null;
         window.addEventListener('mouseup', () => {
             this._orbit = null;
+            this._sheet = null;
             // Let go off the canvas too
             if (this.gripping >= 0) { this.isDragging = false; this._letGo(); }
         });
@@ -85,6 +91,45 @@ export default class InputHandler {
 
     /** True while the press (of a left button or a finger) is on a body: the hand's, not a spawn. */
     get onBody() { return this.gripping >= 0 || (this._press?.hit?.index ?? -1) >= 0; }
+
+    /**
+     * The sheet's edge under canvas px (sx, sy), tilted and in the lab's coordinates: its outward
+     * normal n and the plane's distance from the camera's centre to it, or null.
+     */
+    _sheetEdgeAt(sx, sy) {
+        const sim = this.sim, view = sim.spacetime;
+        if (!view || view.tilt < 0.5 || sim.frames.active) return null;
+        const f = view.frame(), W = sim.physW, H = sim.physH;
+        const corners = [[0, 0], [W, 0], [W, H], [0, H]].map(([x, y]) => view.toScreen(x, y, 0, f));
+        const normals = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+        let best = null;
+        for (let i = 0; i < 4; i++) {
+            const a = corners[i], b = corners[(i + 1) % 4];
+            const ex = b.x - a.x, ey = b.y - a.y, len2 = ex * ex + ey * ey;
+            const t = Math.max(0, Math.min(1, ((sx - a.x) * ex + (sy - a.y) * ey) / len2));
+            const d = Math.hypot(sx - a.x - t * ex, sy - a.y - t * ey);
+            if (d < 7 && (!best || d < best.px)) {
+                const n = normals[i];
+                const edge = n[0] ? (n[0] > 0 ? W : 0) : (n[1] > 0 ? H : 0);
+                const dist = n[0] ? Math.abs(edge - f.cx) : Math.abs(edge - f.cy);
+                best = { n, d: Math.max(dist, 1), px: d };
+            }
+        }
+        return best;
+    }
+
+    /** Drag the sheet's edge to screen y: the observer's velocity along its normal (ui setBoost). */
+    _dragSheet(clientY) {
+        const sim = this.sim, sh = this._sheet, f = sim.spacetime.frame();
+        // Screen y falls kz·cos(el) per unit of time above the plane
+        const lead = (sh.y0 - clientY) / Math.max(f.kz * f.ce, 1e-6);
+        const u = Math.max(-0.95, Math.min(0.95, sh.u0 + lead / sh.d));
+        sim.frames.rapidity = Math.atanh(Math.abs(u));
+        sim.frames.direction = Math.atan2(sh.n[1] * Math.sign(u || 1), sh.n[0] * Math.sign(u || 1));
+        sim.syncBoost?.();
+        sim.framePanel?.syncBoost();
+        sim._dirty = true;
+    }
 
     /** A left press or a finger: ask what it is on. */
     _startPress(pos) {
@@ -253,6 +298,18 @@ export default class InputHandler {
 
         const pos = this._getPosNew(e.clientX, e.clientY);
 
+        // The sheet's edge, tilted: a handle on the observer's velocity, not a spawn
+        if (!isRight) {
+            const edge = this._sheetEdgeAt(e.clientX - this.canvasRect.left, e.clientY - this.canvasRect.top);
+            if (edge) {
+                const f = this.sim.frames;
+                const u0 = f.boostSpeed * (Math.cos(f.direction) * edge.n[0] + Math.sin(f.direction) * edge.n[1]);
+                this._sheet = { n: edge.n, d: edge.d, y0: e.clientY, u0 };
+                this.canvas.style.cursor = 'ns-resize';
+                return;
+            }
+        }
+
         // A right-click on a particle resolves through the deferred hit test in onMouseUp
         this.isDragging = true;
         this._rightButton = isRight;
@@ -270,10 +327,17 @@ export default class InputHandler {
             this._orbit.y = e.clientY;
             return;
         }
+        if (this._sheet) { this._dragSheet(e.clientY); return; }
         const pos = this.getPos(e.clientX, e.clientY);
         this.currentPos.set(pos.x, pos.y);
         this._screenX = e.clientX;
         this._screenY = e.clientY;
+        // The sheet's edge shows that it drags
+        if (!this.isDragging && this.gripping < 0) {
+            const edge = this._sheetEdgeAt(e.clientX - this.canvasRect.left, e.clientY - this.canvasRect.top);
+            if (edge) this.canvas.style.cursor = 'ns-resize';
+            else if (this.canvas.style.cursor === 'ns-resize') this.canvas.style.cursor = '';
+        }
 
         if (this.isDragging) {
             this._dragTo();
@@ -301,6 +365,7 @@ export default class InputHandler {
 
     onMouseUp(e) {
         if (this._orbit) { this._orbit = null; return; }
+        if (this._sheet) { this._sheet = null; this.canvas.style.cursor = ''; return; }
         if (!this.isDragging) return;
         this.isDragging = false;
         this.sim._dirty = true;

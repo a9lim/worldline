@@ -360,6 +360,8 @@ export default class GPURenderer {
                 future: p.future,
                 futureGroup: group(p.future, 'spacetimeFuture', [[3, b.wlMeta], [4, b.particleState], [5, b.color], [10, fs], [20, b.curves], [21, b.prescribedList]]),
                 seenRay: p.seenRay,
+                horizon: p.horizon,
+                horizonGroup: group(p.horizon, 'spacetimeHorizon', [[10, fs]]),
                 seenRayGroup: group(p.seenRay, 'spacetimeSeenRay', [...line, [5, b.color]]),
                 tickRing: p.tickRing, tickRay: p.tickRay, tickMark: p.tickMark,
                 tickRingGroup: group(p.tickRing, 'spacetimeTickRing', line),
@@ -477,6 +479,11 @@ export default class GPURenderer {
             pass.setPipeline(sp.future);
             pass.setBindGroup(0, sp.futureGroup);
             pass.draw(6 * FUTURE_SEGS, st.prescribed);
+        }
+        if (st.horizons && st.tilt >= 0.05) {
+            pass.setPipeline(sp.horizon);
+            pass.setBindGroup(0, sp.horizonGroup);
+            pass.draw(4, 3);
         }
         if (st.seen && st.tilt >= 0.05 && slots > 0) {
             pass.setPipeline(sp.seenRay);

@@ -22,7 +22,11 @@ export const FRAME_COROTATE = 4;
 // acceleration is subtracted and uniform gravity vanishes while tides remain (the slicer
 // runs it as the particle frame with Galilean slices)
 export const FRAME_FREEFALL = 5;
-export const FRAME_KEYS = ['lab', 'zmf', 'particle', 'boost', 'corotate', 'freefall'];
+// Accelerated (roadmap §6.6): constant proper acceleration α along `direction`, at rest at the
+// camera's centre when chosen, so its world line is the hyperbola about a corner 1/α behind it,
+// with the corner's two null planes its horizons
+export const FRAME_ACCEL = 6;
+export const FRAME_KEYS = ['lab', 'zmf', 'particle', 'boost', 'corotate', 'freefall', 'accel'];
 
 export default class Frames {
     constructor(sim) {
@@ -32,6 +36,7 @@ export default class Frames {
         this.rapidity = 0.6;       // boost frame: speed tanh(rapidity) toward `direction`
         this.direction = 0;        // radians, lab
         this.omega = 0.05;         // co-rotating frame's rate
+        this.alpha = 0.02;         // accelerated frame's proper acceleration (its horizon 1/α behind)
         this.origin = [0, 0];      // boost and co-rotating frames: reference point (lab)
         this.refT = 0;             // lab time at which `origin` was taken
         this.lookBack = 0;         // the scrubber's extra lag, while paused
@@ -76,7 +81,7 @@ export default class Frames {
         if (!this.active && kind !== FRAME_LAB) {
             this._labCamera = { x: cam.x, y: cam.y, zoom: cam.zoom };
         }
-        if (kind === FRAME_BOOST || kind === FRAME_COROTATE) {
+        if (kind === FRAME_BOOST || kind === FRAME_COROTATE || kind === FRAME_ACCEL) {
             const lab = this._labCamera || { x: cam.x, y: cam.y };
             this.origin = [lab.x, lab.y];
             this.refT = sim._gpuPhysics ? sim._gpuPhysics.conformalTime : 0;
@@ -114,7 +119,7 @@ export default class Frames {
         const cam = sim.camera;
         const halfW = sim.width / (2 * cam.zoom);
         const halfH = sim.height / (2 * cam.zoom);
-        const speed = this.boostSpeed;
+        const speed = this.kind === FRAME_ACCEL ? this.alpha : this.boostSpeed;
         return {
             kind: this.kind === FRAME_FREEFALL ? FRAME_PARTICLE : this.kind,
             slot: this.slot,

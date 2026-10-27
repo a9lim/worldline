@@ -127,7 +127,7 @@ const _ledgerAU32 = new Uint32Array(_ledgerAData.buffer);
 // which falls as 1/a at any speed), and the four-momentum the agents driving prescribed bodies
 // have added (prescribed.wgsl)
 const EMPTY_LEDGER = Object.freeze({ escapedE: 0, escapedPx: 0, escapedPy: 0, escapedMatterE: 0, expansionWork: 0,
-                                     agentE: 0, agentPx: 0, agentPy: 0 });
+                                     agentE: 0, agentPx: 0, agentPy: 0, agentL: 0 });
 const _curveData = new Float32Array(CURVE_FLOATS);
 const _gripData = new Float32Array(2);
 const _prescribedListData = new Uint32Array(PRESCRIBED_CAP + 1);
@@ -2404,6 +2404,7 @@ export default class GPUPhysics {
             l.agentE += d[104];
             l.agentPx += d[105];
             l.agentPy += d[106];
+            l.agentL += d[107];
         }
         if (this._peScale === null) {
             L.expansionWork -= this._lnrPending * d[26];

@@ -36,6 +36,8 @@
 //   vs_future  prescribed bodies × 6·FUTURE_SEGS, triangle list: a prescribed body's known
 //              future, from its curve (shared-prescribed.wgsl), above the present, dashed, its
 //              beads hollow; seen from above, its path ahead
+//   vs_horizon 3 × 4, triangle strip: the accelerated observer's horizons, the null planes through
+//              its corner, hatched, and the corner line where they meet
 //   vs_seenRay maxParticles × 4, triangle strip: under Seen, tilted, the light in flight from
 //              where each world line pierces the observer's past cone to the observer now
 //   vs_tickRing  TICKS × 2·(CONE_SEGS + 1), triangle strip: the selected body's ticks' light
@@ -1221,6 +1223,68 @@ fn vs_pierce(@builtin(vertex_index) vid: u32, @builtin(instance_index) s: u32) -
     out.ring = select(0.0, 1.0, params.pierce < 1.5);
     out.px = r * camera.zoom;
     return out;
+}
+
+// ─── The accelerated observer's horizons (roadmap §6.6) ───
+// Its world line is the hyperbola about a corner 1/α behind it (frame-slice.wgsl, kind 6:
+// FrameState.omega is α, phi n̂'s angle). The null planes through the corner, (x − c)·n̂ = ±(t − t_c),
+// bound what it can ever see (the future one: events beyond it never send it light) and what it
+// can ever signal; both are drawn, hatched, over the time shown and across the domain. Null
+// planes are null in any frame, so the observer's coordinates show them at 45° too.
+
+struct HOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) @interpolate(flat) which: f32,
+    @location(1) alpha: f32,
+};
+
+@vertex
+fn vs_horizon(@builtin(vertex_index) vid: u32, @builtin(instance_index) k: u32) -> HOut {
+    var out: HOut;
+    out.position = vec4(0.0, 0.0, 0.0, 1.0);
+    out.which = f32(k);
+    out.alpha = 0.0;
+    if (params.frameOn == 0u || abs(frameState.kind - 6.0) > 0.5 || frameState.valid < 0.5 || params.tilt < 0.05) { return out; }
+    let o = observer();
+    let a = max(frameState.omega, 1e-6);
+    let n = vec2(cos(frameState.phi), sin(frameState.phi));
+    let m = vec2(-n.y, n.x);
+    let uA = frameState.u;
+    let wA = dot(uA, n) / sqrt(max(1.0 - dot(uA, uA), 1e-6));
+    let xc = frameState.xA - n * (sqrt(1.0 + wA * wA) / a);
+    let tc = frameState.tA - wA / a;
+    let Y = 0.6 * max(params.domainW, params.domainH);
+    if (k == 2u) {
+        // The corner line: on every one of the observer's slices, 1/α behind it
+        let c0 = projectEvent(o, xc - m * Y, tc);
+        let c1 = projectEvent(o, xc + m * Y, tc);
+        var dir = toPx(c1) - toPx(c0);
+        if (dot(dir, dir) < 1e-6) { return out; }
+        dir = normalize(dir);
+        out.position = offsetClip(select(c0, c1, (vid & 2u) != 0u), vec2(-dir.y, dir.x) * select(-0.7, 0.7, (vid & 1u) != 0u));
+        out.alpha = 0.6 * params.tilt;
+        return out;
+    }
+    let t = select(params.tNow - params.depth, params.tNow + params.future, (vid & 2u) != 0u);
+    let y = select(-1.0, 1.0, (vid & 1u) != 0u) * Y;
+    let side = select(1.0, -1.0, k == 1u);
+    let pos = xc + n * (side * (t - tc)) + m * y;
+    out.position = projectEvent(o, pos, t);
+    out.alpha = 0.14 * params.tilt;
+    return out;
+}
+
+/** Hatching in screen space, the future horizon's one way and the past's the other. */
+@fragment
+fn fs_horizon(in: HOut) -> @location(0) vec4<f32> {
+    if (in.which > 1.5) { return vec4(ink() * in.alpha, in.alpha); }
+    let px = in.position.xy / max(camera.dpr, 1.0);
+    let u = select(px.x + px.y, px.x - px.y, in.which > 0.5);
+    let f = abs(fract(u / 9.0) - 0.5) * 9.0;
+    let cover = 1.0 - smoothstep(0.35, 0.95, f);
+    let a = in.alpha * cover;
+    if (a < 0.003) { discard; }
+    return vec4(ink() * a, a);
 }
 
 /** Under Seen, tilted: the light in flight, from where slot s pierces the cone to the observer now. */

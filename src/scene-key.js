@@ -22,6 +22,7 @@ const WORDS = {
         cone: 'Past light cone',
         tick: 'Light of its ticks, arriving',
         seenCone: 'Observer’s past light cone',
+        horizon: (r) => `Horizons · corner 1/α = ${r} behind`,
         seenLight: 'Light seen now, in flight',
         approaching: 'Seen track · approaching',
         receding: 'Seen track · receding',
@@ -51,6 +52,7 @@ const WORDS = {
         cone: '過去光円錐',
         tick: '刻みの光、到着',
         seenCone: '観測者の過去光円錐',
+        horizon: (r) => `地平面・角 1/α = ${r} 後方`,
         seenLight: '今見える光、伝播中',
         approaching: '見えた軌跡・接近',
         receding: '見えた軌跡・後退',
@@ -116,6 +118,8 @@ export default class SceneKey {
         const clocks = bodies.some((b) => b.alive && Math.cbrt(b.m) * sim.camera.zoom >= 5);
         if (clocks && !ph.blackHoleEnabled) rows.push(['clock', L.clock(CLOCK_PERIOD)]);
         const seen = sim.frames.seeing;
+        // The accelerated observer's horizons (spacetime-render.wgsl vs_horizon)
+        if (tilted && sim.frames.active && sim.frames.kind === 6) rows.push(['horizon', L.horizon(Math.round(1 / sim.frames.alpha))]);
         // The streak plate's tracks, under the scene (src/streak.js)
         if (seen && bodies.length > 1) {
             rows.push(['track', L.approaching, {}]);

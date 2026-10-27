@@ -64,6 +64,7 @@ import {
 import { WL_STRIDE } from './src/gpu/gpu-constants.js';
 import { TOGGLE_KEYS } from './src/physics-contract.js';
 import { curveAt, shuttleShape } from './src/prescribed.js';
+import { radarCoords, inertialLine, acceleratedLine } from './src/radar.js';
 
 const rowsEl = document.getElementById('rows');
 const logEl = document.getElementById('log');
@@ -2579,6 +2580,61 @@ cases.push({
                  measured: `mover D ${fmt(row0(N)[1], 4)}; ${[...Array(N + 1).keys()].filter((j) => row0(j)[2] > 0.5).length} of ${N + 1} seen`,
                  metric: `|Δθ′| ${fmt(worstA, 2)}, D ${fmt(worstD * 100, 2)}%, mover ${fmt(errM * 100, 2)}%`,
                  pass: worstA < 1e-3 && worstD < 1e-3 && errM < 1e-3 };
+    },
+});
+
+// ── 2.6: radar and the accelerated observer (roadmap §6.4, §6.6) ──
+
+cases.push({
+    name: 'Radar: an inertial observer’s radar coordinates are its Lorentz coordinates; the accelerated one’s are Rindler’s, off the axis too, with nothing past its horizon',
+    async run() {
+        // Inertial at u = (0.6, 0.2) through the origin at t = 0
+        const u = [0.6, 0.2], g = 1 / Math.sqrt(1 - u[0] ** 2 - u[1] ** 2), us = Math.hypot(...u), n = [u[0] / us, u[1] / us];
+        const line = inertialLine(0, 0, 0, u[0], u[1]);
+        let worstI = 0;
+        for (const [t, x, y] of [[3, 10, -4], [-7, -12, 9], [20, 5, 30]]) {
+            const r = radarCoords(line, t, x, y);
+            const par = x * n[0] + y * n[1], perp = [x - par * n[0], y - par * n[1]];
+            const tp = g * (t - us * par), xp = g * (par - us * t);
+            worstI = Math.max(worstI, Math.abs(r.time - tp), Math.abs(r.distance - Math.hypot(xp, ...perp)));
+        }
+        // Accelerated at α along x, at rest at x = 1/α at t = 0: the corner at the origin
+        const a = 0.05, acc = acceleratedLine(1 / a, 0, 0, a, 1, 0);
+        let worstA = 0;
+        for (const [X, y, t] of [[30, 0, 10], [12, 15, -4], [60, -25, 40]]) {
+            const r = radarCoords(acc, t, X, y);
+            const xi = Math.sqrt(X * X - t * t), eta = Math.atanh(t / X) / a;
+            const R = Math.acosh((a * a * (xi * xi + y * y) + 1) / (2 * a * xi)) / a;
+            worstA = Math.max(worstA, Math.abs(r.time - eta), Math.abs(r.distance - R));
+        }
+        const behind = radarCoords(acc, 30, 20, 0);   // X < t: past the future horizon
+        return { expected: 'Lorentz; η and (1/α)·arcosh[(α²(ξ² + y²) + 1)/(2αξ)]; none past the horizon',
+                 measured: `beyond: ${behind.beyond}`, metric: `inertial ${fmt(worstI, 2)}, accelerated ${fmt(worstA, 2)}`,
+                 pass: worstI < 1e-6 && worstA < 1e-6 && behind.beyond === 'future' };
+    },
+});
+
+cases.push({
+    name: 'Frames: the accelerated observer’s slices all pass its corner, 1/α behind it',
+    async run() {
+        const a = 0.04;
+        const gp = await makeSim({ on: ['relativityEnabled'], domainW: 2048, domainH: 512 });
+        gp.addParticle({ x: 200, y: 256, mass: 1, bornAt: -Infinity });
+        const slices = [];
+        for (const T of [20, 45]) {
+            await run(gp, T - gp.simTime, 0.25);
+            gp.sliceFrame(frameParams({ kind: 6, boostX: a, boostY: 0, originX: 300, originY: 256, refT: 0, viewHalfW: 1, viewHalfH: 1 }));
+            slices.push(await readFrameState(gp));
+        }
+        gp.destroy();
+        const c = slices.map((s) => s.tA - s.ux * s.xA[0]);
+        const xP = (c[0] - c[1]) / (slices[1].ux - slices[0].ux), tP = c[1] + slices[1].ux * xP;
+        // The corner: x = 300 − 1/α at t = 0 (anchor-centred lab coordinates are lab ones here)
+        const err = Math.hypot(xP - (300 - 1 / a), tP - 0);
+        const s2 = slices[1], proper = Math.sqrt((s2.xA[0] - xP) ** 2 - (s2.tA - tP) ** 2);
+        return { expected: `corner (${fmt(300 - 1 / a, 4)}, 0); 1/α = ${fmt(1 / a, 3)} behind`,
+                 measured: `(${fmt(xP, 4)}, ${fmt(tP, 3)}); ${fmt(proper, 4)} behind`,
+                 metric: `${fmt(err, 2)}`, pass: slices.every((s) => s.valid) && err < 0.05 && Math.abs(proper * a - 1) < 2e-3 };
     },
 });
 

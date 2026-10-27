@@ -336,9 +336,11 @@
                             <button type="button" data-value="particle" aria-pressed="false" data-i18n="frame.particle">the red body</button>
                             <button type="button" data-value="corotate" aria-pressed="false" data-i18n="frame.corotate">rotating</button>
                             <button type="button" data-value="freefall" aria-pressed="false" data-i18n="frame.freefall">falling</button>
+                            <button type="button" data-value="accel" aria-pressed="false" data-i18n="frame.accel">accelerating</button>
                         </div>
                         <div id="frame-boost-group" hidden>
-                            <div class="scale-row"><label for="frameRapidityInput" data-i18n="frame.speed">speed</label><input type="range" class="scale" id="frameRapidityInput" min="0" max="3" step="0.01" value="0.6"><output id="frameSpeedValue" for="frameRapidityInput">0.54c</output></div>
+                            <div class="scale-row" id="frame-speed-row"><label for="frameRapidityInput" data-i18n="frame.speed">speed</label><input type="range" class="scale" id="frameRapidityInput" min="0" max="3" step="0.01" value="0.6"><output id="frameSpeedValue" for="frameRapidityInput">0.54c</output></div>
+                            <div class="scale-row" id="frame-accel-row" hidden><label for="frameAlphaInput" data-i18n="frame.alpha">acceleration α</label><input type="range" class="scale" id="frameAlphaInput" min="0.005" max="0.1" step="0.001" value="0.02"><output id="frameAlphaValue" for="frameAlphaInput">0.020</output></div>
                             <div class="scale-row"><label for="frameDirInput" data-i18n="frame.direction">direction</label><input type="range" class="scale" id="frameDirInput" min="0" max="359" step="1" value="0"><output id="frameDirValue" for="frameDirInput">0°</output></div>
                         </div>
                         <div class="scale-row" id="frame-corotate-group" hidden><label for="frameOmegaInput" data-i18n="frame.omega">rate Ω</label><input type="range" class="scale" id="frameOmegaInput" min="-0.2" max="0.2" step="0.001" value="0.05"><output id="frameOmegaValue" for="frameOmegaInput">0.050</output></div>
@@ -543,6 +545,7 @@
                         <div class="stat-row"><span class="stat-label" data-i18n="frame.observerSpeed">Speed</span><span class="stat-value" id="frame-speed">—</span></div>
                         <div class="stat-row"><span class="stat-label" data-i18n="frame.gamma">γ</span><span class="stat-value" id="frame-gamma">—</span></div>
                         <div class="stat-row"><span class="stat-label" data-i18n="frame.now">Now</span><span class="stat-value" id="frame-now">—</span></div>
+                        <div class="stat-row" id="frame-radar-row" hidden><span class="stat-label" data-i18n="frame.radar">Red body by radar</span><span class="stat-value" id="frame-radar">—</span></div>
                         <p class="panel-hint" id="frame-extrapolated" data-i18n="frame.extrapolated" hidden>Partly extrapolated</p>
                     </section>
                     <section class="panel-section" id="cosmo-section" aria-live="polite" hidden>

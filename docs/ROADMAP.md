@@ -368,7 +368,9 @@ cone, the tilted cone with its pierces and the light in flight, unavailable hist
 
 No beacons or mirrors (a9, 2026-10-27): the signals are the light of events the plate already
 draws. Ticks' light landed 2026-10-27 (§14): rings at the present, rays and reception marks, a
-prescribed receiver's receptions found in its known future. Radar is open.
+prescribed receiver's receptions found in its known future; radar as a readout for observers whose
+future is known. Still open: radar's simultaneity surfaces drawn beside the rest frame's on the
+twin.
 
 - **Ticks' light.** A body's beads are its clock's ticks. Selected, its ticks send light: each bead's
   future cone, drawn as a ring growing at c in the plane and a cone in the plate, marked where it
@@ -421,6 +423,10 @@ apparent superluminal motion as a figure.
 
 ### 6.6 The accelerated observer [standard]
 
+Landed 2026-10-27 (§14): the observer kind, slices through the corner, the hatched horizons and
+the corner line, radar off the axis, and their oracles. Still open: fading bodies past the future
+horizon, and Bell's ships and the rigid ruler (3.0).
+
 - An observer kind beside the six: constant proper acceleration α along a chosen direction, through
   the camera's centre now. Its world line is the hyperbola x² − t² = 1/α² about a corner, the line
   x = t = 0 (along y in the plane).
@@ -470,6 +476,10 @@ The hand comes last in 2.6, on top of prescribed world lines: it is a prescribed
   end are acts, each with its light cone (§7.2).
 
 ### 6.8 The sheet as a handle
+
+Landed 2026-10-27 (§14; `AGENTS.md`, Input): each edge of the sheet drags the observer's velocity
+along its normal. The lagged view keeps the observer's present's leading edge at now, so the drag
+shows as the present tilting down from it.
 
 Tilted, the sheet of the present is the observer's simultaneity. Drag its far edge and it tilts:
 its slope is the observer's velocity, and the figure bar's boost scale follows. The drawing is the

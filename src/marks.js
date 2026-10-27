@@ -96,6 +96,8 @@ const SWATCH = {
     light: () => packet(ink('ochre')),
     cone: (o) => cone(o?.ink ? MUTED : ACCENT),
     event: () => line(13, 0, 13, 14, MUTED, 1) + circle(13, 7, 3.3, TEXT, GROUND, 1),
+    // The accelerated observer's horizons: two hatched null planes and their corner line
+    horizon: () => hatch(1, 1, 11, 12, true, MUTED) + hatch(14, 1, 11, 12, false, MUTED) + line(13, 0, 13, 14, TEXT, 1.2),
     // The streak plate's tracks: solid approaching, dashed receding (src/streak.js)
     track: (o) => path('M2,11 C9,10 15,6 24,3', MUTED, o?.receding ? 1 : 1.8, o?.receding ? ' stroke-dasharray="3 2.5"' : ''),
     // Under Seen: a world line pierced by the observer's cone, its light running to the apex

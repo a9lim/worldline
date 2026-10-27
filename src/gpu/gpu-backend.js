@@ -229,6 +229,7 @@ export default class GPUBackend {
             st.scaleA = this.physics.scaleA;
             st.prescribed = this.physics.prescribed.size;
             st.seen = seen;
+            st.horizons = sim.frames.active && sim.frames.kind === 6;   // FRAME_ACCEL
             st.future = view.future();
             renderOpts.spacetime = st;
         }
@@ -325,7 +326,7 @@ export default class GPUBackend {
         this._sceneAt = now;
         if (n === 0) { sim.scene = { bodies: [], version: ph.stateVersion }; return; }
         this._scenePending = true;
-        const version = ph.stateVersion;
+        const version = ph.stateVersion, t = ph.conformalTime;
         ph._readRanges([
             [ph.buffers.particleState, 0, n * PARTICLE_STATE_SIZE],
             [ph.buffers.clocks, 0, n * 16],
@@ -340,7 +341,7 @@ export default class GPUBackend {
                     tau: f[c0 + i * 4],
                 });
             }
-            sim.scene = { bodies, version };
+            sim.scene = { bodies, version, t };   // t: the world-line time the bodies were read at
         }).catch(() => {}).finally(() => { this._scenePending = false; });
     }
 

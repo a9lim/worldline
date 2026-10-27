@@ -106,8 +106,15 @@ export default class StatsDisplay {
         // momentum) would otherwise divide float noise by nothing
         const pScale = Math.max(Math.abs(this.initialMomentum ?? 0), pComoving, Math.sqrt(2 * e.totalMass * e.linearKE), 1e-6);
         const pDrift = this.initialMomentum !== null ? ((pComoving - this.initialMomentum) / pScale * 100) : 0;
+        // Once a prescribed body's agent has acted, its torque is booked about the origin, so the
+        // drift compares L about the origin (L about the centre of mass plus R × P) less that,
+        // from a baseline taken when the agent first acted
+        const agent = L.agentL !== 0 || L.agentE !== 0;
+        const angMomQ = agent ? angMom + (e.comX * e.py - e.comY * e.px) - L.agentL : angMom;
+        if (agent !== (this._agentMode ?? false)) { this._agentMode = agent; this.initialAngMom = null; }
+        if (this.initialAngMom === null && this.initialEnergy !== null && e.current) this.initialAngMom = angMomQ;
         const aDrift = this.initialAngMom !== null
-            ? ((angMom - this.initialAngMom) / Math.max(Math.abs(this.initialAngMom), 1e-6) * 100) : 0;
+            ? ((angMomQ - this.initialAngMom) / Math.max(Math.abs(this.initialAngMom), Math.abs(L.agentL), 1e-6) * 100) : 0;
 
         _set(this.dom.linearKE, fmt(e.linearKE));
         _set(this.dom.spinKE, fmt(e.spinKE));

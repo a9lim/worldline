@@ -38,7 +38,7 @@
 @group(0) @binding(5) var<storage, read> wlMeta: array<u32>;
 @group(0) @binding(6) var<storage, read_write> curves: array<vec4<f32>>;   // rw: the hand's state
 @group(0) @binding(7) var<storage, read> prescribedList: array<u32>;
-@group(0) @binding(8) var<storage, read_write> agentAccum: array<vec4<f32>>;   // E, Px, Py, 0
+@group(0) @binding(8) var<storage, read_write> agentAccum: array<vec4<f32>>;   // E, Px, Py, Lz (origin)
 
 var<workgroup> shAgent: array<vec4<f32>, PRESCRIBED_CAP>;
 
@@ -145,10 +145,13 @@ fn applyPrescribed(@builtin(local_invocation_index) lid: u32) {
         // The agent's books: the curve's four-momentum minus the state the substep left
         let m = p.mass;
         let wPre = vec2(p.velWX, p.velWY);
+        let xPre = vec2(p.posX, p.posY);
+        let pNew = m * select(v, w, relOn);
+        let lz = cross2(pos, pNew) - cross2(xPre, m * wPre);   // angular momentum about the origin
         if (relOn) {
-            books = vec4(m * (g - gammaFromW(wPre)), m * (w - wPre), 0.0);
+            books = vec4(m * (g - gammaFromW(wPre)), pNew - m * wPre, lz);
         } else {
-            books = vec4(0.5 * m * (dot(v, v) - dot(wPre, wPre)), m * (v - wPre), 0.0);
+            books = vec4(0.5 * m * (dot(v, v) - dot(wPre, wPre)), pNew - m * wPre, lz);
         }
 
         // Back on the curve; Newtonian mechanics stores the velocity itself

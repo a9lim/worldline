@@ -23,11 +23,11 @@
 // Prepended with the shared prefix and shared-worldline.wgsl.
 
 struct FrameParams {
-    kind: u32,          // 1 zero momentum, 2 particle, 3 boost, 4 co-rotating
+    kind: u32,          // 1 zero momentum, 2 particle, 3 boost, 4 co-rotating, 6 accelerated
     slot: u32,          // particle frame: the observer's slot
     lorentz: u32,       // 1: Lorentz slices and boosts; 0: Galilean
     images: u32,        // 1, or 9 on a torus
-    boost: vec2<f32>,   // boost frame's lab velocity
+    boost: vec2<f32>,   // boost frame's lab velocity; the accelerated frame's α·n̂
     origin: vec2<f32>,  // boost and co-rotating frames: reference position (lab) at refT
     refT: f32,
     nowT: f32,          // current GPU time
@@ -51,11 +51,12 @@ struct FrameState {
     tA: f32,            // anchor event: lab GPU time
     xA: vec2<f32>,      // anchor event: position in the anchor-centred lab frame
     aNow: vec2<f32>,    // that frame's reference point, the anchor's wrapped position now
-    phi: f32,           // co-rotation angle at t_A (lab → observer turns by −phi)
+    phi: f32,           // co-rotation angle at t_A (lab → observer turns by −phi); the
+                        // accelerated observer's direction, as an angle
     lag: f32,           // now − t_A
     lorentz: f32,
     valid: f32,
-    omega: f32,
+    omega: f32,         // co-rotation rate; the accelerated observer's proper acceleration α
     images: f32,
     domainW: f32,
     domainH: f32,
@@ -312,6 +313,16 @@ fn frameAnchor(@builtin(local_invocation_index) lid: u32) {
     } else if (fp.kind == 3u) {
         uNow = fp.boost;
         st.aNow = wrapToDomain(fp.origin + fp.boost * (fp.nowT - fp.refT));
+    } else if (fp.kind == 6u) {
+        // Accelerated (roadmap §6.6): at rest at the origin at refT, proper acceleration α along
+        // n̂, so w = α(t − refT) and x = origin + n̂(γ − 1)/α, the hyperbola about its corner
+        let a = max(length(fp.boost), 1e-6);
+        let n = fp.boost / a;
+        let w = a * (fp.nowT - fp.refT);
+        uNow = n * (w / sqrt(1.0 + w * w));
+        st.aNow = wrapToDomain(fp.origin + n * ((sqrt(1.0 + w * w) - 1.0) / a));
+        st.omega = a;
+        st.phi = atan2(n.y, n.x);
     } else {
         st.aNow = fp.origin;
     }
@@ -328,6 +339,20 @@ fn frameAnchor(@builtin(local_invocation_index) lid: u32) {
             let n = u / length(u);
             let reach = dot(fp.viewCenter, n) + abs(fp.viewHalf.x * n.x) + abs(fp.viewHalf.y * n.y);
             lag += s / sqrt(1.0 - s * s) * max(reach, 0.0) + 0.25;
+            if (fp.kind == 6u) {
+                // The accelerated observer's slice is its velocity at t_A, not now: the lag is the
+                // root of L = lookBack + |w(now − L)|·reach + 0.25 on the hyperbola, below the one
+                // the velocity now gives (lag − that rises with L), found by bisection
+                let a = st.omega;
+                var lo = 0.0;
+                var hi = lag;
+                for (var it = 0; it < 16; it++) {
+                    let mid = 0.5 * (lo + hi);
+                    let wA = a * (fp.nowT - mid - fp.refT);
+                    if (mid - (fp.lookBack + abs(wA) * max(reach, 0.0) + 0.25) < 0.0) { lo = mid; } else { hi = mid; }
+                }
+                lag = hi;
+            }
         }
     }
     lag = min(lag, fp.maxLag);
@@ -347,6 +372,14 @@ fn frameAnchor(@builtin(local_invocation_index) lid: u32) {
     } else if (fp.kind == 4u) {
         st.xA = st.aNow;
         st.phi = fp.omega * (st.tA - fp.refT);
+    } else if (fp.kind == 6u) {
+        // On the hyperbola at t_A; its velocity there sets the slice, which passes the corner
+        let a = st.omega;
+        let n = vec2(cos(st.phi), sin(st.phi));
+        let wN = a * (fp.nowT - fp.refT);
+        let wA = a * (st.tA - fp.refT);
+        st.xA = st.aNow + n * ((sqrt(1.0 + wA * wA) - sqrt(1.0 + wN * wN)) / a);
+        uNow = n * (wA / sqrt(1.0 + wA * wA));
     } else {
         // Zero momentum and boost: the reference point moves uniformly at u
         st.xA = st.aNow - uNow * lag;
@@ -555,6 +588,15 @@ fn streakRows(@builtin(global_invocation_id) gid: vec3u) {
         tR = at.p.t;
         xR = st.aNow + deckO.xy * (at.p.pos - ov.now.pos);
         uR = select(vec2(0.0), deckO.xy * at.p.vel, st.lorentz > 0.5);
+    } else if (fp.kind == 6u) {
+        // Back along the hyperbola by proper time: w = sinh(α(τ_A − k·dTau))
+        let a = st.omega;
+        let n = vec2(cos(st.phi), sin(st.phi));
+        let wA = a * (st.tA - fp.refT);
+        let wR = sinh(asinh(wA) - a * f32(k) * sp.dTau);
+        tR = fp.refT + wR / a;
+        xR = st.xA + n * ((sqrt(1.0 + wR * wR) - sqrt(1.0 + wA * wA)) / a);
+        uR = n * (wR / sqrt(1.0 + wR * wR));
     } else {
         let back = st.gamma * f32(k) * sp.dTau;
         tR = st.tA - back;

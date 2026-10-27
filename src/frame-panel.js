@@ -3,10 +3,11 @@
 // its parameters and the look-back scrubber, which only acts while paused; and the Measure
 // tab's readouts of it (speed, γ, and how far behind the lab its now is). The figure bar's
 // lab · observer switches between the lab and the observer chosen here.
-import { FRAME_KEYS, FRAME_LAB, FRAME_PARTICLE, FRAME_BOOST, FRAME_COROTATE, FRAME_FREEFALL } from './frames.js';
+import { FRAME_KEYS, FRAME_LAB, FRAME_PARTICLE, FRAME_BOOST, FRAME_COROTATE, FRAME_FREEFALL, FRAME_ACCEL } from './frames.js';
 import { WORLDLINE_LEN, WORLDLINE_DT } from './config.js';
 import { t } from './i18n.js';
 import { showChoice, enableChoice } from './controls.js';
+import { radarCoords, observerLine } from './radar.js';
 
 export default class FramePanel {
     constructor(sim) {
@@ -16,11 +17,15 @@ export default class FramePanel {
             choice: $('observer-choice'),
             boost: $('frame-boost-group'),
             corotate: $('frame-corotate-group'),
+            speedRow: $('frame-speed-row'),
+            accel: $('frame-accel-row'),
             readout: $('frame-readout'),
             speed: $('frame-speed'),
             gamma: $('frame-gamma'),
             now: $('frame-now'),
             extrapolated: $('frame-extrapolated'),
+            radarRow: $('frame-radar-row'),
+            radar: $('frame-radar'),
             scrub: $('frame-scrub-group'),
             lookBack: $('frameLookBackInput'),
         };
@@ -33,6 +38,10 @@ export default class FramePanel {
             sim.syncBoost?.();
             sim._dirty = true;
         }, this._fmtSpeed);
+        _forms.bindSlider($('frameAlphaInput'), $('frameAlphaValue'), v => {
+            sim.frames.alpha = v;
+            sim._dirty = true;
+        }, v => v.toFixed(3));
         _forms.bindSlider($('frameDirInput'), $('frameDirValue'), v => {
             sim.frames.direction = v * Math.PI / 180;
             sim.syncBoost?.();
@@ -98,7 +107,10 @@ export default class FramePanel {
         showChoice(this.el.choice, shown);
         // The parameters of the observer the figure bar would switch to
         const kind = frames.active ? frames.kind : FRAME_KEYS.indexOf(sim.observerKind || 'boost');
-        this.el.boost.hidden = kind !== FRAME_BOOST;
+        // Speed for the moving observer; α for the accelerated one; direction for both
+        this.el.boost.hidden = kind !== FRAME_BOOST && kind !== FRAME_ACCEL;
+        this.el.speedRow.hidden = kind !== FRAME_BOOST;
+        this.el.accel.hidden = kind !== FRAME_ACCEL;
         this.el.corotate.hidden = kind !== FRAME_COROTATE;
         this.el.readout.hidden = !frames.active;
     }
@@ -135,6 +147,24 @@ export default class FramePanel {
             ? t('frame.nowLagged').replace('{lag}', st.lag.toFixed(1))
             : t('frame.nowLab');
         this.el.extrapolated.hidden = !this._outsideHistory(st);
+        this._showRadar();
+    }
+
+    /**
+     * The red body's radar time and distance for the observer (src/radar.js), at the event the
+     * scene snapshot read it at: shown while the observer's future is known and a body other
+     * than the observer is selected.
+     */
+    _showRadar() {
+        const sim = this.sim, frames = sim.frames, sel = sim.selectedIdx;
+        const b = sim.scene?.bodies?.[sel];
+        const line = observerLine(sim);
+        const on = !!(line && b && b.alive && sim.scene.t != null && !(frames.kind === FRAME_PARTICLE && frames.slot === sel));
+        if (this.el.radarRow.hidden === on) this.el.radarRow.hidden = !on;
+        if (!on) return;
+        const r = radarCoords(line, sim.scene.t, b.x, b.y);
+        this.el.radar.textContent = r.beyond ? t(r.beyond === 'future' ? 'frame.beyondFuture' : 'frame.beyondPast')
+            : t('frame.radarValue').replace('{t}', r.time.toFixed(2)).replace('{d}', r.distance.toFixed(2));
     }
 
     /**

@@ -90,6 +90,7 @@ src/cosmology-panel.js   the Measure tab's expansion readouts and the overlay's 
 src/frames.js            the observer the view is drawn for (sim.frames), FrameParams
 src/frame-panel.js       the Figure tab's Observer (choice, parameters, scrubber) and the Measure tab's readouts of it
 src/streak.js            the streak plate: under Seen, the band under the scene of what the observer saw
+src/radar.js             radar time and distance for an observer whose world line is known
 src/lens-panel.js        the Laws tab's Backdrop (distance, the microlensing probe) and the Measure tab's light curve
 src/save-load.js         quick save (localStorage), JSON download/upload
 src/stats-display.js     the Measure tab's ledger (with drift sparklines) and the selected body
@@ -459,8 +460,10 @@ curve is a plain object with `t0` on the world-line clock and `tau0`, its proper
 - **The agent's books.** What a substep did to the body (every force, an external field) the pass
   undoes, so the agent adds the curve's four-momentum minus the state the substep left, summed
   into `buffers.agentAccum` and read and cleared with the stats (words 104–106) into
-  `ledger.agentE`, `agentPx`, `agentPy`. Over a run that is W = Δ(γm) − ∫F_other·v dt. The Measure
-  tab shows it as the work by prescribed motion, and the drifts subtract it.
+  `ledger.agentE`, `agentPx`, `agentPy`, and its angular momentum about the origin, `agentL`. Over a
+  run that is W = Δ(γm) − ∫F_other·v dt. The Measure tab shows it as the work by prescribed motion,
+  and the drifts subtract it; once an agent has acted the angular momentum drift compares L about
+  the origin (L about the centre of mass plus R × P) less `agentL`, re-baselined then.
 - **Its past and future.** `addPrescribed(curve, opts)` (`GPUPhysics`, `Simulation`) starts the
   body where its curve is now. A figure's prescribed bodies are born at −∞ and get their curve's
   past written into the ring, a sample every `WORLDLINE_DT` (`_writePast`), so they act at once
@@ -595,13 +598,32 @@ frames up front, pauses and opens tilted.
 simulation's own frame), zero momentum, the selected particle, a boost (rapidity and
 direction), co-rotation at a rate Ω about the point the camera was on, or free fall (the
 selected particle's frame kept Galilean, so uniform gravity vanishes and tides remain; the
-slicer runs it as the particle frame with `lorentz` off). Frames are a
+slicer runs it as the particle frame with `lorentz` off), or accelerated (below). Frames are a
 view: spawning, selection, deletion and hover act in the lab, and `input.js` ignores the
 canvas while a frame is active. The Figure tab's Observer chooses one, as words
 (`frame-panel.js`; the red body and falling need a selection, and none but the lab is
 offered in an expanding universe), and the figure bar's lab · observer switches between
 the lab and it (`sim.observerKind`): a moving observer is eased into through the boost
-(`spacetime.toCoords`), any other is set directly. Its readouts are on the Measure tab.
+(`spacetime.toCoords`), any other is set directly; its third word, seen, is Seen (below). Its
+readouts are on the Measure tab.
+
+- **The accelerated observer** (`FRAME_ACCEL`, slicer kind 6, roadmap §6.6): constant proper
+  acceleration α (the Figure tab's scale, 0.005–0.1) along the Figure tab's direction, at rest at
+  the camera's centre when chosen, so its world line is the hyperbola about a corner 1/α behind it.
+  `frameAnchor` takes its velocity at t_A on the hyperbola, so every slice passes the corner, and
+  settles the lag on the hyperbola by bisection (the velocity now would overshoot it).
+  `FrameState.omega` carries α and `phi` the direction. Tilted, `vs_horizon` hatches the two null
+  planes through the corner, (x − c)·n̂ = ±(t − t_c), and draws the corner line, which lies on every
+  one of its slices. Every lab-static body eventually crosses its future horizon, so the scene
+  leaves it within a few 1/α; choosing it again starts it at rest. Seen and the streak plate follow
+  it along the hyperbola.
+- **Radar** (`src/radar.js`, roadmap §6.4): the Measure tab's "red body by radar" gives the selected
+  body's radar time (τ₁ + τ₂)/2 and distance (τ₂ − τ₁)/2 for the observer, at the event the scene
+  snapshot read it at (`sim.scene.t`): τ₁ when the observer's light leaves to reach it, τ₂ when its
+  light comes back, both by bisection on the observer's world line. Radar needs the observer's
+  future, so only observers whose world line is known have it: the lab's eye at the camera's centre,
+  the moving and accelerated observers, a prescribed red body. Past the accelerated observer's
+  future horizon the readout says so. For an inertial observer it is its Lorentz coordinates.
 
 - **Slicing** (`frame-slice.wgsl`, from `GPUBackend.render()` each rendered frame).
   `frameAnchor` (one thread) finds the observer's lab velocity u and its anchor event
@@ -1152,6 +1174,11 @@ canvas text needs no font-load redraw.
   drag past `DRAG_THRESHOLD` takes hold of it with the hand (Prescribed bodies) and selects it,
   and letting go (anywhere, the window's mouseup included) throws it; elsewhere it spawns as
   before. Hover hit tests pause while pressed, so the press's result is the one that returns.
+  Tilted, in the lab's coordinates, an edge of the sheet of the present (within 7 px on screen,
+  the cursor `ns-resize` over it) is a handle (roadmap §6.8): dragging it sets the moving
+  observer's velocity along the edge's outward normal to the time it leads by over the plane's
+  distance from the camera's centre to the edge (capped at 0.95c), so the observer's present tilts
+  with the drag and the figure bar's boost scale follows.
 - **CSS.** `styles.css` makes `[hidden]` win over every display rule (`base.css` gives
   `.panel-section` and others a display), so the margin's rows and sections are shown and
   hidden with the `hidden` attribute alone, never `style.display`. A mark's own svg may
