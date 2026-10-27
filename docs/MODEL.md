@@ -15,14 +15,14 @@ against their source before code; the first draft's were checked in the review (
 
 ## 0. Ordering
 
-Decided (a9's suggestion, 2026-10-27; `ROADMAP.md` §0): the model pass comes before the
-record. **2.5 is the model** (this file), **3.0 the laboratory** (the record and the instrument,
-roadmap §7), and sight, which reads histories and needs none of this pass's dynamics, runs beside
+Decided (a9's suggestion, 2026-10-27; `ROADMAP.md` §0): the model pass comes first.
+**2.5 is the model** (this file), **3.0 the causal sandbox** (roadmap §7; a9 set the record aside
+the same day), and sight, which reads histories and needs none of this pass's dynamics, runs beside
 it as 2.6 behind a shared trajectory contract (roadmap §3, §6). Of the old 3.0, the corrections
 move into 2.5; the new spacetimes (cosmic strings, the Schwarzschild and Kerr metric regime and
 its embedding diagram, the gravitational-wave detector ring, fields carrying energy) stay after
-the record as 3.x, since they want its instrument (roadmap §8), and the covariance meter comes
-with the instrument (roadmap §7.2).
+the sandbox as 3.x, since they want its picking and measurements (roadmap §8), and the covariance
+meter becomes this pass's oracle (roadmap §5).
 
 Why the model first:
 
@@ -41,6 +41,9 @@ Why the model first:
    terms (Carlip 2000). The covariance meter would quantify that, not decide it.
 4. **The harness exists.** `tests/physics-validation.html` and the physics hashes of
    `shots.mjs` are enough to develop the model against.
+
+Reason 1 lapsed when a9 set the record aside (2026-10-27): there are no replay links to carry a
+dynamics version. Reasons 2–4 stand, with "the instrument" read as each figure's predicted number.
 
 What it costs: the record's replay would have helped bisect model regressions; and §1.1's
 "one recorded history serves the dynamics" narrows. World lines still serve electromagnetism,
@@ -903,7 +906,10 @@ the closure's matter content is stated as an approximation.
 
 - **A deterministic step schedule** [synthesis]: the substep is a function of the state
   alone, chosen by the physics criteria below, and a frame only decides how many substeps to
-  run in its wall time. That is necessary for replay, not sufficient (Codex): frame dependence
+  run in its wall time, so a figure behaves the same at any frame rate. *Replay was set aside on
+  2026-10-27, so the rest of this item, bitwise reproducibility, is for tests and is done where it
+  is cheap or a test needs it (roadmap open decision 4).* It was necessary for replay, not
+  sufficient (Codex): frame dependence
   also enters through the emission RNG (keyed by `u.frameCount`), merge identities, post-frame
   reactions, the delayed Friedmann density and the event readbacks, and atomic claims make
   collision outcomes and emission allocation depend on scheduling (`collision.wgsl:180–188`).
@@ -1005,9 +1011,11 @@ Revised after the review (Codex's order, with the §2 caution folded in):
    gravity; pion Coulomb's 1/m; the bounce torque's sign; the 1PN recompute's sources; the
    pion over-booking; the holes' double-booked spin; one canonical J; the discrete field
    energy. The quadrupole sink and the pair modulations are *disabled*, not repaired.
-1. **Deterministic stepping with sufficient resolution, together** (§4): the state-driven
-   schedule, sub-tick subdivision, the complete stiffness bound, RNG and events on simulation
-   counters, deterministic conflict resolution, feedback only at step boundaries.
+1. **The step schedule with sufficient resolution** (§4): the state-driven schedule, sub-tick
+   subdivision, the complete stiffness bound, time slowing when the budget runs out. RNG and events
+   on simulation counters, deterministic conflict resolution and feedback only at step boundaries
+   were for replay; with replay set aside they are done where cheap or where a test needs them
+   (roadmap open decision 4).
    - **Then the history's reader** (§3.5's one timelike curve for a sample's position, velocity
      and acceleration, impulses as segment breaks), as its own change ahead of step 3: sight (2.6)
      reads the history through it too, so the model lane owns `worldline.wgsl` and
@@ -1095,12 +1103,12 @@ Codex's answers to the first draft's sixteen questions (2026-10-27), and what ea
 - whether Paczyński–Wiita holes keep relativistic kinetics (radii 4.732M, 7.212M) or the
   textbook pair is wanted (Newtonian kinetics near holes), §3.6.
 
-## 9. After the record (3.x)
+## 9. After the sandbox (3.x)
 
 Cosmic strings and Gott's pair, the Schwarzschild and Kerr metric regime for test bodies and
 light, the embedding diagram, gravitational waves at a ring of test masses,
-fields carrying energy through a closed surface; the covariance meter comes with the instrument.
-Roadmap §7.2 and §8 hold their detail.
+fields carrying energy through a closed surface; the covariance meter is this pass's oracle
+(roadmap §5). Roadmap §8 holds their detail.
 
 ## 10. Review log
 

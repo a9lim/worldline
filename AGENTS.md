@@ -1075,7 +1075,7 @@ canvas text needs no font-load redraw.
 ## Open work
 
 `docs/ROADMAP.md` holds the plan: the model pass (2.5, `docs/MODEL.md`) and sight (2.6) in
-parallel, then the laboratory (3.0) and other spacetimes (3.x), ordered by the list of figures.
+parallel, then the causal sandbox (3.0) and other spacetimes (3.x), ordered by the list of figures.
 `docs/MODEL.md` §2–§5 hold the model's known boundaries, and `docs/PERFORMANCE.md` what 2.1 and
 2.2 measured. The presets cut in 2.0 showed several of those boundaries: the inspiral gained energy under gravity's signal
 delay, the precession preset's planet escaped at once with 1PN on inside the softening
