@@ -1,0 +1,40 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - run: node --test 'tests/*.test.mjs'   # the GPU oracles skip without CHROME
+
+  # The GPU oracles (tests/physics-validation.html) in headless Chrome on SwiftShader,
+  # beside the site's shared/ as the page loads it in production
+  gpu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: a9lim/a9lim.github.io
+          path: site
+      - uses: actions/checkout@v7
+        with:
+          path: site/projects/worldline
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - name: GPU oracles, none skipped
+        working-directory: site/projects/worldline
+        shell: bash
+        env:
+          CHROME: /usr/bin/google-chrome
+          WEBGPU: swiftshader
+        run: |
+          node --test --test-reporter=spec 'tests/*.test.mjs' | tee "$RUNNER_TEMP/out"
+          grep -q 'ℹ skipped 0' "$RUNNER_TEMP/out"

@@ -2,16 +2,13 @@
 
 The one authoritative plan for Worldline. `AGENTS.md` describes Worldline as it is; this file
 describes where it is going; `docs/MODEL.md` is the plan for the physics model (2.5). When an item
-lands, move it to §14 with its commit and update `AGENTS.md`.
+lands, add it to §14 and update `AGENTS.md`.
 
-Rewritten on 2026-10-27 by Claude with a9, after 2.3 and the first step of the model pass, to point
-the plan forward. The measurements of 2.1 and 2.2 moved to `docs/PERFORMANCE.md`, the model's known
-boundaries to `docs/MODEL.md`. The plan gained a list of figures as its spine (§4), sight in
-parallel with the model behind a shared trajectory contract (§3, §6), prescribed world lines and the
-hand (§6.2, §6.7), and spacetimes the plate can draw exactly (§8). The same day a9 turned 3.0 from
-a record of runs into a causal, observational sandbox (§7). Codex (astra) read the draft
-adversarially; corrections that changed a design are marked "(Codex)". The 2026-10-24 rewrite and
-earlier versions are in git history.
+Rewritten on 2026-10-27 by Claude with a9, after 2.3 and the model's step 0, to point the plan
+forward: a list of figures as its spine (§4), sight beside the model behind a shared trajectory
+contract (§3, §6), and 3.0 as a causal, observational sandbox (§7, a9's turn the same day). 2.6
+landed the same day. Codex (astra) read the draft adversarially; corrections that changed a design
+are marked "(Codex)".
 
 This file lives in `docs/` so the parent build's stager never deploys it
 (`tools/stage-assets.mjs` skips `docs/`). Keep planning documents here.
@@ -28,12 +25,12 @@ three serial sessions, and parallel lanes (subagents, worktrees) fit a whole ver
 
 | Date | Decision |
 |---|---|
-| 2026-10-27 | **Seen is a third choice beside Lab and Observer** (a9), with the streak plate as a band under the scene (§6.3, §6.5). |
+| 2026-10-27 | **Seen is a third choice beside Lab and Observer** (a9), with the streak plate as a band under the scene (§6). |
 | 2026-10-27 | **No bitwise determinism** (a9): it was for replay, which is gone. The model's step 1 is the state-driven step schedule, sub-tick subdivision and time slowing (a figure behaves the same at any frame rate and never loses accuracy silently); reproducibility to the bit isn't pursued (§5). |
 | 2026-10-27 | **3.0 is a causal, observational sandbox** (a9): the live run is the experiment. No checkpoints, replay, recipes, side-by-side runs or provenance, and no apparatus objects (beacons, detectors, mirrors); a visitor acts through the hand, prescribed bodies, editing and composing, and reads the history through events and their cones (§7). Supersedes the record (2026-10-24). |
 | 2026-10-27 | **The list of figures grows by acceptance criteria** (§1.3, §4): §4's two dozen are candidates; a figure ships when its measured number meets its prediction, and earns its place by putting a question no other figure puts; variants share a figure. |
-| 2026-10-27 | **Sight beside the model:** 2.6 runs in parallel with 2.5, behind the trajectory contract (§3, §6.1). |
-| 2026-10-27 | **The known future is drawn:** a prescribed world line's future rises above the present, faint and dashed, while free bodies' futures stay blank (§6.2). |
+| 2026-10-27 | **Sight beside the model:** 2.6 runs in parallel with 2.5, behind the trajectory contract (§3, §6). |
+| 2026-10-27 | **The known future is drawn:** a prescribed world line's future rises above the present, faint and dashed, while free bodies' futures stay blank (§6). |
 | 2026-10-27 | **No sound, for now** (a9's lean): the opt-in speaker is set aside (§11.2). |
 | 2026-10-27 | **The model before 3.0** (a9's suggestion; `MODEL.md` §0): 2.5 is the model pass, 3.0 then the sandbox. Step 0 landed the same day. Supersedes "the model is held through 2.5" (2026-10-24). |
 | 2026-10-27 | **Show, don't tell** (root `AGENTS.md`): the sim names things and reads out values; what they mean lives in the about panel, the info tips and a9's posts. A figure's caption is its name and its live values. |
@@ -133,8 +130,10 @@ this plan, and an engine feature is admitted by a figure that needs it.
 
 The figures are wordless (show, don't tell). What a figure means belongs in the about panel and in
 a9's posts, which can carry a live figure through `?embed` (§9). A figure ships when its measured
-number agrees with its prediction within a stated tolerance, on the model it runs under, so every
-figure is also an oracle in `tests/physics-validation.html`.
+number agrees with its prediction within a stated tolerance, on the model it runs under. That
+comparison is made when the figure is built; it becomes a standing check in
+`tests/physics-validation.html` only where the figure's mechanism has none yet and a failure would
+be silent: one check per mechanism, not one per figure (`AGENTS.md`, Tests).
 
 The prediction is a figure's acceptance criterion, not its claim to a place in the list (Codex): a
 figure earns navigation space by putting a question no other figure puts. Experiments that share
@@ -161,9 +160,9 @@ As of 2026-10-27, after 2.6's sight and the hand:
 - **The margin** in the plate's notation (2.3), and nine figures in five chapters with knobs in their
   captions; 2.6 added the Rindler horizon, aberration and apparent superluminal motion, and the
   twin by its ticks' light and by radar.
-- **Checks.** 73 oracles in `tests/physics-validation.html`; plate screenshots that reproduce byte
-  for byte with their physics hashes; colour-vision sheets; benchmarks timed back to back
-  (`docs/PERFORMANCE.md`).
+- **Checks.** Two dozen GPU oracles, one per mechanism, and two Node tests of the curves and radar
+  (`AGENTS.md`, Running and checking); plate screenshots that reproduce byte for byte with their
+  physics hashes; colour-vision sheets; benchmarks timed back to back.
 - **The model pass** has landed step 0: ten contained bugs fixed or disabled (the quadrupole sink,
   the fields' pair modulations and the bodies' pull from bosons are off until they have actions),
   the pools compacting every frame, the fields' energy seeing every mode. Step 1, the step schedule
@@ -187,11 +186,11 @@ the lanes share more than that suggests (Codex): both read the history through
 `shared-worldline.wgsl`, whose interpolation the model rewrites (one timelike curve for position,
 velocity and acceleration, `MODEL.md` §3.5); frame dispatch and uniforms live in `gpu-physics.js`
 beside the step schedule; and the light of a simulated body's ticks inherits its clock, whose lapse and
-Thomas precession are the model's. So 2.6 starts from an explicit trajectory contract (§6.1): flat
+Thomas precession are the model's. So 2.6 starts from an explicit trajectory contract (§6): flat
 space, an open domain, prescribed observers and sources first; the history's writer
 (`worldline.wgsl`) and reader have one owner, the model lane, and sight builds against the repaired
 reader rather than keeping a second one. The hand crosses into the integrator and comes last in 2.6
-(§6.7).
+(§6).
 
 3.0 builds on 2.6's machinery (cones, slices, prescribed bodies, the hand) and needs nothing from
 the model pass but its figures' predictions, which come after the model's step 4 so that they
@@ -251,7 +250,7 @@ drawings (`plateGlyph`) beside them, and the numbering follows the list.
 
 | Figure | Knob | Predicted | Measured | Needs |
 |---|---|---|---|---|
-| **Kibble–Zurek** ✓ | τ_Q | wall density falling as `τ_Q^{−ν/(1+νz)}` | the exponent fitted over many quenches in the test page, with its uncertainty | (2.5) |
+| **Kibble–Zurek** ✓ | τ_Q | wall density falling as `τ_Q^{−ν/(1+νz)}` | the exponent fitted over many quenches, with its uncertainty | (2.5) |
 | **Walls and matter** | density | walls pin to bodies (`MODEL.md` §3.7) | bodies on walls; wall length | 2.5, step 3 |
 | **The Hubble flow** | H | received light at `1 + z = a_receive/a_emit`; particle and event horizons | the redshift of ticks' light between comoving bodies | 3.x |
 
@@ -284,7 +283,7 @@ plan:
 position, velocity and acceleration with impulses as segment breaks, sits with electromagnetism in
 step 4, but both lanes read through it: sight's quantitative claims on simulated bodies and the
 hand's radiation wait for it. So it lands right after step 1, as its own change, with the model lane
-owning `worldline.wgsl` and `shared-worldline.wgsl` throughout (§6.1).
+owning `worldline.wgsl` and `shared-worldline.wgsl` throughout (§6).
 
 **The covariance meter** is the model's yardstick, an oracle in the test page rather than a figure
 [synthesis]. By the Currie–Jordan–Sudarshan no-interaction theorem, instantaneous forces make the
@@ -300,245 +299,76 @@ names the ones a visitor meets and changes with each law.
 
 ## 6. 2.6: sight and the hand
 
-Beside what an observer measures (its simultaneity), what it sees, from the same history.
-`retardedState()` already solves each source's past light cone for signal delay, so point sources
-are cheap. And beside watching, the first ways to act on the history: world lines given rather than
-computed, and then the hand. Codex ranked prescribed world lines first among the new directions for
-what they supply: exact sources and observers for nearly every chapter's oracles.
+Landed 2026-10-27 (§14; `AGENTS.md`, Prescribed bodies and Frames): beside what an observer
+measures, what it sees, from the same history, and the first ways to act on it. What is still open
+is at the end.
 
-### 6.1 The trajectory contract
+### 6.1 The trajectory contract (Codex; in force for sight and the model lane)
 
-What sight may assume, stated before it is built (Codex):
-
-- **First, flat and open:** an open domain, no expansion, Relativity's straight null lines, and
-  prescribed analytic observers and sources (§6.2), whose every value is known exactly; then
-  simulated bodies, then the torus's images.
+- **First flat and open:** an open domain, no expansion, straight null lines, prescribed observers
+  and sources; then simulated bodies, then the torus's images.
 - **One history, one owner.** The writer (`worldline.wgsl`) and reader (`shared-worldline.wgsl`)
   belong to the model lane, which repairs the reader so that position, velocity and acceleration
-  come from one timelike curve (`MODEL.md` §3.5). Sight reads the history through that reader and
-  keeps no second one.
-- **Unavailable is drawn as unavailable.** Before a source's oldest sample the reader extrapolates
-  uniform motion (`shared-worldline.wgsl`, `retardedState`), which suits a force but would fabricate
-  a plausible sky once real history has expired. Sight marks those events unavailable instead.
-- **Clocks belong to the model.** A simulated body's ticks come from its clock (the lapse and
-  Thomas precession in `clocks.wgsl`), so sight's oracles use prescribed clocks, whose τ is exact.
+  come from one timelike curve (`MODEL.md` §3.5). Sight keeps no second reader.
+- **Unavailable is drawn as unavailable.** The reader extrapolates uniform motion before a source's
+  oldest sample, which suits a force but would fabricate a sky; sight leaves those events undrawn.
+- **Clocks belong to the model.** A simulated body's ticks inherit its lapse and Thomas precession,
+  so sight's quantitative claims use prescribed clocks until the model's step 4.
 
 ### 6.2 Prescribed world lines
 
-Landed 2026-10-27 (§14; `AGENTS.md`, Prescribed bodies): the five curves, the pass that keeps a
-body on its curve, the agent's books, the known past written at a figure's start and the known
-future drawn, and the twin rebuilt on them with turns of finite duration.
-
-- A body can be **prescribed**: its world line given, not computed. 2.6 brings the analytic curves:
-  uniform motion, hyperbolic motion, uniform circular motion, a linear oscillation, and a twin's legs
-  joined by a turn of finite duration. Prescribed bodies source every law and
-  serve as observers like any body; they respond to nothing, and the agent that drives them pays
-  (Jackson's prescribed currents) [standard].
-- **Stated interactions.** A prescribed body keeps its charge (its mass follows the Higgs like any
-  body's); it doesn't radiate away energy, absorb bosons, collide, bounce or merge, and other bodies' collisions with it are a stated
-  policy (they pass through, first). Its samples carry the curve's own position, proper velocity and
-  dw/dt, so its Liénard–Wiechert field is the field of the motion drawn; the sample's acceleration is
-  otherwise the summed force at the substep's start plus the Boris rotations (`worldline.wgsl`).
-- **Books:** the agent's work. With F_other the forces the regime applies to the body,
-  `F_agent = d(mw)/dt − F_other` and `W_agent = Δ(γm) − ∫F_other·v dt` (Codex: the inertial term
-  matters; an isolated neutral body accelerated from rest is the falsifier). Radiation and its Schott
-  term then settle the whole system's balance (`MODEL.md` §3.5).
-- **The known future** [synthesis]: a prescribed line's future is known, so the
-  tilted plate draws it above the present, faint and dashed, rising out of the sheet, while free
-  bodies' futures stay blank. The plate then shows what is determined and what isn't.
+Uniform, hyperbola, circle, oscillation and the twin's shuttle with turns of finite duration: they
+source every law and respond to nothing, and the agent that drives them pays,
+`W_agent = Δ(γm) − ∫F_other·v dt` (Jackson's prescribed currents; Codex: the inertial term
+matters). Their known future is drawn above the present, faint and dashed; free bodies' futures
+stay blank (decided, §0).
 
 ### 6.3 The cone as a slice
 
-Landed 2026-10-27 (§14; `AGENTS.md`, Frames): Seen as the figure bar's third word, the slicer's
-cone, the tilted cone with its pierces and the light in flight, unavailable history left undrawn.
-
-- **An observer** is a world line: the selected body, the boost observer, the accelerated observer
-  (§6.6), or a prescribed or held body.
-- At each moment of its proper time, its past light cone meets every world line once (for
-  subluminal sources, `g(t) = (t_O − t) − |x(t) − x_O|` is monotone). That intersection is the event
-  the observer sees. The slicer gains the cone beside its planes.
-- **Tilted:** the selected body's past cone is already drawn. Under Seen it becomes a slice: world
-  lines pierce it (`vs_pierce`'s job, for the cone), and the light in flight runs faint along the
-  cone's generators from each pierce point to the apex.
-- **In the plane:** each body is drawn at the emission event's position in the observer's
-  coordinates, which puts it in its aberrated direction at the distance its light travelled. A fast
-  body shows where it was, at its seen speed.
-- Seen is a third choice beside Lab and Observer (a9, 2026-10-27), with the streak plate (§6.5)
-  under the scene.
-- **Model boundaries:** sight uses straight null lines; with gravity on, light bends (lensing, boson
-  deflection) and sight doesn't, and the backdrop's lens map doesn't change that, which the key says.
-  Frames on Klein and RP² draw the primary image only, and so does sight there.
+Seen, a third choice beside Lab and Observer (a9): every world line cut by the observer's past light
+cone, bodies in their aberrated directions at the distance their light travelled, and tilted, the
+cone with its pierces and the light in flight. Sight uses straight null lines: with gravity on,
+light bends and sight doesn't. Frames on Klein and RP² draw the primary image only.
 
 ### 6.4 Ticks' light and radar
 
-No beacons or mirrors (a9, 2026-10-27): the signals are the light of events the plate already
-draws. Ticks' light landed 2026-10-27 (§14): rings at the present, rays and reception marks, a
-prescribed receiver's receptions found in its known future; radar as a readout for observers whose
-future is known. Simultaneity at the ticks landed the same day: from each of the selected body's
-ticks to each other world line, the rest frame's chord dashed and the radar surface's trace solid
-(`AGENTS.md`, The spacetime view), with the twin's oracle: at the turn the rest frame sweeps
-home's line by 2T_a + 2v(D_a + vT_c) in Δτ 4.4, while radar carries home's time on at between 1/k
-and k, reaching k. The twin's variants by its ticks' light and by radar then landed as the twin
-opening with its traveller selected, so both draw, with the oracle that counts its ticks on the
-GPU's world lines: they reach home every kT going and T/k coming back.
-
-- **Ticks' light.** A body's beads are its clock's ticks. Selected, its ticks send light: each bead's
-  future cone, drawn as a ring growing at c in the plane and a cone in the plate, marked where it
-  meets another world line (a monotone function along that line, bisected as the slicer does). The
-  light interacts with nothing; it is the tick seen, not a signal sent.
-- **The k-calculus** [standard] (Bondi): ticks every T of a source receding at v arrive every kT,
-  `k = √((1 + v)/(1 − v))`. The twin by its ticks' light counts what each twin receives, and the
-  age difference falls out with no simultaneity.
-- **Radar time** [standard] (Bondi; Dolby and Gull 2001) is a slicing, computed from the geometry,
-  with nothing reflecting: an event that the observer's light could reach at τ₁ and whose light
-  reaches the observer at τ₂ is assigned time (τ₁ + τ₂)/2 and distance (τ₂ − τ₁)/2. For an inertial observer these are its Lorentz coordinates; for the travelling twin
-  they give simultaneity surfaces that stay continuous through the turn, where the instantaneous
-  rest frame's jump. Both slicings, side by side on the twin, are the clearest picture of what
-  "simultaneous" means.
-- **Radar needs the future** (Codex): an event's radar time waits for its light to reach the
-  observer. For a simulated observer, sight draws radar coordinates only where that has already
-  happened (or lags the view until it has); a prescribed observer's whole line is known, so it has
-  none of this wait. The rest frame's lag (frames' lagged view) is not enough for radar.
+No beacons or mirrors (a9): the signals are the light of the selected body's ticks, with the
+k-calculus (Bondi) on the twin; radar time and distance for observers whose future is known (Bondi;
+Dolby and Gull 2001), a simulated observer's only once the light has come back; and each tick's two
+nows, the rest frame's and radar's, which stays continuous through the twin's turn.
 
 ### 6.5 The seen sky and the streak plate
 
-Landed 2026-10-27 (§14): the streak plate with aberration, Doppler, D⁴ weights and the
-approaching/receding pattern, and its oracle; then the figures: Aberration (an eye shuttling
-through a ring of lamps, the Doppler factors ahead and behind read from the plate) and Apparent
-superluminal motion (a jet's blobs, their apparent speed from the slope where each track leaves
-the core).
-Real light moves to 3.0's event log (§7.1): for a body observer a quantum's arrival is its
-absorption, an `EV_ABSORB` record, and a point eye catches none, so arrivals are logged events, not
-an aperture invented for sight.
-
-- **Doppler** [standard]: `ν_o/ν_s = (k·u_o)/(k·u_s)`, for any source and observer.
-- **Aberration** [standard]: a source at angle θ from the observer's velocity is seen at
-  `cos θ′ = (cos θ + β)/(1 + β cos θ)`.
-- **Beaming** [standard]: under the planar convention the sources and their light are 3+1, and the
-  ring samples the equator of a 3+1 sky. Bolometric intensity transforms as D⁴ (energy) and photon
-  number intensity as D³; a receiver's flux adds its source's angular extent, distance and aperture
-  (Codex). Sight states which one a mark's weight reads, and doesn't redefine radiation as 2+1.
-- **Apparent superluminal motion** [standard] (Rees 1966): a blob at v, at angle θ to the line of
-  sight, crosses the sky at `v sin θ/(1 − v cos θ)`.
-- **Real light:** pool photons that reach the observer register as arrivals, so the sky shows both
-  virtual sight and the light the simulation emitted.
-- **The streak plate** [synthesis]: a planar eye sees a one-dimensional image, directions on a
-  circle. Stacked over the observer's proper time, these images become a two-dimensional picture of
-  everything the observer saw: direction across, τ upward, now at the top. It is the family of the
-  observer's past light cones, one per reception event, unrolled along its world line, as the
-  tilted plate is the lab's history. Each source draws a track, its seen direction against τ; the
-  track's weight reads its intensity and its pattern its Doppler factor (solid approaching, dashed
-  receding), so it holds in grayscale; the forward direction sits at the centre. It shows a fast
-  observer's sky crowding forward, the twin's turnaround as a kink in every track with receding
-  sources turning solid, apparent superluminal motion as a slope, and, in 3.x, a cosmic string's
-  doubled tracks. It costs one light-cone solve per reception event and source, and it is computed,
-  not recorded. **Its window isn't a fixed 127 units of τ** (Codex): each old reception event needs
-  older source history still, samples arrive once per qualifying substep, and under expansion the
-  ring holds conformal time. The plate's bottom edge is where history runs out, drawn as such.
+The observer's one-dimensional sky stacked over its proper time, each source a track whose weight
+reads D⁴ and whose dash reads approach or recession. Sources and their light are 3+1 under the
+planar convention: bolometric intensity goes as D⁴, photon number as D³ (Codex). The plate's bottom
+edge is where history runs out, not a fixed 127 of τ.
 
 ### 6.6 The accelerated observer [standard]
 
-Landed 2026-10-27 (§14): the observer kind, slices through the corner, the hatched horizons and
-the corner line, radar off the axis, and their oracles; bodies fading with the frame's lapse αξ
-toward the horizon and faint beyond it; then the figure, the Rindler horizon: a Born-rigid lattice
-standing still on the slices with clocks at αξ, the red body's distance by ruler and by radar, two
-bodies dropped toward the horizon. Still open: Bell's ships and the rigid ruler (3.0).
+Its horizons and corner line; bodies fading with the lapse αξ; radar off the axis,
+`(1/α)·arcosh[(α²(ξ² + y²) + 1)/(2αξ)]` (Bini, Lusanna and Mashhoon, arXiv gr-qc/0409052), so the
+radar slicing is the Rindler slicing and the horizon is infinitely far.
 
-- An observer kind beside the six: constant proper acceleration α along a chosen direction, through
-  the camera's centre now. Its world line is the hyperbola x² − t² = 1/α² about a corner, the line
-  x = t = 0 (along y in the plane).
-- Its simultaneity planes all contain the corner (`t = x·tanh ατ`), so the slicer's plane
-  `t − u·x = t_A − u·X_A` serves with the anchor on the corner and u = tanh ατ: in the tilted plate
-  the sheet of the present swings about the corner line as τ advances.
-- **Two null boundaries**, the planes x = t and x = −t through the corner, drawn as hatched sheets at
-  45°. Events beyond x = t can never send light to the observer, and two-way radar needs the
-  wedge between both: seeing an event and assigning it radar coordinates are different conditions
-  (Codex). Bodies that cross x = t fade on the far side. An observer accelerated only for a while has
-  no eternal horizon, and the sheets are drawn only for the eternal one.
-- **Radar** [standard; derived here and by Codex; Bini, Lusanna and Mashhoon, arXiv gr-qc/0409052]: the
-  observer at `(t, x) = (sinh ατ, cosh ατ)/α`, an event at `(ξ sinh αη, ξ cosh αη, y)` in the
-  wedge. The null conditions give `cosh α(η − τ) = (α²(ξ² + y²) + 1)/(2αξ)`, so radar time is η and
-  radar distance `(1/α)·arcosh[(α²(ξ² + y²) + 1)/(2αξ)]`, which is `|ln(αξ)|/α` on the
-  acceleration axis. The radar slicing is the Rindler slicing, and the horizon is infinitely far.
-- **Bell's ships and the rigid ruler** (3.0, measured by picking): two bodies under the same uniform external g follow
-  hyperbolae of the same α about different corners, and their proper separation grows as γ; a
-  Born-rigid ruler's points share one corner, with α = 1/ξ. The figure contrasts the two. It shows
-  the separation, not a string breaking, which would need material dynamics (Codex).
+### 6.7 The hand
 
-### 6.7 The hand [synthesis on standard pieces]
-
-Landed 2026-10-27 (§14; `AGENTS.md`, Prescribed bodies): grab, pursuit under 0.75c, throw, the
-agent's books, and its oracle. Still open: the band's fronts measured against c (quantitative after
-`MODEL.md` §3.5), and the grip's start and end as acts with light cones (§7.2).
-
-The hand comes last in 2.6, on top of prescribed world lines: it is a prescribed line written live.
-
-- **Grab a body and move it.** Press on a body and drag (touch the same; a drag from empty space
-  still spawns). While held, the body is prescribed: the pointer sets a target, which the body
-  pursues in simulation time along a smooth path with bounded acceleration, on the sheet of the
-  present in either view. Smoothness comes from the pursuit itself; clamping a velocity after the
-  fact would break it (Codex). Releasing it throws it with its last velocity.
-- **Its speed stays under the κ floor's,** about 0.78c, where `LW_KAPPA_MIN` starts suppressing the
-  forward field, so the fields it makes are quantitative; past it the caption would have to say so
-  (Codex: at 0.98c the forward κ is 0.02 against a floor of 0.215).
-- **The interpolant stays timelike.** A smooth bounded path doesn't guarantee that the sampled
-  Hermite segments do, so the samples are validated, at release too.
-- **Everything that reads world lines answers through the light cone.** Shake a charge and the field
-  atlas's lines kink: the change fills the band between the light fronts of the shake's start and
-  end, running outward at c, J. J. Thomson's and Purcell's picture of radiation drawn from the
-  simulation's own fields. The lines are each frame's integral curves, not material threads that
-  travel. Tilted, the band lies between two future light cones. Other charges feel the shake when
-  its light reaches them. Quantitative claims wait for the model's one-trajectory reader.
-- **Books:** the hand is the agent of §6.2, with its work booked the same way. The grip's start and
-  end are acts, each with its light cone (§7.2).
+A prescribed line written live: pursuit under 0.75c, below where `LW_KAPPA_MIN` suppresses the
+forward field (Codex: at 0.98c the forward κ is 0.02 against a floor of 0.215), so its fields stay
+quantitative; smooth by the pursuit itself, not by clamping; field lines kink in bands running
+outward at c.
 
 ### 6.8 The sheet as a handle
 
-Landed 2026-10-27 (§14; `AGENTS.md`, Input): each edge of the sheet drags the observer's velocity
-along its normal. The lagged view keeps the observer's present's leading edge at now, so the drag
-shows as the present tilting down from it.
+Dragging the present's edge sets the observer's velocity: the drawing is the control.
 
-Tilted, the sheet of the present is the observer's simultaneity. Drag its far edge and it tilts:
-its slope is the observer's velocity, and the figure bar's boost scale follows. The drawing is the
-control: an affordance rather than an instruction.
+### 6.9 Extended bodies
 
-### 6.9 Extended bodies (a second stage)
+Under Seen each point of a body is drawn at its own retarded time (Terrell 1959, Penrose 1959);
+delaying the centre alone isn't the effect (Codex).
 
-Landed 2026-10-27 (`AGENTS.md`, Frames): under Seen each point of a body is drawn at its own
-retarded time, the body taken in uniform motion over its light-crossing time, with the apparent
-length oracle (a rod head-on is seen stretched by √((1 + v)/(1 − v)), receding squeezed by its
-inverse).
-
-Each point of a body is seen at its own retarded time, so a fast body's seen outline is neither its
-lab shape nor its contracted shape (Terrell 1959, Penrose 1959) [standard]. In the plane, sample the
-body's rest-frame disk along its world tube per sky direction [synthesis]. Delaying the centre alone
-isn't this effect (Codex); label point-source sight as point-source until this stage lands.
-
-### 6.10 Oracles
-
-- a prescribed body's samples reproduce its curve's position, proper velocity and acceleration, and
-  its interpolant stays timelike;
-- the agent's work on an isolated neutral body accelerated from rest equals Δ(γm);
-- the cone slice of a uniformly moving body equals its analytic retarded position and
-  `retardedState()`;
-- aberration of a ring of static sources seen by a moving observer;
-- the Doppler ratio for moving source and observer pairs;
-- a tick's light reaches another world line on the cone, with an arrival-time residual under
-  tolerance;
-- radar coordinates of an inertial observer equal its Lorentz coordinates; a static body's radar
-  distance is its distance; the accelerated observer's radar time equals η and its radar distance
-  the arcosh above, off the axis too;
-- the k-calculus interval kT, and the twin's ticks counted against its clocks (landed);
-- apparent transverse speed `v sin θ/(1 − v cos θ)` (landed);
-- the Rindler lattice still on the accelerated slices with clocks at αξ, radar distances by the
-  arcosh, a dropped body seen ever closer to its crossing; aberration and k, 1/k for an eye
-  coasting through a ring of lamps (landed with the figures);
-- a rod's apparent length head-on, `L√((1 + v)/(1 − v))` approaching and `L√((1 − v)/(1 + v))`
-  receding (landed);
-- the twin's two slicings: the rest frame's sweep of home's line at the turn, `2T_a + 2v(D_a +
-  vT_c)`, against radar's rate between 1/k and k (landed);
-- a held or prescribed charge's field at a distant point equals the analytic Liénard–Wiechert field
-  of its curve, and the band's fronts move at c.
+**Still open:** the kink's band fronts measured against c (after `MODEL.md` §3.5's reader); the
+grip's start and end as acts with light cones (§7.2); real light, the quanta an observer absorbs,
+with 3.0's event log (§7.1); Bell's ships and the rigid ruler (3.0); a fast disk, seen (§4).
 
 ## 7. 3.0: the causal sandbox
 
@@ -569,7 +399,7 @@ general means of acting are the hand and prescribed bodies (2.6), editing a body
 - **The event log** (§12.2) gives picking and the plate true events: births, deaths, merges,
   emissions and absorptions, with the four-momentum that changed hands, so a photon is drawn from
   its emission event and the plate draws logged events instead of scanning every sample for them
-  (§10). The streak plate's real light comes with it (§6.5): an observer body's absorptions are the
+  (§10). The streak plate's real light comes with it (§6): an observer body's absorptions are the
   quanta it received, marked on its sky at their direction and Doppler-shifted energy beside the
   tracks of virtual sight. Bodies are named by (slot, generation), which survives slot reuse.
 - The Measure tab holds the picked events and their numbers beside the ledger and the selected
@@ -591,7 +421,7 @@ general means of acting are the hand and prescribed bodies (2.6), editing a body
 
 ### 7.3 Acting on the live world
 
-- **The hand and prescribed bodies** (§6.2, §6.7), the general way to drive a body.
+- **The hand and prescribed bodies** (§6), the general way to drive a body.
 - **Editing the selection:** mass, charge, spin and velocity, typed or dragged, applied at the next
   substep, each an act with its cone.
 - **Composing:** an orbit about the selection, its speed from the measured radial acceleration
@@ -700,7 +530,7 @@ strain is not a picture of a spiral; both polarizations through an off-plane det
 
 ### 8.5 Fields carrying energy, and the model's separate projects
 
-- A controlled acceleration pulse on a prescribed charge (§6.2), its field change propagating,
+- A controlled acceleration pulse on a prescribed charge (§6), its field change propagating,
   received power measured by quadrature over a closed surface and balanced against the agent's work.
   Point-charge self-energy needs a stated regularization, and planar field pictures can't recover 3D
   flux by themselves (Codex).
@@ -716,7 +546,7 @@ whose same-origin frames the root's `frame-ancestors 'self'` allows. Figures are
 
 ## 10. Performance: open
 
-What 2.1 and 2.2 measured, changed and cleared is in `docs/PERFORMANCE.md`. Open:
+The 2.1 and 2.2 passes are in §14 and git. Open:
 
 - **The model pass moves the costs.** With gravity at present positions, Barnes–Hut serves gravity
   under Relativity, and the O(N²) light-cone cost falls on electromagnetism alone; the contact
@@ -731,7 +561,8 @@ What 2.1 and 2.2 measured, changed and cleared is in `docs/PERFORMANCE.md`. Open
 - **World lines at 4000 bodies tilted** keep 1.6M of 4.1M points and cost about 3.8 ms, 134K events
   among them; the event log (§7.1) lets the plate draw logged events instead of scanning for them.
 - **The torus walk.** On a periodic domain the tree gains at most a third over the pairwise loop to
-  the cap and sometimes takes 5–6 ms against 0.75 near 4000 bodies (`docs/second-pass/bh-notes.md`),
+  the cap and sometimes takes 5–6 ms against 0.75 near 4000 bodies (`AGENTS.md`, Forces;
+  `docs/second-pass/tools/tree-vs-pairwise.mjs` measures it),
   so periodic domains stay pairwise (`TREE_ON_PERIODIC`). Finding the cause (the half-domain
   criterion opening every node near a plane, or group boxes that Morton order's jumps make large)
   would let the torus use the tree.
@@ -739,6 +570,21 @@ What 2.1 and 2.2 measured, changed and cleared is in `docs/PERFORMANCE.md`. Open
   light arrival searches, budgeted against the presets'.
 - **Kugelblitz in Hawking gas** collapses at its one-a-frame limit: whether that is the experiment or
   a tuning question is open.
+
+**Tried and cleared by measurement** (2.1, 2.2), not to retry without new evidence:
+
+- **A per-substep uniform ring:** with ε = 8 every benchmark scenario ran one substep a frame.
+- **Fusing a substep's compute passes** into one: Metal serializes a pass's dispatches where it
+  overlaps separate passes, so small presets got slower (cyclotron step 0.55 → 1.9 ms); only the
+  field step, a chain of dependent passes, gained.
+- **Light-cone hints from the current distance alone,** without the N² table: in a crowded scene
+  the paths curve too much over a light-crossing time (4.9 ms against 3.3); the distance only
+  seeds new pairs.
+- **Observers in Morton order** for the pair force: slower (3.7 → 4.2 ms). The relativistic pair
+  force is bound by arithmetic, not by world-line reads.
+- **One thread per body** in an O(N²) pass leaves the GPU idle at these sizes; 32 threads a body
+  cut `pairForce` about tenfold. Caps were raised once that showed 500 bodies had used a fraction
+  of the GPU (the pair force grew sixfold, not 64-fold, to 4000).
 
 ## 11. Branches, considered, retired
 
@@ -831,11 +677,10 @@ struct WorldEvent {          // 48 B, 12 words
 
 ### 12.3 Tests
 
-`tests/physics-validation.html` instantiates the production `GPUPhysics` headlessly, runs each
-analytic oracle and reads back GPU state (73 oracles). Every feature adds its oracle, and every
-figure is one. The WGSL→JS transpiler (`lib/wgsl/transpile.js`, compute only) and `gpu-diff.mjs`
-remain available for Node kernel tests where a kernel is pure compute. The screenshot-diff,
-colour-vision and benchmark harnesses are in `docs/second-pass/tools/`.
+A check is kept where a failure would be silent (a conservation law, an analytic oracle, a
+round trip, CPU–GPU agreement, a structural invariant), one per mechanism, never a snapshot of a
+tuned value. `AGENTS.md` (Running and checking) has the commands; the screenshot-diff,
+colour-vision and benchmark tools are in `docs/second-pass/tools/`.
 
 ## 13. Gotchas
 
@@ -887,41 +732,14 @@ colour-vision and benchmark harnesses are in `docs/second-pass/tools/`.
 
 ## 14. Landed
 
-| Milestone | Date | Commits | What |
-|---|---|---|---|
-| M0 | 2026-10-23 | `5939bcc` | Internal processes on proper time, rest-frame emission with recoil; KG in the exponential metric; the oracle page. Found: the field-gravity FFT ran every stage with the last stage's parameters, so Φ ≡ 0. |
-| M0′ | 2026-10-23 | `73eb90b` | WebGPU only: the CPU path retired (about 8,250 lines); device-loss recovery; the no-WebGPU popup. |
-| M1 | 2026-10-23 | `4aa7101` | Proper-time clocks, the spoke through the Lorentz map, world lines, the domain as state; saves v2. |
-| LW | 2026-10-23 | `2187ef4` | Liénard–Wiechert fields from the world lines; world lines on the covering plane; the force-law audit (Biot–Savart and gravitomagnetic signs, EIH, Bažański, Breit, spin-orbit, Barnes–Hut ghosts double-counting). |
-| M2 | 2026-10-23 | `7f71a38`, `62fb193`, `90fa258` | Frames: the slicer, the lagged view, the lab-ruler grid, the twins, the free-fall frame. |
-| M3 | 2026-10-23 | `35bba37`, `f4c0308`, `c34c9a9`, `abc1c5d`, `cc96472` | Honest cosmology: an expanding FRW torus, conformal world lines, the Friedmann closure, the ledger, misalignment and Kibble–Zurek. |
-| M4 | 2026-10-23 | `4d03f08`, `518076c`, `8ba633e` | Lensing: the lensed backdrop and the microlensing probe. |
-| Stats | 2026-10-23 | `4b68bb6` | The stats' energies for the audited forces (Darwin, EIH, Bažański, Breit). |
-| 2.0 | 2026-10-24 | `433c8bf` … `8533f6d` | The visual overhaul: the tilted spacetime plate, Lab and Observer coordinates, the glyph grammar, photons as wave packets, the field atlas, the key, scale bar and captions, six presets. Sketches and the screenshot harness in `docs/second-pass/`. |
-| 2.1 | 2026-10-24 | `346564b` | The ghost count clamped to its buffer, so a torus with more than about 170 bodies keeps stepping. |
-| 2.1 | 2026-10-24 | `ef6576f` | Disintegration deleted (tidal breakup, Roche transfer, `inheritClockFrom`); extremal censorship runs alone as `extremal.wgsl`. |
-| 2.1 | 2026-10-24 | `fba2e83`, `b27b83c`, `25cc1ca`, `4f2eb49` | Measurement: `?perf` timestamps on every pass; the benchmark harness, scenarios, budgets and A/B runner; plate screenshots, diffs and colour-vision checks. |
-| 2.1 | 2026-10-24 | `a114ccd`, `480070a`, `ac96055`…`17fa383`, `9e0f2af`, `1692267`, `a43fee0` | Speed: one render pass for the scene; `statsPE` on a workgroup; 32 threads per body in the pair forces, clocks and 1PN, with light-cone hints; parallel boson absorption. |
-| 2.1 | 2026-10-24 | `f950c0a`, `0847f38`, `98b193b`, `dd97a1c` | Structure: radius-sized ghosts and searches; fields and bosons stepping without bodies and on their pools' counts; one readback per frame (fixes from Codex's review in `dd97a1c`). |
-| 2.1 | 2026-10-24 | `937fadc`, `479e3a4`, `4a420a5` | Presets as data through `applyConfig` with saves; the fields in `gpu-fields.js`; the heatmap's own rectangle, the named `dt` offset, the torque table. |
-| 2.1 | 2026-10-24 | `cc857bc`, `f0e9fa5`, `319d2a9`, `93515a3` | Bugs the checks found: extremal shedding overshot and created charge; absorption lost energy at the seam; the field kicks raced on φ̇; a flipped theme kept the old inks; hidden panel sections showed. |
-| 2.1 | 2026-10-24 | `74a8fad`, `ec3fae2`, `9eb8c48`, `08da183`, `432713c` | Receipts: the twin fits its history; Kibble–Zurek measures its walls, with a quench-time knob and no tracer; captions follow the state; `about.md`; the social card. |
-| 2.2 | 2026-10-25 | `1eaa1f0`, `5e5fbab`, `63b655f` | Trees from sorted Morton keys (radix tree, compressed quadtree, each node summing its own range), sorts sized on the GPU; Barnes–Hut as a group walk from a ring; the world-line store growing in tiers to the 4096-body cap. |
-| 2.2 | 2026-10-25 | `4d3dc05`, `48ce0f8`, `3e9baa5` | The stats readback and the zero-momentum anchor over workgroups in a fixed order (lane). |
-| 2.2 | 2026-10-25 | `e57e1c3`, `4394810`, `98cfeb3` | Searches pruned by each node's largest radius; pion annihilation by proposals through the bosons' tree; pools of 16384 photons and 4096 each of pions and leptons, sized by live counts. |
-| 2.2 | 2026-10-25 | `4650290`, `ab66afa` | The light-cone search's guess from the distance; field lines budgeted; the heatmap's sources in tiles. |
-| 2.2 | 2026-10-25 | `34a1716`, `888a26c`, `7b3275f` | World lines decimated on the GPU before they are drawn (lane); the selection ring draws one body; ghost slots bounded by eight a body. |
-| 2.2 | 2026-10-25 | `f89688c`, `7ab8fea`, `fda423a` | Fixes from Codex's review; three 4000-body benchmarks; Barnes–Hut's oracle at 4000 bodies. |
-| 2.3 | 2026-10-26 | `537323d` | The lens map compacts the live lenses and sums them in tiles, coarser past 512 lenses (lane): 0.97 → 0.26 ms a render at 500 bodies, 6.7 → 0.3 ms at 4000, so lensing can follow Gravity. |
-| 2.3 | 2026-10-26 | `8289c3b`, `d35231e` | Force summation automatic (lane): pairwise below 1536 bodies, the tree above with θ from 0.1 to 0.5 by 4096, held to 1152; periodic domains pairwise (the torus walk is open work, §10). |
-| 2.3 | 2026-10-26 | `9c80cbc`, `dc56d43`, `b51feee` | The margin in the plate's notation: Figure · Laws · World · Measure, word choices, ticks showing each law's mark, ruled scales, edge diagrams, field pads; caption knobs and figure numbers; the Trails, Clocks and lensing switches removed; every body's outline its clock. The lens pass runs only while there is something to bend. |
-| 2.5 | 2026-10-27 | `fb4d1ab`, `95039c1` | `docs/MODEL.md`: a six-lane audit of the physics and the model's plan, after Codex's adversarial review. |
-| 2.5 | 2026-10-27 | `aee6699`, `a3bdc7b` | Step 0: ten contained bugs fixed or disabled (pion and lepton Coulomb's 1/m, the bounce torque's sign, the 1PN recompute's sources, pending radiation through deaths, pion over-booking, holes' double-booked spin, one canonical J; the quadrupole sink, pair modulations and boson pull disabled), pools compacted every frame, the fields' energy from edge differences. |
-| — | 2026-10-27 | `5009c17` | Show, don't tell: each figure's caption is its name and live values, in both languages. |
-| 2.6 | 2026-10-27 | `e2d56c2` | Prescribed world lines (§6.2): five curves, the pass that keeps a body on its curve, the agent's books, a figure's known past in the ring and the known future drawn above the present; the twin on prescribed bodies with turns of finite duration. |
-| 2.6 | 2026-10-27 | `653d83b` | The hand (§6.7): grab, pursuit under 0.75c, throw; field lines kink in bands running outward at c. |
-| 2.6 | 2026-10-27 | `ed88573` | Ticks' light (§6.4): rings at the present, rays and reception marks; the k-calculus on the twin. |
-| 2.6 | 2026-10-27 | `2234bba` | Seen (§6.3; a9: a third choice beside Lab and Observer) and the streak plate (§6.5): the slicer's cone, the tilted cone with pierces and light in flight, unavailable history undrawn; the observer's sky stacked over its proper time with D⁴ weights, solid approaching and dashed receding. |
-| 2.6 | 2026-10-27 | `328130f` | The accelerated observer (§6.6) with its horizons and corner line; radar for observers whose future is known (§6.4); the agent's torque booked; the sheet's edges as a handle on the boost (§6.8). |
-| 2.6 | 2026-10-27 | `7c2952d` | Simultaneity at the ticks (§6.4): the rest frame's chords and radar's traces, the twin's rest frame sweeping home's line at the turn while radar stays continuous; bodies fading with the accelerated frame's lapse (§6.6); extended bodies under Seen, each point at its own retarded time (§6.9). Real light moves to 3.0's event log. |
-| 2.6 | 2026-10-27 | `eaf1959` | The figures (§4): the list in its five chapters, keys 1–9; the Rindler horizon (a Born-rigid lattice still on the accelerated slices, distance by ruler and by radar, bodies dropped toward the horizon), aberration (an eye shuttling through a ring of lamps, k and 1/k read from the streak plate) and apparent superluminal motion (a jet's blobs, the apparent speed from each track's slope where it leaves the core); the twin by its ticks' light and by radar, opening with its traveller selected. A figure may open in its own observer. Four oracles; 73 pass. |
+Git holds the detail; the commits named here are where each version's story starts.
+
+| Version | Date | What |
+|---|---|---|
+| 1.5 (M0–M4) | 2026-10-23 | WebGPU only (the CPU path retired, `73eb90b`); proper-time clocks, the spoke through the Lorentz map, world lines on the covering plane, the domain as state, saves v2 (`4aa7101`); Liénard–Wiechert from the world lines and the force-law audit (`2187ef4`); frames and the lagged view; an expanding FRW torus with conformal world lines, the Friedmann closure and the ledger; lensing and the microlensing probe; the stats' Darwin, EIH, Bažański and Breit energies. |
+| 2.0 | 2026-10-24 | The visual overhaul (`433c8bf` … `8533f6d`): the tilted spacetime plate, Lab and Observer coordinates, the glyph grammar, the field atlas, the key and captions, six presets. |
+| 2.1 | 2026-10-24 | Measurement (`?perf`, the benchmark and screenshot harnesses) and speed: one render pass, 32 threads a body with light-cone hints, parallel absorption, radius-sized ghosts, one readback a frame; presets as data through `applyConfig`; Disintegration deleted (`ef6576f`). |
+| 2.2 | 2026-10-25 | Scale to 4096 bodies (`1eaa1f0`): trees from sorted Morton keys, Barnes–Hut as a group walk, the world-line store in tiers, stats over workgroups in a fixed order, world lines decimated on the GPU, pools sized by live counts, pion annihilation by proposals. |
+| 2.3 | 2026-10-26 | The margin in the plate's notation (`9c80cbc`); force summation automatic (`8289c3b`); the lens map compacted and tiled (`537323d`). |
+| 2.5, step 0 | 2026-10-27 | `docs/MODEL.md` (`fb4d1ab`); ten contained bugs fixed or disabled, pools compacted, the fields' energy from edge differences (`aee6699`, `a3bdc7b`); show, don't tell in the captions (`5009c17`). |
+| 2.6 | 2026-10-27 | Sight and the hand (§6): prescribed world lines (`e2d56c2`), the hand (`653d83b`), ticks' light (`ed88573`), Seen and the streak plate (`2234bba`), the accelerated observer and radar (`328130f`), simultaneity at the ticks and extended bodies (`7c2952d`), the figures in five chapters (`eaf1959`). |

@@ -1,65 +1,54 @@
 # Worldline
 
 Worldline is a relativistic many-body sandbox at a9l.im/worldline: charged, spinning particles
-under gravity, electromagnetism, gravitomagnetism, Yukawa and scalar fields, with black
-holes, radiation, and photon/pion/lepton pools. Vanilla ES modules; the physics runs as
-WebGPU compute shaders and draws with WebGPU instanced rendering, with no CPU fallback.
-KaTeX from jsDelivr renders the reference overlay.
-It is a submodule of the a9l.im repository (`a9lim.github.io`, at `projects/worldline`); the
-root `AGENTS.md` covers the shared layer, design system, build, and deployment.
+under gravity, electromagnetism, gravitomagnetism, Yukawa and scalar fields, with black holes,
+radiation, and photon/pion/lepton pools, drawn on a plate that tilts into spacetime. Vanilla ES
+modules; the physics runs as WebGPU compute shaders and draws with WebGPU instanced rendering, with
+no CPU fallback. KaTeX from jsDelivr renders the reference overlay. It is a submodule of the a9l.im
+repository (`a9lim.github.io`, at `projects/worldline`); the root `AGENTS.md` covers the shared
+layer, design system, build and deployment.
 
-`docs/ROADMAP.md` is the plan of record: the planar-laboratory thesis, the list of figures,
-versions 2.5 to 3.x and the open decisions. `docs/MODEL.md` is the physics model's plan and its
-known boundaries, and `docs/PERFORMANCE.md` what the performance passes measured. This file
-describes the code as it is.
+`docs/ROADMAP.md` is the plan of record: the planar-laboratory thesis, the list of figures, the
+versions ahead and a9's decisions. `docs/MODEL.md` is the physics model: each law as it runs
+(**Now**, with its known boundaries) and as 2.5 will make it. `about.md` is the public description
+of every law. This file is the code's map, its invariants and the reasons for them.
 
 ## Running and checking
 
-- Preview from the parent build at `http://localhost:8000/worldline/`; `?lang=ja` gives
-  Japanese, and `window.sim` is the live `Simulation`.
-- Syntax: `for f in main.js colors.js src/*.js src/gpu/*.js i18n/*.js; do node --check "$f"; done`
-- WGSL compiles only in the browser, so check the console after shader edits.
-  Pipelines are created synchronously, so a compile error shows up as a WebGPU
-  validation error rather than a throw; a missing shader file does throw, and the page
-  then logs `[worldline] GPU init failed` and shows the WebGPU popup.
-- `tests/physics-validation.html` runs analytic oracles against a headless `GPUPhysics`
-  (open `http://localhost:8000/worldline/tests/physics-validation.html` and press Run, or call
-  `runAll()` from the console; `runAll('Liénard')` runs the cases whose names contain the
-  string). Every new feature adds its oracle there, and every figure is one (`docs/ROADMAP.md` §1.3).
-  The stager skips `tests/`, so it never deploys.
-- `?perf` (`src/gpu/gpu-profiler.js`, `sim.perf`) puts GPU timestamps on every compute and
-  render pass by wrapping the encoder's `beginComputePass`/`beginRenderPass` while a frame
-  is open, so no pass site changes; it also times the loop's CPU phases and counts submits,
-  buffer writes and map requests, and shows a digest at the stage's top left. Passes overlap
-  on Metal, so their sum (`gpuBusy`) overcounts; `gpuSpan` (first begin to last end) and the
-  per-phase `stepSpan` and `renderSpan` are the wall times. Startup marks: device, physics,
-  renderer, first frame. Under `?perf` the tree builds take a pass per stage (`tree:…`,
-  `bosonTree:…`). A light scene lets the GPU clock down, so its per-pass times read high:
-  compare loaded scenes, or the same scene A/B. Two trees A/B'd live still differ in how
-  they hold the clocks, and passes that overlap inflate each other, so settle a difference by
-  timing back to back: `docs/second-pass/tools/bench-b2b.mjs OUT URL_A URL_B` stops the loop
-  after each scenario's warm-up and times `sim.gpu.stepOnce(sim)` and `sim.gpu.render(sim)`
-  called many times in a row, the wall time each after `onSubmittedWorkDone()`
-  (`docs/ROADMAP.md` §13).
-- Benchmarks: `docs/second-pass/tools/tour.mjs` (Playwright and the WebGPU Chrome; see its
-  header) runs any scenario with `bench: { warm, measure }` under `?perf` and writes p50/p95
-  per scenario to `OUTDIR/bench.json`; `bench-scenarios.json` beside it is the standing set
-  (every preset in plane and tilted, Fields, an observer, 500 bodies, full boson pools, both
-  fields with grid gravity, and 4000 seeded bodies relativistic, tilted, and under Barnes–Hut; the `-bh` and `-pair` scenarios pin `sim.gpu.physics.treeOverride`), and `bench-compare.mjs A B` diffs two runs; `tree-vs-pairwise.mjs` times the force passes and measures the tree's error against the pairwise sum (§ Forces and toggles). Concurrent GPU work
-  (another benchmark, another agent's browser) skews the numbers, so compare runs made alone,
-  or run `bench-ab.mjs OUT URL_A URL_B`, which alternates the two trees scenario by scenario.
-  A frozen tree to compare against is a worktree at the base commit, served with its own
-  port (any static server that maps `/worldline/` to it and `/shared/` to the root's).
-- Plate screenshots and colour-vision checks (`docs/second-pass/tools/`; same Playwright and
-  server as `tour.mjs`): `WL_URL=http://localhost:8000/worldline/ node shots.mjs OUT` freezes each
-  preset into a reproducible frame (frames driven by hand, every readback and lazy pipeline
-  awaited, `Math.random` seeded, one page per theme) and screenshots preset × light/dark × fitted,
-  2× and 0.5× in about 30 s; `node shots-diff.mjs A B OUT` counts the pixels whose channel moved by
-  more than 8/255, with their bounding box, a diff image, a contact sheet and the physics hashes;
-  `node cvd.mjs IMG OUT` renders protan/deutan/tritan/gray sheets (Machado et al. 2009 at severity
-  1.0 in linear RGB) and scores every pair of inks by CIEDE2000. Measured on an unchanged
-  tree, every preset reproduces byte for byte with its physics hash, so the 8/255 threshold is
-  margin (one 9 px swatch in the key has moved by 5/255). Each theme opens its own page.
+- **Preview** from the parent build at `http://localhost:8000/worldline/`, or without a build:
+  `node docs/second-pass/tools/serve.mjs PORT` serves this checkout with the parent's `shared/`.
+  `?lang=ja` gives Japanese; `window.sim` is the live `Simulation`.
+- **Syntax:** `for f in main.js colors.js src/*.js src/gpu/*.js i18n/*.js tests/*.mjs; do node --check "$f"; done`
+- **Tests:** `node --test 'tests/*.test.mjs'`, Node 22+ with nothing installed.
+  `prescribed.test.mjs` and `radar.test.mjs` run anywhere. `gpu.test.mjs` runs the GPU oracles
+  (`tests/physics-validation.html`) in a headless Chrome, one subtest a case, when `CHROME` names
+  a Chrome binary, and skips otherwise; `WEBGPU=swiftshader` uses Chrome's software adapter and
+  `CHROME_FLAGS` adds flags. It needs the parent's `shared/` two levels up. On an M5 Max the suite
+  takes about 5 s on the GPU and 110 s on SwiftShader, 40 s of which is compiling the pipelines
+  once. By hand: open `/worldline/tests/physics-validation.html` and press Run, or
+  `await window.__run('Liénard')` for the cases whose names contain the string.
+- **What earns a test:** a check where a failure would be silent or hard to see by running the sim
+  (a conservation law, an analytic oracle, a save round trip, CPU–GPU agreement, a structural
+  invariant of a tree or pool), one per mechanism, and never a snapshot of a tuned value. A figure
+  is not a test by default (`docs/ROADMAP.md` §1.3). The oracle page shares one `GPUPhysics`,
+  `reset()` between cases (pipeline compilation dominates on a software adapter), so a case sets
+  everything it relies on and reads the boson pools only up to their counts.
+- **WGSL** compiles only in the browser. Pipelines are created synchronously, so a compile error is
+  a WebGPU validation error, not a throw (the oracle page fails the case it lands in); a missing
+  shader file does throw, and the page logs `[worldline] GPU init failed` and shows the WebGPU popup.
+- **`?perf`** (`src/gpu/gpu-profiler.js`, `sim.perf`) times every compute and render pass by
+  wrapping the encoder while a frame is open, plus the loop's CPU phases, submits, writes and maps.
+  Passes overlap on Metal, so their sum (`gpuBusy`) overcounts: read `gpuSpan`, `stepSpan` and
+  `renderSpan`. A light scene lets the GPU clock down; `docs/ROADMAP.md` §13 says how to read the
+  numbers.
+- **Tools** (`docs/second-pass/tools/`, Playwright from `~/Work/Exploratory` and Chrome for
+  Testing; usage in each header): `tour.mjs` runs scenarios and benchmarks over
+  `bench-scenarios.json`, the standing set; `bench-compare.mjs`, `bench-ab.mjs` (two trees
+  alternated) and `bench-b2b.mjs` (steps and renders timed back to back, which settles what a live
+  A/B can't) compare trees; `tree-vs-pairwise.mjs` measures the force walk; `shots.mjs` freezes
+  every preset into a reproducible frame and `shots-diff.mjs` diffs two runs with their physics
+  hashes (an unchanged tree reproduces byte for byte); `cvd.mjs` scores the inks under
+  colour-vision deficiencies. Concurrent GPU work skews benchmarks.
 
 ## Layout
 
@@ -68,1183 +57,416 @@ index.html               page shell: colophon, scene and figure bar, margin (Fig
 main.js                  Simulation: state, device lifecycle, fixed-timestep loop
 colors.js                freezes the shared tokens (Worldline reads the inks directly)
 i18n/strings.js          UI strings (en, ja); merges strings-reference.js (reference overlay)
-src/config.js            constants, mode enums, Kerr–Newman and Paczyński–Wiita helpers
+src/config.js            constants, mode enums, Kerr–Newman and Paczyński–Wiita helpers, the force-summation rule
 src/physics-settings.js  the toggle and parameter store (sim.settings); applyConfig(), for presets and saves
 src/physics-contract.js  toggle/parameter keys shared by save/load and the GPU slot map
-src/ui.js                colophon, figure bar, the margin's four tabs over the store, the laws' prerequisites, shortcuts, about
-src/controls.js          the margin's controls: choices (words), knobs (numbers you drag), field pads (arrows you drag)
-src/marks.js             the plate's marks as inline SVG: the key's swatches, the ticks' marks, the figures' drawings,
-                         the edge diagrams, body glyphs, sparklines
-src/input.js             spawn, select, delete through GPU hit tests; Alt/Shift-drag orbits the view
-src/spacetime.js         the spacetime view: orbit camera over the 2D camera, Lab/Observer boost
-src/caption.js           the live figure caption under the scene: Fig. N, the figure's live values and knobs (en, ja)
+src/ui.js                colophon, figure bar, the margin's tabs over the store, LAWS (prerequisites), shortcuts, about
+src/controls.js          the margin's controls: choices (words), knobs (numbers you drag), field pads
+src/marks.js             the plate's marks as inline SVG: key swatches, ticks' marks, figure drawings, edge diagrams, glyphs
+src/input.js             spawn, select, delete through GPU hit tests; the hand; the sheet's edge; orbiting the view
+src/spacetime.js         the spacetime view: orbit camera over the 2D camera, Lab/Observer boost, the display transform
+src/caption.js           the live figure caption: Fig. N, the figure's values and knobs (en, ja)
 src/scene-key.js         the key at the stage's bottom right (en, ja)
-src/overlay.js           the 2D canvas above the GPU canvas: the field atlas, spawn-drag line, scale bar,
-                         the spacetime box with its dimension line and presents
+src/overlay.js           the 2D canvas above the GPU canvas: field atlas, spawn line, scale bar, the box and presents
 src/field-atlas.js       the Fields overlay's contours and field lines, from the heatmap readback
-src/presets.js           nine curated figures in five chapters (CHAPTERS, PRESET_ORDER): data, knobs, a
-                         spawn, and an optional observer and tick
-src/prescribed.js        prescribed world lines' curves: evaluation, packing for the GPU
-src/quench.js            the Higgs quench: startQuench(), measureHiggs(), the Measure tab's Quench section
-src/cosmology.js         the scale factor a(t): schedules, the Friedmann closure, horizons
-src/cosmology-panel.js   the Measure tab's expansion readouts and the overlay's horizons
-src/frames.js            the observer the view is drawn for (sim.frames), FrameParams
-src/frame-panel.js       the Figure tab's Observer (choice, parameters, scrubber) and the Measure tab's readouts of it
-src/streak.js            the streak plate: under Seen, the band under the scene of what the observer saw
+src/presets.js           the figures in five chapters (CHAPTERS, PRESET_ORDER): data, knobs, spawn, observer, tick
+src/prescribed.js        prescribed world lines' curves: evaluation, packing for the GPU (the CPU reference)
 src/radar.js             radar time and distance for an observer whose world line is known
-src/lens-panel.js        the Laws tab's Backdrop (distance, the microlensing probe) and the Measure tab's light curve
-src/save-load.js         quick save (localStorage), JSON download/upload
-src/stats-display.js     the Measure tab's ledger (with drift sparklines) and the selected body
-src/phase-plot.js, effective-potential.js, plot-labels.js   the selected body's plots (Measure tab)
+src/frames.js            the observer the view is drawn for (sim.frames), FrameParams
+src/frame-panel.js       the Figure tab's Observer and the Measure tab's readouts of it
+src/streak.js            the streak plate under Seen
+src/quench.js            the Higgs quench and its measurements
+src/cosmology.js         the scale factor a(t): schedules, the Friedmann closure, horizons
+src/cosmology-panel.js   the expansion readouts and the overlay's horizons
+src/lens-panel.js        the Backdrop (distance, the microlensing probe) and its light curve
+src/save-load.js         quick save (localStorage), JSON download/upload, migration from version 1
+src/stats-display.js     the Measure tab's ledger (drift sparklines) and the selected body
+src/phase-plot.js, effective-potential.js, plot-labels.js   the selected body's plots
 src/i18n.js, reference.js, topology.js (minImage), fft.js (Green's function), vec2.js
 src/gpu/gpu-backend.js   GPU runtime: step, events, render, stats, auto-save
 src/gpu/gpu-physics.js   GPUPhysics: buffers, dispatch, readbacks, serialize
 src/gpu/gpu-fields.js    the scalar fields' half of GPUPhysics (installed on its prototype)
-src/gpu/gpu-profiler.js  ?perf: per-pass GPU timestamps and CPU frame timings (sim.perf)
+src/gpu/gpu-profiler.js  ?perf
 src/gpu/gpu-pipelines.js pipelines, fetchShader, SHADER_VERSION
 src/gpu/gpu-buffers.js   allocation and packed struct sizes
-src/gpu/gpu-constants.js generated WGSL constants and toggle bits
+src/gpu/gpu-constants.js generated WGSL constants, toggle bits, STATS_LAYOUT
 src/gpu/gpu-renderer.js  instanced rendering, light/dark pipeline pairs
 src/gpu/pass-graph.js    per-frame dispatch plan
 src/gpu/shaders/         WGSL; shared-*.wgsl are prepended includes, tree-items-*.wgsl the trees' items
-tests/physics-validation.html   analytic oracles against a headless GPUPhysics
-docs/second-pass/tools/  the headless harness (tour.mjs), benchmarks, serve.mjs
+tests/                   physics-validation.html (GPU oracles), gpu.test.mjs (its driver), *.test.mjs (Node)
+docs/                    ROADMAP.md, MODEL.md; second-pass/tools/ (harness, benchmarks, screenshots)
 ```
 
-## How it works
-
-### State and the frame loop
-
-`Simulation` (`main.js`) owns the domain, camera, modes, selection, and the settings
-store `sim.settings` (`physics-settings.js`), which `ui.js` writes and
-`GPUBackend.applySettings()` copies into `GPUPhysics.setToggles()`. View flags (the arrows,
-`grid` for the rulers and key, `comoving`) live in `sim.view`, the Fields overlay's state in
-`sim.heatmap`. World lines are always drawn, from above and tilted, and lensing follows
-Gravity (`sim.lens.on`), so neither is a flag.
-
-Presets and saves reach that state by one path, `applyConfig(sim, { settings, modes,
-speed, view })` (`physics-settings.js`): it writes the store, the modes (by name), the
-speed and the view (`sim.view`, the Fields overlay, the lens, and `depth`, the spacetime
-view's least depth), then calls `sim.syncControls()` (`ui.js`), which has every control
-show the store without firing its handler (the parameter scales are one table,
-`storeScales`, with each control's transform), then `update()`, which applies the laws'
-prerequisites (`LAWS`, in order) and the mode locks to the store, which may turn more off,
-shows the result in every control, and pushes it to the GPU. A preset (`presets.js`) is
-data: the toggles it turns on (every other is off), the parameters it sets (the rest
-default), its knobs, modes, speed, view (what it doesn't turn on is off, except the rulers
-and key) and domain; `presetConfig()` makes its configuration, and `stateConfig()` in
-`save-load.js` a save's. A preset is loaded as a figure (`sim.loadFigure(key)`, `ui.js`),
-which keeps `sim.figure` and the figure's knob values (`sim.knobValues`). Loading first leaves
-any observer for the lab (`sim.observe('lab')`, `ui.js`, which also settles the streak band so
-the domain's camera fits the stage it leaves); then `spawn(sim, run)` places the bodies, and may
-select one as the figure's own (`run.select`; the twin's traveller, the eyes, a Rindler lattice
-body); a preset with an `observe(sim, run)` puts the view in its own observer (`sim.observe(key,
-{ seen })`; `run.view`, and `run.fit`, its camera in that observer's coordinates, which
-`fitCamera()` keeps), and any other opens in the lab, or on a re-run in the visitor's observer
-again; and a preset with a `tick(sim, run)` (the bremsstrahlung beam, the jet's blobs, the
-Rindler figure's re-run) sets `sim.presetTick`, which runs after each stepped frame until
-`reset()` clears it. `run` is that load's own state (its knobs as `run.knobs`), kept as
-`sim.figureRun` for the caption, so nothing outlives the run.
-
-The domain is state, not the window: `sim.domainW`/`domainH` in world units, square
-`DEFAULT_DOMAIN` (64) unless a preset sets `domain: [w, h]` or a save carries one.
-`sim.setDomain()` resizes the GPU domain and calls `fitCamera()`, which fits it to the
-window; resizing the window moves only the camera. Clear restores the default.
-
-`startGPU()` requests the device; without one the page shows the "Worldline needs WebGPU"
-popup and stays empty. `_attachDevice()` builds the `GPUBackend` and registers the
-device-loss handler, which recreates the device and restores the backend's auto-save
-(every 300 stepped frames; fields and bosons are not saved). `_loopBody` adds the capped
-frame time × `speedScale` to `sim.accumulator`, then calls `gpu.step()`, polls the hit
-test, and renders when `_dirty`; the loop stops while the tab is hidden.
-
-The GPU buffers are the only particle state. `sim.addParticle()` converts a spawn
-velocity to proper velocity and writes a slot; selection is a slot index
-(`sim.select(idx)`), and the Measure tab reads the selected body, and the heaviest other
-body as the plots' reference, from the stats readback. A selection whose particle dies
-clears itself; each stats readback carries the selection it was requested for
-(`selectedIdx`), so one still in flight when the selection changes is ignored.
-
-### Units and particle state
-
-- c = G = ħ = 1. `WORLD_SCALE` (16) is pixels per world unit at zoom 1; the camera's
-  zoom is relative to it.
-- Linear and rotational state are proper velocities (`ParticleState.velW`, `angW`);
-  `derived.vel` and `angVel` come from them in `cache-derived.wgsl` and equal them with
-  relativity off. The spawn spin slider is a surface speed.
-- `derived.bodyRSq` = ∛m² is the body radius and the source of moment of inertia,
-  magnetic moment, and angular momentum. In black-hole mode `ParticleAux.radius` and
-  `derived.radiusSq` hold the Kerr–Newman horizon instead.
-- Charges are multiples of `BOSON_CHARGE` (0.1): `addParticle()` rounds, pions and
-  leptons carry 0 or ±`BOSON_CHARGE`, and emission, absorption, decay, Schwinger
-  discharge and extremal shedding move whole quanta.
-- Energy totals include rest mass plus kinetic, spin, potential, field, and radiated
-  terms. The potential and field terms are each force's conserved energy
-  (`compute-stats.wgsl` `statsPE`): T + V alone without Relativity or 1PN, since the
-  magnetic and gravitomagnetic Lorentz forces do no work; with Relativity and Coulomb,
-  Darwin's +(q₁q₂/2r)[v₁·v₂ + (n̂·v₁)(n̂·v₂)] and its field momentum, which
-  Liénard–Wiechert's field reduces to at O(v²); with 1PN, the EIH, Bažański and scalar
-  Breit energies (two-body forms, summed over pairs). Radiated is the boson pools
-  (`boson-ledger.wgsl`: photons, pions and leptons), the radiation bodies have lost but
-  not yet emitted (the `RadiationState` accumulators), and escaped radiation: the pool
-  culls bound memory, so what they remove goes to `GPUPhysics.ledger.escapedE` instead
-  of vanishing. Stats readbacks carry the state version, scale factor and ledger as of
-  their request, so a readback in flight across a reset, spawn or removal can't set the
-  drift baseline.
-
-### Integrator
-
-`GPUPhysics.update()` gets the frame's whole tick count (`n·PHYSICS_DT`) and splits it
-into at most 32 substeps from the previous frame's `maxAccel` readback,
-`dtSafe = √(softening/a_max)` (no cyclotron limit), and submits each substep as its own
-command buffer so that substep's uniforms (`simTime` above all) are the ones its passes
-read. With ε = 8 the accelerations rarely ask for more than one substep (every benchmark
-scenario ran one), so a frame is one command buffer of physics in practice. It steps with
-or without bodies: `_dispatchBodyStep()` (passes 0–14, everything the bodies do up to the
-field step) and the later body passes skip when none is alive, while the fields and bosons
-go on. `_dispatchSubstep()` lists the order in its pass comments: forces, external and
-field forces come before the fused kick–rotate–kick, then spin-orbit and torques,
-radiation, drift, clocks, the 1PN velocity-Verlet correction, the field step,
-collisions, extremal shedding, bosons, the boundary, the prescribed bodies put back on their
-curves (Prescribed bodies, below), and the world lines (a sample whenever
-the world-line clock crosses the next `WORLDLINE_DT` mark, else merge breaks and death
-snapshots only). After the substeps, once per frame: the expansion (below), the pool
-culls, the pools' compaction, pion decay, boson interaction, the pending radiation of bodies that died
-(`flushRetiredRadiation`), dead-slot GC and colors.
-The scheme is the staggered Boris pusher:
-both half-kicks precede the drift, so velocities sit half a kick from positions, and
-spin-orbit kicks change `w` directly rather than through `totalForce`.
-
-GPU times are f32 relative to a rolling epoch on the world-line clock: lab time, or
-conformal time η (dη = dt/a) while the universe expands, kept in f64 as
-`conformalTime`; `gpuTime = conformalTime − timeEpoch`, and `_maybeRebaseEpoch()`
-advances the epoch by `EPOCH_STEP` (256) once GPU time passes `EPOCH_SPAN` (512),
-shifting every stored time back (`worldline-rebase.wgsl`). `SimUniforms.simTime` is that
-clock: only world-line samples, creation times and `ParticleAux.deathTime` hold
-absolute GPU times. Lab time `simTime` stays an f64 in JS.
-
-### Expansion
-
-Expansion requires the torus (decision 3, refined after Codex's review: the toggle
-switches the boundary to loop and the topology to torus): the universe is the periodic
-domain, a slab of comoving thickness `SHEET_THICKNESS` cut from flat 3D FRW. Klein and RP²
-are out because they aren't homogeneous: there the minimum-image pull of a uniform
-background doesn't cancel.
-
-- **The scale factor** (`cosmology.js`, `GPUPhysics.cosmology`): `step(dt)` integrates
-  `da/dt = a·H(a)` by RK4 for the schedule chosen under the toggle: de Sitter, matter,
-  radiation, ΛCDM (Ω_m 0.3), or the Friedmann closure `H² = (8π/3)ρ̄ + H_Λ²`. The slider
-  (logarithmic) is H₀ for the imposed schedules and the vacuum H_Λ for the closure, whose
-  ρ̄ comes from each stats readback (`_absorbLedger`): rest plus kinetic energy of bodies,
-  pions and leptons, photons with pending and escaped radiation, and the fields' slab
-  energy, over `a³·W_c·H_c·ℓ`; between readbacks matter and fields scale as a⁻³ and
-  radiation as a⁻⁴. a stops at `A_MAX` (1000, single precision) with a toast.
-- **Physical coordinates on a growing domain.** `sim.domainW/H` is the comoving domain
-  (state, saved); `GPUPhysics.domainW/H` is a times it (`setComovingDomain`). The forces
-  never see a. `update()` splits the stretch symmetrically (Strang): `expansion.wgsl`
-  scales every position (bodies, retired bodies, photons, pions) by √r about the
-  domain's corner and every peculiar momentum and photon energy by 1/√r before the
-  substeps and again after them, r = a_new/a_old, and the substeps run in a static
-  universe at the midpoint a (`_frameA`, which `scaleA` returns meanwhile). On the torus
-  that is the comoving dynamics, `ẋ = Hx + v`, `ẇ = f − Hw`, which at low speed is
-  `d̈ = (ä/a)d + f`; the mean density's pull cancels over each body's minimum-image
-  cell. `GPUBackend._advance` splits a frame whose H·dt exceeds 0.02. The camera follows the universe (`sim.followExpansion`); the comoving
-  view zooms out with it, and the grid's rulers are comoving.
-- **World lines are comoving and conformal:** samples hold C = x/a on the cover,
-  conformal time and dw/dη = a·(dw/dt − H·w) (the continuous Hubble drag, though the
-  frame applies it at the stretches), and boundary decks are comoving.
-  `retardedState(…, scaleA)` solves the flat cone in (η, C) and returns `rel·a` and
-  `acc/a`, so the flat-space Liénard–Wiechert formula gives E_phys = E_conformal/a²
-  (Maxwell is conformally invariant), with radiation fields dimmed by 1/(1 + z): exact
-  for the trajectory the samples describe, which is interpolated (Hermite positions,
-  linear accelerations) and sees one image of each source.
-  The other laws use the same physical retarded position. Non-lab frames are off once a
-  ≠ 1 (FRW has no global boosts); the spacetime diagram becomes the conformal diagram.
-- **Fields** (below) feel Hubble friction, thin their particle sources by 1/a and count
-  a slab energy of a times the grid's.
-- **The ledger.** `GPUPhysics.ledger.expansionWork` is the energy the expansion took,
-  so `E_total + W` should hold: kinetic and photon redshift summed exactly in
-  `expansion.wgsl` (`cosmoAccum[0]`); the fields' share in `field-ledger.wgsl`, the
-  Hubble friction metered exactly around its own operator (`hubbleFriction`) and the
-  stretch from the state just before it; and in JS the stretched potentials to first
-  order (`stats[26]` = Σ d·∂V/∂d) and the escaped background's redshift (culled photons
-  arrive comoving, a·E, and convert at the a they're read at; culled leptons split into
-  rest mass, which stays matter, and kinetic energy, redshifted as relativistic). The
-  capped universe (a = A_MAX) stops its Hubble friction and drag with its stretch.
-  Momentum drift compares a·P, which expansion conserves on the torus.
-- **Readouts:** the Measure tab's Expansion section (`cosmology-panel.js`): a, H, c/H, the
-  event horizon (finite only with a vacuum term), the Friedmann density, and ln a and H
-  over the run; the overlay rings the selection (or the view's centre) with c/H and the
-  event horizon.
-
-The Boris rotation parameter is `(q/2m)·Bz + 2·Bgz`, scaled by dt/γ, so the stored fields
-act as `F = q v × B + 4m v × Bg`. In the force shaders the displacement r is source −
-observer, so a positive radial coefficient attracts. The fields, in that convention:
-- Moving charge (Biot–Savart, B = q v × R̂/R² with R̂ toward the observer):
-  `Bz = −q (v × r)_z/r³`. Parallel currents attract.
-- Magnetic dipole: `Bz = −μ/r³` in the plane; aligned dipoles side by side repel,
-  `−3μ₁μ₂/r⁴`.
-- Moving mass: `Bgz = +m (v × r)_z/r³`. Parallel mass currents repel, and `4m v × Bg` is
-  exactly EIH's v₁·v₂ sector, which the 1PN pair force leaves out.
-- Spinning mass: `Bgz = +J/(2r³)` in the plane, which slows prograde orbits
-  (Ω_pro = Ω_K − J/r³); the gravitomagnetic dipole force `+3L₁L₂/r⁴` attracts.
-Those signs were reversed until 2026-10-23 (`2187ef4`, `docs/ROADMAP.md` §14); the oracle page pins
-each. 1PN forces are velocity-dependent and break Newton's third law, hence the
-velocity-Verlet correction.
-
-### Forces and toggles
-
-Fourteen toggles (`TOGGLE_KEYS`): the Laws and World tabs' ticks, Mechanics (relativity and
-1PN) and the Universe (expansion). Their prerequisites are `LAWS` in `ui.js`, applied in
-order by `update()`, which then adds the mode locks (black holes force merge collisions,
-expansion the torus) and lensing following Gravity. Less obvious couplings: Boson interaction acts through Gravity or Coulomb and builds its own boson
-tree, so it needs nothing else; signal delay runs whenever Relativity is on, and with it charges interact through their
-Liénard–Wiechert fields; field gravity follows Gravity; kugelblitz runs under Boson
-interaction with Gravity. The 1PN pair forces (`shared-1pn.wgsl`, shared by the force
-pass and the velocity-Verlet recompute): EIH with Gravitomagnetic (not Gravity),
-Bažański's mixed static term with Gravitomagnetic and Coulomb, scalar Breit with Yukawa.
-There is no Darwin term: Liénard–Wiechert carries EM to all orders in v.
-
-**Force summation is automatic**, not a toggle (`config.js` "Force summation",
-`GPUPhysics._chooseForceSum()`, once per `update()` and on `setToggles()`). The bodies' forces
-are summed pairwise below `TREE_ON` (1536) bodies and by the Barnes–Hut tree walk above, which
-stays until the count falls under `TREE_OFF` (1152). The opening angle θ ramps log-linearly
-with the count from `THETA_MIN` (0.1) at `TREE_ON` to `THETA_MAX` (0.5) at `TREE_FULL` (4096,
-the body cap). On an open domain (M5 Max, GPU timestamps on the force pass) the walk at
-θ = 0.1 costs what the pairwise loop does at about 1500 bodies, and at the cap the walk at 0.5
-takes 0.18 ms against the loop's 0.76; its rms force error against the pairwise sum is 0.01%
-at the switch and 0.7% at the cap (`docs/second-pass/bh-notes.md` has the table). θ rides
-`SimUniforms.bhTheta` into the force walk, 1PN's recompute, and the photon and pion lensing
-and absorption walks, and `HeatmapUniforms.theta` into the heatmap's; the boson tree's own
-walks have no pairwise alternative and keep 0.5 (`BOSON_THETA_SQ`). On a periodic domain the
-walk has to open every node that reaches past half a domain: it gains at most a third over the
-pairwise loop up to the cap, and on a uniform torus of about 4000 bodies it sometimes takes
-5–6 ms against 0.75 (cause not found; a longer ring and a shorter list don't change it), so the tree is chosen there only
-past `TREE_ON_PERIODIC` (8192): pairwise, within today's cap. With Relativity every force runs
-pairwise from the world lines whatever the count (a node's aggregate has no world line);
-lensing, absorption and the heatmap (off a periodic domain) still follow the count.
-`gpu.physics.forceSum = { byCount, tree, theta }` is the readout (`byCount`: the rule's pick;
-`tree`: the force pass and 1PN's recompute walk the tree, `byCount` without Relativity;
-`theta`: the opening angle in use), and `treeOverride` (`'pairwise'`, `'tree'`, `null`) and
-`thetaOverride` pin it for oracles and benchmarks.
-
-The walk (`forces-tree.wgsl`) is a group walk: 32 bodies consecutive in the tree's Morton order walk
-it once against their bounding box into a list in workgroup memory, which eight threads a
-body then sum a tile at a time. The nodes waiting to be judged sit in a ring: each round
-judges a batch from the front, breadth first, sized so its children fit above a reserve, and
-at the reserve one node a round from the back, a depth-first descent the reserve always
-holds, so no tree overflows it; the list and the ring fill by prefix sums, so the sums are
-the same every run.
-A far node's tidal torque squares its total coupling where pairwise sums the squares: a
-far-field approximation of Barnes–Hut's, large only where softening flattens the distances. A node is taken whole when its size is under θ times
-its distance from the box, and on a periodic domain only when its cell and the box lie
-within half a domain of each other, so every body sees all of it in one image (without that
-rule the torus error against pairwise was 31%). Collisions and hit tests use the tree
-either way (it is built every substep), and boson absorption and the heatmap follow the rule. Periodic modes put
-ghost copies in the tree for seam collisions and photon absorption, but ghosts weigh nothing
-in the aggregates (`tree-items-bodies.wgsl`), because every walk takes minimum-image
-displacements and a weighted ghost would count its pair twice. So a ghost needs to reach only
-as far as a contact: each substep `ghost-gen.wgsl` first reduces the largest body radius
-(`maxRadius`, the horizon in black-hole mode, into the `radiusMax` buffer and, by an
-in-encoder copy, `SimUniforms.radiusMax`), then ghosts each body within its radius + that
-largest radius + `GHOST_SLOP` (2) of an edge, about 140 ghosts for 500 bodies. The host
-learns a substep's ghost count only a frame later, so it copies as many ghost slots as the
-bodies could fill (`_ghostSlots()`: eight a body, its edges and corners, up to the buffer)
-and `trimGhosts` clears the slots past the substep's own count;
-`cacheDerived` runs first, so the reduced radius is this substep's. Collision detection and
-absorption prune by each tree node's largest radius (node word 19) instead: a collision pair
-is written by its smaller body (the lower slot of two alike), which looks only under nodes
-whose largest radius reaches its own, so a small body deep inside a large horizon is found
-and a grown body's own walk stays short. The tree is from before the substep's drift, so the
-collision search reaches c·dt further and tests the bodies where they are. The largest radius widens the hit test, which
-ignores ghosts. The fields don't modulate the pair laws: the Higgs-modulated Yukawa range, the
-axion's scaling of the EM pair laws and the Peccei–Quinn Yukawa factor were removed until they
-have an action (`docs/MODEL.md` §2, bug 2; a pass-order fault had kept them out of the forces
-since 2026-03-14 while the stats booked them).
-
-Signal delay finds each source's retarded state, `retardedState()` in
-`shared-worldline.wgsl`: the image nearest the observer now fixes which copy of the world
-line it sees; a gallop from a hint brackets the past light cone among the samples plus the
-source's current state, and Newton's method finds it on the cubic Hermite segment. The pair
-force keeps each pair's bracket as the next call's hint (`wlHints`, source-major, capacity²),
-seeded for a new pair from its distance over the line's sample spacing: in a crowded scene
-the paths curve too much over a light-crossing time for any guess from now to match it, and
-a full bisection cost about half again as much at 4000 bodies. The
-result carries position, velocity, acceleration, angw, mass and charge at the retarded
-time. Charges act through their Liénard–Wiechert fields, E = q[(n̂ − β)(1 − β²)/(κ³R²) +
-n̂ × ((n̂ − β) × β̇)/(κ³R)] and B = n̂ × E, both scaled by σ³ with σ = R/√(R² + ε²) so that
-a charge at rest gives the softened Coulomb field, and κ floored at `LW_KAPPA_MIN`
-(1/κ³ ≤ 100). Gravity (Paczyński–Wiita included), Yukawa and the two dipole forces are their
-static forms at the retarded position times the toy aberration factor (1 − n̂·v)⁻³; the
-moving-mass and spin Bg, frame drag, tidal torque, the spin–orbit gradients and 1PN take the
-retarded state without it. The heatmap's electric potential is q/(κR). Removed
-particles keep sourcing forces until the light from their world line's end has passed:
-retired slots keep their death snapshot. A source's past before its first sample is
-extrapolated as uniform motion back to its creation time and is invalid before it, so a
-body spawned by hand sources nothing until its light arrives; preset and loaded bodies are
-created at `−∞` and act at once.
-
-### Proper time, the spoke, and world lines
-
-- **Clocks** (`clocks.wgsl`, after the drift; one `vec4` per slot in `buffers.clocks`:
-  τ, ring phase, θ, lapse). τ advances by `dτ = dt·√max(0, 1 + 2Φ_N − v²)`, with Φ_N
-  summed over particles with the force softening (`BH_SOFTENING` in black-hole mode;
-  never Paczyński–Wiita, which vanishes at 4M). Field gravity Φ_F is not in the lapse.
-  With Relativity off the lapse is 1.
-- **Spoke angle θ** is the in-plane transported axis, `θ = θ_FW + ω₀τ`; it never
-  touches `angW`. It advances by `ω·dτ` (ω the rest-frame rate, or Ω_H in black-hole
-  mode) plus three precessions in lab time: Thomas, `(γ²/(γ+1))·(a × v)` from the
-  non-gravitational acceleration only (`totalForce` minus the gravity, gravitomagnetic
-  dipole, 1PN and external-gravity parts, plus the Boris magnetic Lorentz force);
-  geodetic, `−(3/2)·(g × v)` with g the Newtonian field; and Lense–Thirring,
-  `Σ −J_j/r³`, with Gravitomagnetic on. Klein and RP² crossings mirror θ
-  (`boundary.wgsl`).
-- **The glyph** (`particle.wgsl`): a body is its ink mixed into the ground (52% ground in
-  light, 38% in dark) inside a 1.25 px outline of the ink, the ink by the sign of its charge
-  (`update-colors.wgsl`: sienna positive, prussian negative, graphite neutral, beyond half a
-  `BOSON_CHARGE`). Bodies at least 5 px in radius carry their sign as a + or −; a neutral body's
-  spoke runs from the centre, a charged one's (and a hole's) is a rim tick from 0.6R, and
-  marks take the ink mixed 45% toward the text. Antimatter is hollow (the ground inside the
-  outline). A black hole is a void, the text ink in light and near-black (`COLOR_VOID_DARK`)
-  with a faint edge in dark; `ring-render.wgsl` dashes its equatorial ergosphere at
-  M + √(M² − Q²), skipped within 1.5 px of the horizon, and rings the selection in the accent
-  4.5 px out. Every body is drawn at least 2 px in radius.
-- **The clock** (`particle.wgsl`): every body's outline is its clock face. On bodies at least
-  5 px in radius a band 3 px in from the rim, in the marks' ink (0.6 of it on a hole),
-  sweeps clockwise from the top once per `CLOCK_PERIOD` (16) of proper time, from the
-  clock's phase (`clocks.y`, τ mod 16). Each point reads the body's own time there,
-  `phase − γvΔ∥`, as the spoke does, so a moving clock's face is skewed by the
-  simultaneity that bends its spoke. The Measure tab shows the selected body's τ and dτ/dt.
-  (Until 2026-10-26 the clocks were a separate ring overlay behind a K switch.)
-- **The spoke** (`particle.wgsl`): each body is its rest-frame disk pushed through the
-  Lorentz map of its centre's velocity. The vertex shader contracts the quad by 1/γ
-  along v; the fragment shader maps each lab offset to its rest-frame offset
-  `Δ + (γ − 1)(Δ·n̂)n̂` and draws the spoke at `θ + ω·(−γvΔ∥)`, the angle it held at
-  that point's rest-frame time, so a spinning, moving spoke bends by `2·v·v_rim` across
-  the diameter. The spoke is drawn only on bodies at least 4 px in radius.
-- **World lines** (`worldline.wgsl` writes, `shared-worldline.wgsl` reads): a ring of
-  `WORLDLINE_LEN` (1024) samples per slot (a substep longer than `WORLDLINE_DT` records one,
-  so at the default speed they are about 0.27 apart), one every `WORLDLINE_DT` (1/8) of the
-  world-line clock (lab time, or conformal time under expansion: positions are then
-  comoving, see Expansion), always recorded. A sample is 12 floats, `t, x, y, wx, wy, ax, ay, τ, θ, angw, m, q`
-  (`WL_STRIDE`), with a = dw/dt including the Boris magnetic and gravitomagnetic
-  rotation. Samples live on the covering plane: each slot's deck maps its wrapped
-  position to `C = A·x + b` (A a diagonal of ±1), and `boundary.wgsl` updates the deck
-  at every loop crossing so C never jumps; velocities, accelerations, θ and angw are
-  mirrored with it. Meta (`WL_META_STRIDE` = 8): `writeIdx, count, creationTime,
-  generation, deck flips, bx, by, _pad`; the generation counts the slot's occupants
-  (`_slotGeneration`). `addParticle()` writes a birth sample and an identity deck; a
-  removal writes a death snapshot with the death mass (`FLAG_DEATH_HIST`); a merge sets
-  `FLAG_WL_BREAK` on the kept slot, and the next substep records the old body
-  extrapolated to now and the merged body at the same time, so no segment smooths the
-  jump. The epoch rebase also maps each line by its inverse deck, back to the identity.
-- **Continuity.** An inelastic merge keeps the heavier parent's slot, so its τ and θ
-  carry on.
-
-### Prescribed bodies
-
-A prescribed body's world line is given, not computed (roadmap §6.2): it sources every law like
-any body, responds to nothing, and the agent that drives it pays. The curves (`src/prescribed.js`,
-evaluated again in `shared-prescribed.wgsl`, which must agree with it) are uniform motion, the
-hyperbola (constant proper acceleration, the whole hyperbola about its corner), the circle, the
-linear oscillation (its proper time an elliptic integral, by Gauss–Legendre panels), and the
-shuttle (out at v and back, turning at proper acceleration α, forever: the twin's traveller). A
-curve is a plain object with `t0` on the world-line clock and `tau0`, its proper time then.
-
-- **The pass** (`prescribed.wgsl`, one workgroup over `buffers.prescribedList`, at most
-  `PRESCRIBED_CAP` (256)): after everything else in a substep that moves a body and before the
-  world lines record it, each prescribed body is put back on its curve at the substep's end:
-  position (through its deck, so on a torus the curve lives on the covering plane), proper
-  velocity, `totalForce` = the curve's m·dw/dt (which `worldline.wgsl` records as the sample's
-  acceleration, without Boris's rotation or the Hubble drag, so the Liénard–Wiechert field is the
-  field of the motion drawn), and its clock: the curve's proper time, exact and flat
-  (`clocks.wgsl` skips these bodies), with the spoke turning and precessing by Thomas's term of the
-  curve's whole acceleration.
-- **What it ignores** (`FLAG_PRESCRIBED`): it doesn't radiate away energy (Larmor, Hawking, pion
-  emission, Schwinger), absorb bosons, shed charge, collide, merge or get captured; bodies pass
-  through it. Its mass follows the Higgs like any body's. Walls and the despawn edge act as for any
-  body; on a torus the boundary moves its deck.
-- **The agent's books.** What a substep did to the body (every force, an external field) the pass
-  undoes, so the agent adds the curve's four-momentum minus the state the substep left, summed
-  into `buffers.agentAccum` and read and cleared with the stats (words 104–106) into
-  `ledger.agentE`, `agentPx`, `agentPy`, and its angular momentum about the origin, `agentL`. Over a
-  run that is W = Δ(γm) − ∫F_other·v dt. The Measure tab shows it as the work by prescribed motion,
-  and the drifts subtract it; once an agent has acted the angular momentum drift compares L about
-  the origin (L about the centre of mass plus R × P) less `agentL`, re-baselined then.
-- **Its past and future.** `addPrescribed(curve, opts)` (`GPUPhysics`, `Simulation`) starts the
-  body where its curve is now. A figure's prescribed bodies are born at −∞ and get their curve's
-  past written into the ring, a sample every `WORLDLINE_DT` (`_writePast`), so they act at once
-  with the field of their whole recorded motion; one added later is born now, or at a `bornAt`
-  in the past with its past from then (the jet's blobs already on their way). Its future is
-  known, and the spacetime view draws it (below). Saves keep the curve with t0 relative to the
-  save's time; the epoch rebase rewrites every curve's GPU t0.
-- **The hand** (roadmap §6.7): a prescribed line written live. `GPUPhysics.grip(idx, x, y)`
-  writes a record of kind `held` (no curve: the pointer's lab position and a pursuit state that
-  `prescribed.wgsl` integrates), `moveGrip` the pointer, `releaseGrip` a mode the next substep
-  acts on. Taking hold starts from the body's own state and sets `FLAG_PRESCRIBED` on the GPU,
-  letting go clears it there, so the host never writes a body's flags. The body pursues the
-  pointer in simulation time: the velocity it would like, (target − x)/3 capped at 0.75c, under
-  the speed where `LW_KAPPA_MIN` starts to suppress the forward field (about 0.78c), and an
-  acceleration toward it over 1.5, capped at 0.6, so its path is smooth and its samples timelike.
-  Its future isn't known and isn't drawn; saves keep it as a free body. Shaken with the Fields
-  overlay on Electric, the field lines kink in bands that run outward at c.
-- **Contract** (roadmap §6.1): flat and open first. A prescribed past isn't written in an
-  expanding universe, where a curve would be read in comoving coordinates and conformal time.
-
-### The spacetime view
-
-The canvas tilts from the plane into the world lines it shows (`spacetime.js`,
-`spacetime-render.wgsl`). An orbit camera sits over the 2D camera: elevation `el` (π/2 is
-straight down the time axis, the plane view) and azimuth `az`. A point (x, y) on the present
-plane at time h before it projects with time and space at one scale, so light keeps to 45°,
-and the plane view is the same projection seen from above, so the two never disagree.
-`SpacetimeView.writeMatrices()` gives the renderer a view matrix taking (x, y, h) to clip
-space (depth always 0) and the plane's inverse, so every existing pass draws on the tilted
-plane unchanged; `wrapCamera()` routes the 2D camera's screen mapping (picking, spawning,
-panning, zoom about the cursor) through the tilt. Alt- or Shift-drag orbits; W, or the Plane
-and Spacetime buttons, ease between the two (`EL_SPACETIME` ≈ 30°).
-
-- **Depth.** The time shown below the plane is `DEPTH_FRACTION` (1.2) of the visible plane's
-  height, or a preset's `minDepth` if that is more (the twin asks for the whole reach, so
-  its round trip, about 89 at 0.8c and 126 at the knob's least 0.55c, shows whole), capped by the
-  world lines' reach (127); the fit `k` shrinks the scene so the plane, its past and any known
-  future share the screen.
-- **World lines** (`vs_line`): the history ring's samples (in the lab's coordinates only the
-  newest depth / `WORLDLINE_DT`, `SpacetimeParams.lineWindow`, since older ones have faded
-  out), mapped from the cover through the slot's deck and on a periodic domain to the image
-  nearest the body (or the observer). The fragment draws a hairline and a bead every
-  `beadStep` of the body's proper time (a power of 2 near depth/14), fading beads closer than
-  ~8 px. Opacity falls with age; the selected body is the accent.
-- **Decimation.** On screen most samples are a fraction of a pixel apart, so three compute
-  passes before the scene's render pass (`lineKeep`, `lineScan`, `lineWrite`, recorded by
-  `GPURenderer._encodeSpacetime`) keep only the points the drawing needs. `lineKeep` (32
-  threads a slot, each deciding 32 points in order) drops the segments that are breaks,
-  transparent at both ends or off screen, and stretches a chord from each kept point until
-  it would miss a skipped sample by 0.03 device px, its opacity by 0.01, or near a bead its
-  proper time or bead scale, or the point's state changes; where the old 4 px ribbon folds
-  (`skewed()`: cusps, kinks, a direction taken across a seam or merge) it keeps every sample.
-  `lineScan` lays the slots' lists end to end in slot order (blending makes draw order pixel
-  order, so no atomic-append order), and `lineWrite` writes each kept point's vertex as the
-  undecimated strip had it there. `vs_line` draws one strip over every list, 4 vertices a
-  point, a run's end bridged by degenerate vertices; each point's ribbon is as wide as what
-  its fragments can colour (the hairline's 1.75 px, a bead's 3 px near one, 4 px where
-  folded). The lists are sized for the world-line store (every point of every slot kept, and
-  64 events a slot) and rebuilt with it (`GPURenderer.rebindWorldLines`). Every `shots.mjs`
-  frame, and the boosted ones, match the undecimated strips within 8/255 (largest step 7).
-- **Trails** are the same world lines seen from above, always drawn: `vs_line` draws in the
-  plane view too (`SpacetimeParams.trails`, always 1; the flat camera zeroes the matrix's h
-  column so the past doesn't clip). There is no separate trail pass or buffer, and a frame
-  that is not a boost (co-rotating, free fall) keeps the plane without them.
-- **The selected body's past light cone** (`vs_cone`): four lab-time rings reaching
-  `CONE_REACH` (0.3) of the depth, boosted like everything else, with its two generators where
-  the projection's null directions graze it (`towardCamera()`) and the back of each ring
-  dashed (`fs_cone`). **Bosons** (`vs_boson`): photons on 45° lines back to their emission,
-  pions and leptons on timelike lines beaded by their own clocks.
-- **Events** (`vs_event`, `fs_event`, tilted): open circles, the ground inside a hairline, where
-  a world line begins during the run, ends, merges, or takes a kick (a jump in proper
-  velocity above `KICK_DW` (0.15) between samples, at its local maximum). `lineKeep` scans
-  every sample in the window for them each frame and `lineWrite` lists them (up to 64 a slot
-  of the store on average) for one instanced draw; 3.0's event log (`docs/ROADMAP.md` §7.1)
-  would draw logged events instead.
-- **The known future** (`vs_future`, `fs_future`): a prescribed body's curve above the present,
-  `FUTURE_FRACTION` (0.25) of the depth, each of `FUTURE_SEGS` segments its own quad (one that
-  jumps a seam isn't drawn), dashed in proper time (four dashes to a bead, solid where they would
-  fall under 6 px), its beads hollow, fading as it rises; seen from above, the path ahead. Free
-  bodies' futures stay blank. `SpacetimeView.future()` makes room for it in the fit while a
-  prescribed body exists.
-- **Ticks' light** (`vs_tickRing`, `vs_tickRay`, `vs_tickMark`; roadmap §6.4): the selected
-  body's beads are its clock's ticks, and the newest `TICKS` (32) within the depth send light.
-  Where each tick's future cone crosses the present (the lab's, or the observer's once its
-  coordinates show) is an accent ring growing at c, fading out as it crosses the domain; tilted,
-  with at most `TICK_RECEIVERS` (24) bodies, the null ray from the tick to where its light meets
-  each other world line (bisected on h = (t − t_k) − |x − x_k|, which rises along a timelike line),
-  and a mark there. A prescribed receiver's reception still to come is found on its curve, above
-  the present. On the twin the receptions read the k-calculus: kT apart going out, T/k coming back.
-  The light interacts with nothing; it is the tick seen.
-- **Simultaneity at the ticks** (`simulTrace`, `vs_simul`; roadmap §6.4): beside each tick's light,
-  its two nows on every other world line, under the same conditions on an open domain: the rest
-  frame's plane t − t_k = u_k·(x − x_k), a straight dashed chord, and radar time's surface, a solid
-  trace. The rays and the rest-frame plane share one search on the receiver's line (`crossingOf`,
-  a `Probe` rising along any timelike line, its known future included); the radar event is where
-  the selected body's radar time `radarTime()` (by bisection on its curve when prescribed, else on
-  its samples, so a free body's radar events appear once their light has come back) reaches τ_k,
-  and the trace's points stand over the straight path between them, each bisected in t between
-  the tick's two light cones. `simulTrace`, a compute pass of a workgroup per tick and receiver,
-  solves them into `simul` (`SIM_PTS` (17) points and the rest frame's event) before the scene's
-  render pass, about 0.12 ms at 24 bodies. For a uniformly moving body they coincide; on the twin
-  the rest frame's sweep across home's line at the turn while radar's carry home's time on at
-  between 1/k and k.
-- **The sheet of the present.** In the lab's coordinates, world lines and light that pass
-  under the tilted plane's fill are drawn at `SEEN` (0.45) (`underSheet()`).
-- **The plane and box.** `grid-render.wgsl` keeps the rulers to the domain and gives it a faint
-  fill when tilted (`GridParams.tilt`); a periodic domain's seams give way to the box. The
-  overlay draws the box's corner world lines, its floor at the depth, a time axis at the
-  corner nearest the left edge, and a dimension line along the present's front edge away
-  from it. On a torus with an observer the box (and the sheet, `GridParams.boxX/boxY`) is the
-  domain's translate around the observer (`renderOpts.boxOrigin`), since any translate of
-  the domain is the domain.
-
-**Lab and observer coordinates.** The figure bar's boost scale sets the moving observer's
-velocity along x (`frames.rapidity`, `direction` 0 or π; the Figure tab's speed and
-direction are the same setting). Every event is drawn through a boost at rapidity ψ = s·atanh|u| about an anchor A
-on the observer's present: s = 0 is the lab's coordinates, s = 1 the observer's, and
-`toCoords()` eases between them. The display transform is `SpacetimeView.display()` in JS and
-`disp()` in the shader:
-
-    Δ = (x − x_A, t − t_A),  x′∥ = cosh ψ·Δ∥ − sinh ψ·Δt,  t′ = cosh ψ·Δt − sinh ψ·Δ∥
-    shown at offset + Δ⊥ + x′∥ n̂,  h = t′ − (1 − s)·lag
-
-with `offset` = (1 − s)·x_A + s·a_now, so s = 0 is the identity and at s = 1 the observer sits at
-the camera's centre. In the lab the observer is the inertial one moving at u through the
-camera's centre now, with frameAnchor's lag (the visible slice in the computed past); at
-s = 1 `stepCoords()` hands over to the boost frame, whose observer is that same world line,
-so its picture continues without a jump, and the shader then reads the anchor from the
-slicer's `FrameState` buffer. While the lab boosts (0 < s < 1) the bodies and their overlays
-are hidden and `vs_pierce` draws each body where its world line crosses the observer's
-present (found by bisection: g = (t − t_A) − u·(x − x_A) rises along a timelike line); in lab
-coordinates with a boost set, the same points show as rings on the tilted present. World-line
-segments beyond the observer's present are faint. The overlay outlines the presents that
-aren't the flat plane on top: the observer's (lab coordinates) and the lab's (observer's).
-Co-rotating and free-fall frames are not boosts and keep the plane. A boost leans the scene
-by tanh ψ of the depth along u, so `SpacetimeView.frame()` refits: it shifts the centre half
-the lean and fits the width with it, so the sheared scene stays in frame.
-
-**The opening.** `Simulation._openScene()` loads the cyclotron preset quietly and, 2.6 s later,
-tilts into spacetime once unless the visitor has acted. Under reduced motion it runs 240
-frames up front, pauses and opens tilted.
-
-### Frames
-
-`sim.frames` (`frames.js`) names the observer the view is drawn for: the lab (the
-simulation's own frame), zero momentum, the selected particle, a boost (rapidity and
-direction), co-rotation at a rate Ω about the point the camera was on, or free fall (the
-selected particle's frame kept Galilean, so uniform gravity vanishes and tides remain; the
-slicer runs it as the particle frame with `lorentz` off), or accelerated (below). Frames are a
-view: spawning, selection, deletion and hover act in the lab, and `input.js` ignores the
-canvas while a frame is active. The Figure tab's Observer chooses one, as words
-(`frame-panel.js`; the red body and falling need a selection, and none but the lab is
-offered in an expanding universe), and the figure bar's lab · observer switches between
-the lab and it (`sim.observerKind`): a moving observer is eased into through the boost
-(`spacetime.toCoords`), any other is set directly; its third word, seen, is Seen (below). Its
-readouts are on the Measure tab.
-
-- **The accelerated observer** (`FRAME_ACCEL`, slicer kind 6, roadmap §6.6): constant proper
-  acceleration α (the Figure tab's scale, 0.005–0.1) along the Figure tab's direction, at rest at
-  the camera's centre when chosen, so its world line is the hyperbola about a corner 1/α behind it.
-  `frameAnchor` takes its velocity at t_A on the hyperbola, so every slice passes the corner, and
-  settles the lag on the hyperbola by bisection (the velocity now would overshoot it).
-  `FrameState.omega` carries α and `phi` the direction. Tilted, `vs_horizon` hatches the two null
-  planes through the corner, (x − c)·n̂ = ±(t − t_c), and draws the corner line, which lies on every
-  one of its slices; from above it draws the corner line alone, where the horizon stands. Every lab-static body eventually crosses its future horizon, so the scene
-  leaves it within a few 1/α; choosing it again starts it at rest. On its slices a body fades with
-  the frame's lapse αξ there (ξ its Rindler distance from the corner, written into `viewClocks.w`,
-  which `particle.wgsl` reads in a frame's view): toward the horizon, where its clock freezes, and
-  faint beyond both horizons, behind the corner. Tilted, what lies past the future horizon is ahead
-  of every slice, so it is already faint. Seen and the streak plate follow it along the hyperbola.
-- **Radar** (`src/radar.js`, roadmap §6.4): the Measure tab's "red body by radar" gives the selected
-  body's radar time (τ₁ + τ₂)/2 and distance (τ₂ − τ₁)/2 for the observer, at the event the scene
-  snapshot read it at (`sim.scene.t`): τ₁ when the observer's light leaves to reach it, τ₂ when its
-  light comes back, both by bisection on the observer's world line. Radar needs the observer's
-  future, so only observers whose world line is known have it: the lab's eye at the camera's centre,
-  the moving and accelerated observers, a prescribed red body. Past the accelerated observer's
-  future horizon the readout says so. For an inertial observer it is its Lorentz coordinates.
-
-- **Slicing** (`frame-slice.wgsl`, from `GPUBackend.render()` each rendered frame).
-  `frameAnchor` (one thread) finds the observer's lab velocity u and its anchor event
-  (t_A, X_A) and writes `FrameState`; `sliceWorldLines` (one thread per slot and image)
-  finds where each world line crosses the observer's now, `t − u·x = t_A − u·X_A` with
-  Relativity on and `t = t_A` with it off or in co-rotation, and writes the view buffers
-  (`viewState`, `viewAux`, `viewDerived`, `viewClocks`) that the body, clock and ring
-  pipelines draw in place of the live ones. On the slice a lab offset Δ maps to
-  `x′∥ = Δ∥/γ` with velocities by relativistic addition; τ and θ come from the world line at
-  the crossing.
-- **The lagged view.** t_A = now − lag with `lag = |u|γ·max(x′·û)` over the visible
-  rectangle plus the scrubber's look-back, capped at the ring's reach (127), so everything
-  drawn has already been computed. The HUD names the lag (`lab − 23`) and says when part
-  of the slice falls outside the recorded history, where `wlOnSlice` extrapolates at
-  constant velocity.
-- **Images.** Each world line is mapped from its covering plane through the image nearest
-  the frame's reference point (the anchor's wrapped position now). On a torus every body
-  is drawn as its 3×3 nearest images (`frames.images`), `γL` apart along u with clocks
-  `γvL` apart, because the torus identification holds at equal lab time; Klein and RP²
-  draw the primary image only. Instances are `alive × images`, and `particle.wgsl` reads
-  each body's colour at `instance / images`.
-- **Bosons** (`boson-render.wgsl`) are drawn where their straight paths cross the slice,
-  no earlier than their emission; photons take the Doppler factor `γ(1 − u·v̂)` in hue.
-- **Seen** (`frames.seen`, the figure bar's third word, roadmap §6.3): what the observer sees
-  instead of what it measures. The slicer cuts every world line by the observer's past light cone
-  at its anchor (`wlOnCone` in `frame-slice.wgsl`, on the shared reader's primitives, beside
-  `wlOnSlice`), which is all computed past, so there is no lag; the event a body is seen at,
-  boosted into the observer's coordinates (x′∥ = γ(Δ∥ − uΔt), which on a plane slice is Δ∥/γ), lies
-  in its aberrated direction at the distance its light travelled, so each body sits back on its
-  trail where its light left. Before a source's oldest sample its history is unavailable and it
-  isn't drawn (a body spawned now appears once its light arrives); sight doesn't extrapolate.
-  Lorentz observers only: from rotating or falling, Seen takes the boost or the red body. A boost
-  observer may be at rest: an eye at the camera's centre. Tilted, the observer's past cone is
-  drawn (to half the domain's diagonal, in the ink unless the observer is the red body), each
-  world line's pierce of it ringed (`conePierceOf`), and the light in flight from each pierce to
-  the observer (`vs_seenRay`).
-- **Extended bodies under Seen** (`particle.wgsl`, roadmap §6.9): each point of a body is drawn
-  at its own retarded time. The observer sits at the view's origin receiving now, so the drawing's
-  point X is seen as it was |X| ago, and with the body moving uniformly at v over that while, it is
-  the body's lab offset X − X_c − v·Δt (Δt = |X_c| − |X|) from the centre the slicer found,
-  at rest-frame time γ(Δt − v·(X − X_c)) from it: the outline, spoke and clock face follow. A body
-  approaching head-on is stretched by √((1 + v)/(1 − v)) along the line of sight, one receding
-  squeezed by its inverse, one crossing turned, and a spinning one's spoke curls by the light's
-  delay across it. The quad is the box around where 16 rim points are seen (`seenAt()`, the cone's
-  quadratic), and the selection ring takes the same map (`ring-render.wgsl`). The camera uniforms'
-  former spare word is `seen`.
-- **The streak plate** (`src/streak.js`, `streakRows` in `frame-slice.wgsl`, roadmap §6.5): under
-  Seen, a band under the scene. Row k is the reception event k·dTau of the observer's proper time
-  back (128 rows over the spacetime view's depth, now at the top); for each of the first
-  `STREAK_SOURCES` (128) slots, the direction it was seen in at that event, in the observer's rest
-  frame against the plate's reference direction (the Figure tab's direction, at the centre), and
-  the Doppler factor D = γ_o(1 − n̂·u_o)/γ_s(1 − n̂·v_s). The GPU computes the rows every sixth
-  render and they are read back and drawn with Canvas 2D: each source a track in its ink (the
-  selection's in the accent), its width reading D⁴ (bolometric intensity), solid while approaching
-  (D ≥ 1) and dashed while receding. A track ends where the source's or the observer's history
-  runs out. Real light, the quanta that reach the observer, waits for 3.0's event log: for a body
-  observer an arrival is an absorption (`EV_ABSORB`), and a point eye catches none.
-- **What frames skip:** force and velocity arrows, torque arcs, the heatmap and the field
-  overlays stay lab-only and are hidden in a frame; a frame that is not a boost draws no
-  world lines.
-- **The camera** in a frame is in observer coordinates with the observer at the origin;
-  leaving the lab saves the lab camera and returning restores it. Resizing keeps the
-  observer centred, and `fitCamera()` centres it (in a figure's own observer, on the figure's
-  own view, `run.fit`).
-- **The scrubber** (Look back) adds lag while paused, so a paused run can be re-sliced
-  further into its past.
-- **The spacetime view** replaced the old Frame tab's side diagram: the canvas itself
-  tilts (above). `readSlotsSnapshot` and `readWorldLines` remain for the tests.
-- **Shortcuts:** B cycles observers (skipping those that follow a body without a
-  selection), L returns to the lab, G toggles the rulers and key, W tilts between plane and
-  spacetime, O switches between the lab's and the observer's coordinates.
-
-### Lensing
-
-With Gravity on, the rulers are a backdrop seen through the bodies as a thin lens, viewed
-along z, in the lab frame only: `update()` in `ui.js` sets `sim.lens.on` with Gravity, and
-the Laws tab's Backdrop (`lens-panel.js`) sets the distance and places the probe. The pass
-runs only while there is something to bend (`GPUBackend.render`: the rulers shown, a star
-placed, or black holes, whose capture disks it draws); it adds about 0.25 ms to a render of
-500 or 4000 gravitating bodies, timed back to back.
-
-- **The map** (`lens-deflection.wgsl`, `GPUPhysics.dispatchLens`, from
-  `GPUBackend.render()` each rendered frame): a sum for each cell of a `LENS_RES`² (512)
-  grid over the view, 10% oversized, writes α(x) = Σ 4M𝒟(x − xᵢ)/(|x − xᵢ|² + 10⁻⁴·4M𝒟)
-  in physical lens-plane coordinates, the gradient of the 2D log potential, with
-  𝒟 = D_L·D_LS/D_S on a log slider (R_E = √(4M𝒟); the core shifts the ring by 5·10⁻⁵ R_E).
-  On a periodic domain each lens sits at its image nearest the view's centre, for the map
-  and the probe alike (a per-pixel minimum image would tear the backdrop at the seam,
-  since α falls only as 1/x); one image per lens is a finite-patch approximation. Black
-  holes flag an imposed 3√3·M disk, the Schwarzschild capture impact parameter (no spin
-  or charge), since the weak thin lens has no shadow. The lens is instantaneous: no
-  moving-lens corrections, time delays or strong-field images, and lab frame only.
-- **The pass** (one compute pass, three or four dispatches). `lensCompact`, a single
-  workgroup, keeps the live, massive slots as `vec4(x, y, 4𝒟M, capture radius²)` (the
-  periodic image already chosen, the radius² −1 without black holes) in
-  `lensBuffers.lenses`, with their count in `lensBuffers.count`. Each thread counts a
-  contiguous run of slots and an inclusive scan over the 256 counts places them, so the
-  list is in slot order and every sum over it is the same each run (no atomics).
-  `lensDeflection` then reads that list, not every slot's struct: a 16 × 16 workgroup
-  covers 32 × 32 cells (each thread four cells, 16 apart, so a row of threads still
-  writes a row of cells) and walks the list a tile of 256 through workgroup memory, the
-  count taken with `workgroupUniformLoad` so the barriers stay uniform. The capture test
-  is a pipeline `override` (`LENS_SHADOWS`), built twice, so a scene without black holes
-  spends nothing on it. The probe's pass reads the same list. The cost is res² × lenses,
-  about 0.18 ms at 500 bodies on the M5 Max; past `LENS_WORK` (512² × 512) the map is
-  computed on a grid of side 512·√(512/lenses), a multiple of 16 and at least
-  `LENS_MIN_RES`, written past the full map in the same buffer (`mapOffset`), and
-  `lensExpand` refills the 512² map from it bilinearly, so the renderer and the tests
-  always see one resolution (176² at 4000 bodies, about 0.4 ms in all). The probe's pass
-  is never reduced.
-- **Drawing** (`grid-render.wgsl`): each pixel samples the map bilinearly and draws the
-  rulers at β = θ − α; the domain edge is in the slab and stays unlensed; capture disks
-  take the ground's ink. The backdrop's stars are a hashed field of 4.5-unit cells; a pixel
-  hashes only the neighbouring cells within a star's reach (0.08 cells plus the pixel's
-  footprint in the backdrop), which adds nothing the other cells would have drawn.
-- **The probe:** a backdrop star of radius r at β_s, placed where the view's centre was.
-  Cells whose rays land on it light up in the accent (its images, arcs, Einstein rings)
-  and are counted (`lensBuffers.hits`) on a second, `countOnly` pass over a 1024² window
-  around the star (±4 R_E for the total mass, at least 20 star radii: a heuristic that
-  holds a single lens's images to u ≈ 3.7), so μ = hits·cellArea/(πr²) by inverse ray
-  shooting, the magnification of a uniform disk, for any lens configuration; captured rays
-  see no star. Results carry `sim.lens.gen`, bumped by every change, so a readback from
-  before one is dropped; the Measure tab plots the rest as a light curve. The pass is four
-  times the full map's cells, so a probe costs about 0.7 ms at 500 bodies and 5 ms at 4000.
-
-### Black holes
-
-- **Horizon.** `kerrNewmanRadius()` (`config.js`): `r₊ = M + √(M² − a² − Q²)`, with
-  `a = J/M` from the one canonical spin `J = I·angW` (`I = INERTIA_K·m·bodyRadiusSq`; the
-  rotation rate `angVel` is for drawing and the magnetic moment only). Super-extremal inputs clamp to `r₊ = M`, an
-  effective radius for stable evolution, not a naked-singularity model. WGSL repeats
-  the clamp in many shaders (grep `disc >= 0.0`).
-- **Gravity.** Paczyński–Wiita, `Φ = −M / max(r − r₊, BH_PW_MIN_GAP)`, unsoftened
-  (`BH_SOFTENING` softens the other laws): `bhSourceRadius(m, q, J)` copies in `pair-force`,
-  `forces-tree` and `compute-stats`, and `heatmap.wgsl`'s (which ignores spin);
-  `blackHoleRadialTerms()` in `config.js` for the effective-potential plot.
-  Phenomenological, not a geodesic solve.
-- **Capture.** In Merge mode a particle whose centre is inside another's horizon is
-  swallowed with merge bookkeeping in `resolveCollisions`, whose broadphase reaches each
-  body's radius plus the largest radius (a horizon), so a small body deep inside a large
-  horizon is found.
-- **Extremal censorship.** An over-bound hole sheds same-sign leptons one quantum at a
-  time, emitted in its rest frame at 1/√3 and boosted, with recoil, until the lightened hole
-  (each lepton takes `ELECTRON_MASS`) is under its Kerr–Newman limit, in black-hole mode
-  (`extremal.wgsl`). A clamp to the nearest allowed charge is the backstop when the pool is
-  full, and then charge isn't conserved. The leptons' kinetic energy is unpaid, as with
-  Schwinger.
-- **Hawking** (Black hole + Radiation): Kerr–Newman temperature, Stefan–Boltzmann
-  power, none at extremality, on the hole's clock (`dM = P·dt/γ`). Mass leaves at fixed
-  proper velocity; each photon is drawn isotropically in the rest frame, boosted, and the
-  hole takes the recoil. Below `MIN_MASS` a hole sheds leftover charge as leptons and
-  ends in two back-to-back rest-frame photons carrying its four-momentum.
-- **Schwinger** (Black hole + Coulomb + Radiation; `schwingerDischarge` in
-  `radiation.wgsl`): the rate runs on the hole's clock, and each event emits one
-  same-sign lepton in the hole's rest frame, boosted, with exact momentum recoil. It
-  costs the hole one charge quantum and `ELECTRON_MASS` but not the lepton's kinetic
-  energy; subtracting that too makes the discharge run away.
-- **Superradiance** (Black hole + Axion): the rate scales as α² instead of the real
-  α⁸, which is too steep to see. Accepted dE enters axion `fieldDot` as an
-  energy-normalized impulse and the hole loses `dM = dE` and exactly `dJ = dE/μ_a` (the new
-  spin from the new mass's moment of inertia), so it saturates at `Ω_H ≤ μ_a`. A hole's mass
-  is its whole energy, rotation included, so the stats book no separate spin kinetic energy
-  for holes. The rate uses `dt/γ`, valid for slow holes (`Ω_H > μ` is
-  frame-dependent for a hole crossing the lab grid). `depositSuperradiance`
-  (`field-deposit.wgsl`) reads φ² from `axYukMod[pid].w`, written earlier in the substep
-  by `applyAxionForces`, and has its own three-group layout.
-
-### Bosons
-
-- Pool caps live in `config.js`: 4096 bodies, 16384 photons, 4096 pions + 4096
-  leptons. Leptons share the pion buffer, told apart by `Pion.kind` (0 pion, 1 lepton).
-  Emitters append and a dying boson only clears its flag; once a frame, right after the
-  culls, `boson-compact.wgsl` packs each pool's live entries to its front in order and sets
-  its count live, so every boson pass, the boson tree and its sort are sized by the live
-  counts and freed slots are reused. A pool full of live bosons still drops a multi-product
-  event's products (transactional saturation is open, `docs/MODEL.md` §2, bug 1).
-- A body's Larmor radiation accumulates until it reaches `PHOTON_QUANTUM` (0.02) and leaves
-  as one photon (`MIN_MASS`, 0.05, stays the Hawking threshold and the evaporation floor);
-  pion emission takes its energy from the body as it accrues, so pending energy is energy
-  already lost. A body that dies with radiation pending (merged, captured, annihilated,
-  evaporated, despawned) emits it as one unboosted photon the next frame
-  (`flushRetiredRadiation`). The quadrupole sink (gravitational and electric) was removed
-  until a radiation reaction replaces it (`docs/MODEL.md` §2, bug 3); the renderer still
-  draws gravitational quanta (`FLAG_GRAV`) in madder, for when they return. A photon is drawn as a wave packet in ochre (`boson-render.wgsl`
-  `fragmentPhoton`): a sinusoid 2.6 px high under a Gaussian envelope 22 px long, its
-  wavelength `clamp(6·√(0.05/E′), 3.5, 12)` px reading the energy E′ it has in the frame
-  drawn (Doppler-shifted in a non-lab frame, with the Doppler hue).
-- Absorption (`boson-absorb.wgsl`) adds the boson's full four-momentum, so the target's
-  invariant mass changes with its proper velocity; charged pions move charge. `emitterId`
-  blocks self-absorption, and nothing is absorbed before `BOSON_MIN_AGE`. Each boson claims
-  its absorber in parallel, read-only on the bodies: the nearest body whose radius it is
-  inside and that can take it (ties to the lower slot). Then one workgroup per claimed body
-  sums its claims in a fixed order and takes them at once, which is exact because
-  four-momenta add, and a claim valid alone stays valid in a sum (adding future-directed
-  vectors only raises the mass). Bosons never wrap, so on a periodic boundary the search
-  folds each into the domain and measures by minimum image; the tree walk resolves ghost
-  copies to their originals. The search prunes by each tree node's largest radius + 2, so a
-  grown hole widens it near itself only.
-- Pion decay runs on the pion's clock: once per frame, `P = 1 − exp(−ln2·Δτ/T½)` with
-  `Δτ = dt/γ` (`PION_HALF_LIFE` 32, `CHARGED_PION_HALF_LIFE` 64; pions always dilate,
-  since they always carry true proper velocity). `restFrameDt()` and `boostToLab()`
-  live in `shared-relativity.wgsl`.
-- `PHOTON_CULL_AGE` and `LEPTON_CULL_AGE` are pool culls in lab time, not lifetimes.
-- Boson lensing (photons 2× Newtonian, pions `1 + v²`) follows the Gravity toggle. The bodies
-  don't feel the bosons' gravity: a pull answering the lensing reciprocally needs each boson's
-  projected impulse (`docs/MODEL.md` §3.12), and the old pass's force was cleared unread. Charged
-  bosons' Coulomb kicks divide by their mass.
-- Leptons come from Schwinger discharge, extremal shedding, evaporation remnants, and
-  charged-pion decay. Photon → pair conversion is deliberately absent.
-- **Pion annihilation** (Boson interaction): an opposite-charge pair of the same kind within
-  2 annihilates into two photons. It pairs in two passes (`boson-tree.wgsl`): each pion
-  proposes to its partner, the lowest-index one above it in reach (found through the
-  bosons' tree), and records it; each keeps its lowest proposer; and a pion nobody proposed
-  to annihilates with its partner if its proposal was kept, so no pion is in two pairs and
-  only a pair's proposer touches either pion.
-- **Annihilation** (Merge mode, matter meets antimatter) emits two photons conserving
-  lab-frame energy and momentum: the 32-byte `MergeResult`
-  (`p0 = x, y, energy, type`, `p1 = px, py, _, _`) → `merge-photons.wgsl` on-device.
-  An inelastic merge's lost kinetic energy excites the scalar fields instead (Scalar fields).
-- **Kugelblitz**: a boson-tree node of at least `MIN_KUGELBLITZ_COUNT` (4) bosons whose
-  energy exceeds half its extent (hoop conjecture) collapses into a particle of mass
-  `√(E² − |P|²)` and proper velocity `P/m`, at most one a frame; near-null clusters are
-  rejected, and only consumed bosons that were counted as radiated leave the radiated totals.
-  The bosons' tree (`tree-build.wgsl` over `tree-items-bosons.wgsl`) is the bodies' layout;
-  a leaf names a pion by its pool index with `BOSON_PION_TAG`. Until 2026-10-25 that tree was
-  CAS-built and never summed above its deepest level, so boson gravity, pion Coulomb and
-  kugelblitz saw an empty tree; with Hawking radiation and Boson interaction on, dense photon
-  gas now collapses at that one-a-frame limit.
-
-### Scalar fields
-
-The Higgs and axion fields live on 128² grids with PQS (cubic B-spline, 4×4 stencil)
-deposition and interpolation, values clamped to `±SCALAR_FIELD_MAX`. Both fields step by
-one joint Störmer–Verlet KDK per substep (`_dispatchFieldStep`), so the Higgs–axion
-portal and the shared metric are evaluated at matching times.
-
-**Couplings** (`field-forces.wgsl`, `field-deposit.wgsl`). Higgs: particle mass is
-`baseMass·max(|φ|, HIGGS_MASS_FLOOR)`, and particles source the field with
-`HIGGS_COUPLING·baseMass`; the mass changes at fixed momentum and fixed spin J. Axion:
-charges source it with `g·q²` and feel `g·(q² + s·m)∇a` (`s` the Peccei–Quinn sign, flipped
-for antimatter); it no longer scales the pair laws (Forces and toggles). Scalar sources couple through proper time (`× 1/γ`). An inelastic merge's lost
-kinetic energy enters `fieldDot` as impulses solved against the existing `fieldDot` cross
-term, so field kinetic energy rises by exactly the event energy, shared among the active
-fields (`field-excitation.wgsl`); annihilation energy is all in its photons. Each event is
-consumed once.
-
-**The fields' energy** in the stats and the expansion ledger sums ½(Δφ)²/h² over every cell
-edge, as the field step's 5-point Laplacian takes its neighbours, so its derivative is that
-Laplacian and it sees every mode the evolution does (centred differences missed the
-checkerboard). Field momentum keeps centred differences.
-
-**Damping and the bath.** The fields' ether damping (Higgs `2m_H`, axion `g·m_a`) is the
-`fieldDamping` setting, on by default. `setHiggsQuench(τ_Q, T)` (the Kibble–Zurek preset)
-ramps the Higgs mass term as `ε·μ²`, ε = −1 + t/τ_Q clamped to [−1, 1], and adds a
-Langevin bath on the Higgs damping, its own pass (`higgsLangevin`) once per substep with
-`⟨ξ²⟩ = 2γT·dt/cellArea` and counter-based draws keyed by cell and substep. The quench and
-the bath do work the ledger doesn't book. The Higgs overlay measures
-from the current vacuum √ε and colours φ < 0 with the enhanced hue.
-
-**The quench's readouts** (`quench.js`). `startQuench()` sets φ ≈ 0 and starts the quench
-at the store's `quenchTime` (the Kibble–Zurek figure's knob, logarithmic from 10 to 1000;
-settling it re-runs the quench; saves leave it out with the field). `QuenchPanel` reads the 128² Higgs grid back about four times a second while a
-quench runs (`GPUPhysics.readHiggsField()`) and `measureHiggs()` measures it: the ordered
-fraction, the cells within v/2 of ±v (v = √ε), and the walls by the Kibble–Zurek oracle's
-count, sign changes between neighbouring cells per unit length of grid line, shown as wall
-length per area (π/2 times the count, Cauchy–Crofton for walls at every angle), as formed
-(the first readback that passes the oracle's ordering test: mean |φ| at least v/2 and 0.2)
-and now. The Measure tab's Quench section shows them, and the caption calls the field frozen
-into domains only once at least half the plane is ordered and the walls are counted.
-
-**Under expansion** the grid is comoving (its cells grow with a, so the Laplacian is
-physical), `hubbleFriction` applies `φ̇ ← φ̇·e^{−3H dt/2}` before and after each substep's
-KDK (Strang; each half metered by the ledger), particle sources
-thin by 1/a, and the slab's field energy and momentum are a times the grid's (stats,
-Friedmann density, excitation and superradiance impulses scaled by 1/a). The
-convention: the grid holds the dimensionally reduced field ψ = √ℓ·φ_3D, uniform through
-the slab, so the slab's energy is a·ℓ·Σ(…)dA in φ terms and the ℓ is absorbed into ψ and
-the couplings.
-
-**Grid gravity.** With Gravity on, the fields evolve in the metric
-`ds² = −e^{2Φ}dt² + e^{−2Φ}d𝐱²`, where the Klein–Gordon equation is exactly
-`φ̈ = e^{4Φ}∇²φ − e^{2Φ}V′ + 4Φ̇φ̇` (the 3+1 weak-field form at small Φ, with no
-gradient-coupling term). Particle sources carry `e^{5Φ}` in the kick (the e^{Φ} of
-proper time on top of the kinetic normalization), and damping is a proper-time rate
-(`× e^{Φ}`). `field-gravity.wgsl` builds Φ on one shared grid
-(`createGravityGridBuffers`): Φ_F from both fields' energy (also the field → particle
-force) and Φ_P from the particles' rest mass, each an FFT convolution with
-`−1/√(r² + ℓ²)`, `ℓ = SHEET_THICKNESS` (8, independent of the particle softening ε).
-ℓ is comoving: Ĝ is built on the comoving grid and the unpacks scale by 1/a, the fields'
-source is their slab energy, and while the universe expands Ĝ drops k = 0.
-`metricPhi = Φ_F + Φ_P` is solved before the first half-kick and after the drift; Φ̇ is
-the backward difference between consecutive post-drift solves. The FFT stage
-parameters are a static uniform table picked by dynamic offset: a `queue.writeBuffer`
-per stage would land before the whole encoder ran (that bug left Φ ≡ 0 until
-2026-10-23). The circular convolution treats every boundary mode as periodic.
-
-### GPU backend
-
-- **Shaders.** `fetchShader()` loads `src/gpu/shaders/<file>?v=${SHADER_VERSION}`;
-  `getSharedPrefix()` prepends `buildWGSLConstants()` (generated from `config.js` and
-  the palette), `shared-structs`, `shared-topology`, `shared-rng`, and
-  `shared-relativity.wgsl`. Tree walkers add `shared-tree-nodes.wgsl`; many shaders
-  also prepend `common.wgsl`.
-- **Buffers.** Packed structs (`shared-structs.wgsl`, sizes in `gpu-buffers.js`) keep
-  each stage within the 10 storage buffers `requestDevice()` asks for. Every per-slot buffer
-  is allocated for the cap (`GPU_MAX_PARTICLES`, 4096) except the world-line store: the rings
-  (48 KB a slot) and the light-cone hints (capacity²) grow through `STORE_TIERS` (512, 1024,
-  2048, 4096 slots) as `addParticle()` or a load needs them (`_growStore`), each ring copied
-  to the same offset and every bind group that reads either rebuilt (the renderer's through
-  `onStoreGrown`), and `reset()` gives the memory back. `SimUniforms.maxParticles` is the
-  store's capacity: the hints' stride and the ghost slots follow it.
-- **Pass plan.** `pass-graph.js` derives dispatch booleans from toggles only, not alive
-  counts. Boson passes are not in it: bosons outlive the switches that emit them, so they
-  step every substep, sized by their pools' counts through indirect dispatch from
-  `dispatch-args.wgsl` (with a max-capacity fallback). Absorption is a claim pass per
-  pool and a gather over the bodies, through `absorbClaims` (per-body counts, then each
-  boson's absorber as slot + 1). Per-body CAS float accumulators measured the same at low
-  contention but 40× slower with 4096 bosons on one body, and their sums depend on order.
-- **Trees** (`tree-build.wgsl`, one build for the bodies every substep, twice with 1PN's
-  velocity-Verlet correction when the walk is in use, and one for the bosons with Boson interaction;
-  the items come from `tree-items-bodies.wgsl` or `tree-items-bosons.wgsl`): the bounds, the
-  padded root box, a key per active item (a 30-bit Morton code and the slot) packed to the
-  front (about a square root box, so every cell is square), `treePlan` (one thread: the sort's
-  size from the live count and every sort step's
-  workgroups, for indirect dispatch from its own buffer, since a dispatch can't read its size
-  from a buffer it writes), a bitonic sort (blocks of 1024 in workgroup memory, then the wider
-  steps by dynamic offset into a step table), the binary radix tree (Karras 2012), and a
-  compressed quadtree in the 20-word node layout: a cell exists where its items split among
-  two or more quadrants, its two to four children fill the first slots, and a leaf is a node
-  whose first slot is NONE. Every cell a CAS-built tree would add holds the same items as a
-  cell this one has, so Barnes–Hut sees the same aggregates. A node covers a contiguous range
-  of sorted items, so one workgroup per node sums its range of leaves (`reduceNodes`, after
-  the dispatch that writes the leaves): no node reads another's sums, since WGSL's relaxed
-  atomics would not order a climb's reads after its children's writes. Internal nodes carry
-  their cell's bounds, leaves their item's position; word 17 counts the items under a node,
-  word 19 holds their largest radius.
-  The same positions give the same tree every run. The CAS-built tree this replaced lost
-  bodies when a subdivision raced a claim, so at a few hundred bodies its root was often never
-  summed and Barnes–Hut applied no force.
-- **Events.** The frame's readback (`_encodeFrameReadback`) copies the largest
-  acceleration, the ghost count, merge and kugelblitz events and the free-slot stack at the
-  end of the frame's last encoder into a slot of a three-deep ring, clears the GPU free stack
-  in that same encoder (so each freed slot reaches the host once), and maps once; events
-  append until consumed, and a readback from before a `reset()` is dropped (which also clears
-  the GPU event counters). Merge events are read only while a field can take their energy
-  (`_dispatchFieldExcitations`, 64 a substep) and come from a frame's last substep only, since
-  each substep's collision pass resets the counter; a kugelblitz collapse waits for a frame with
-  a free readback slot, since its bosons are consumed on the GPU and its body is spawned by
-  `GPUBackend` from `consumeKugelblitzEvents()`. Hit tests, stats, the scene snapshot, the heatmap, the lens probe and the frame
-  state have their own on-demand channels.
-- `_phase5Ready` holds field dispatches until the async field pipelines exist.
-
-### The Fields overlay
-
-The Figure tab's Field layer (none, gravity, electric, magnetic, Yukawa or all) draws the
-heatmap grid (`heatmap.wgsl`, over the view, or the visible plane's box when tilted) the way
-a survey sheet or a physics text prints a field, keeping to the domain:
-
-- **The atlas** (`src/field-atlas.js`, on the overlay canvas). `heatmap.wgsl` also stores the
-  charges' electric field (`elecField`, a vec2 per cell: Liénard–Wiechert with signal delay,
-  else softened Coulomb, the tree path pairwise); `GPUPhysics` copies the grids, E and the
-  bodies' state into `_heatmapStaging` at the end of `dispatchHeatmap` and maps it after the
-  frame's submit (`heatmapReadback`, a frame or two late). From each readback the atlas
-  draws gravity's potential as umber contours at nice levels (1, 1.5, 2, 3, 5, 7 × 10^k over
-  `LEVEL_SPAN`), the 1s and 3s heavier and labelled, ticked downhill like depression contours;
-  the electric field as prussian field lines traced (RK2, 0.6 cell) from the sign carrying
-  more charge, about 10·√(|q|/0.4) per charge (thinned evenly past 600 lines in all), each
-  ending on the other sign (found through a grid of the charges), at the view's
-  edge, or where it meets another line (a 1.2-cell separation grid), with a chevron at 45%
-  of its length; in the Electric view, equipotentials one a decade, solid sienna where
-  positive and dashed prussian where negative; and Yukawa's potential as dotted viridian
-  contours. A uniform external E has no structure and would swamp the softened charges'
-  fields (~0.002 against 0.12 in the cyclotron), so it stays out and the key names it.
-- **Bz as ⊙ and ⊗** (`heatmap-render.wgsl`, on the GPU): the field is out of the plane, so it
-  has no line to draw. The grid computes Bz (`magField`) as `pair-force.wgsl` has it:
-  Biot–Savart from moving charges, or with signal delay B = n̂ × E of the Liénard–Wiechert
-  field; the spin dipoles' −μ/r³; and the external Bz. Symbols sit on lattices fixed to the
-  plane, the spacing halving per decade: every site of a coarse lattice (a power of 2 in
-  world units near 64 px) once |Bz| passes B0 = 0.1, the sites halfway between once it passes
-  10·B0, and halfway again past 100·B0, so a uniform field is an even lattice whose spacing
-  reads its strength. World y runs down the screen, so the right-handed z axis points into
-  it: Bz > 0 is ⊗.
-- **The scalar fields** (`field-render.wgsl`, whenever Higgs or axion is on): no wash. Each
-  side of zero is hatched its own way, 6 px apart (the Higgs +v in sap `/`, −v in violet `\`;
-  the axion indigo and ochre, its sign from a smoothed sample), once the field has left the
-  noise (`smoothstep(0.01, 0.06, |φ|)`); the zero contour is drawn heavier in the text ink
-  (the Higgs's domain walls, the axion's nodes) where the field two cells away has left zero
-  too, and the Higgs takes thin contours every v/4, faded at the vacuum.
-
-### Chrome
-
-Worldline was the overhaul's pilot (`../../docs/sim-overhaul/PLAN.md`) and loads neither
-`shared/hud.css` nor `toolbar.js`. The page is a grid: the scene (a stage for the canvases
-over a hairline figure bar) and the margin. The shared colophon (`_colophon.mount`, with
-translated labels) carries play, step, theme and help; the figure bar carries the caption
-and the view's words and scale (plane · spacetime, lab · observer, the boost, shown while the
-observer is a moving one); the stage's top right has speed, language, the touch-only
-antimatter mode and the Controls toggle (at 600 px and below `ui.js` moves speed and
-language to the sheet's foot and antimatter into the figure bar, so the top keeps to one
-row). `resize()` sizes the canvases to the stage (a ResizeObserver), so opening the margin
-narrows the scene.
-
-**The caption** (`caption.js`) is "Fig. N.", N the figure's place in the list of figures
-("Fig." alone for a scene of the visitor's own), then one line of names and live values with
-· between them (・ in Japanese), rebuilt a few times a second: the figure's name and its own
-values, the same plane or tilted (the cyclotron's B, E and E/B, the twin's and the wheel's
-speed, γ and clocks, the beam's radiated energy, the quench's time, ordered fraction and
-walls, the lens's mass, R_E, u and μ; the Rindler figure's α, its horizon and the red body's
-distance by ruler and by radar; aberration's speed and the Doppler factors of the lamps dead
-ahead and behind, from the streak plate's newest row; the jet's θ, speed and its blobs'
-apparent speed, from the slope of the newest one's track where it leaves the core), or the body
-count once the scene no longer fits it; in an observer's frame, its γ and lag instead, unless
-the frame is the figure's own (`run.view`), where the figure's values stay; then the selected
-body's speed and τ, unless it is the figure's own selection and the figure's values name it. It reads
-out and never explains (root `AGENTS.md`, Show, don't tell), and repeats nothing the plate
-shows: the depth is the time axis's, the bead step the key's, a moving observer's speed the
-boost scale's, and pause the colophon's. **Knobs** are the numbers a figure's
-caption states that a visitor changes (roadmap §1.3): a preset's `knobs` (`presets.js`) over
-a store key (the cyclotron's B and E, live) or of its own (`run.knobs`: the beam's speed,
-live; the twin's, the wheel's, aberration's and the jet's speeds, the jet's angle, the Rindler
-observer's α and the lens's mass, `rerun`), or with a `commit`
-(the quench time re-runs the quench). The line marks a knob with a token (`_k()`), and
-the caption's writer keeps one `Knob` element (`controls.js`) per knob across rewrites,
-changing only the text nodes between them, so a drag survives the rebuilds. A knob drags
-sideways (240 px sweeps its range, Shift a tenth of that) or steps with the arrow keys
-(Shift tenfold), and the same knob is a scale under its figure's row.
-
-**The margin** is four tabs on the same paper, ruled off by a hairline, with Reset, Save and
-Load at its foot; on a narrow window it rises as a sheet.
-
-- **Figure**: the list of figures (keys 1–9) in its chapters (`CHAPTERS`, each under its
-  numeral and name, ruled off), each with a small drawing in the plate's marks (`plateGlyph`),
-  the active one's knobs under its row; the Observer; the layers (the Fields overlay's field,
-  the arrows, the rulers and key).
-- **Laws**: Mechanics (Newton · relativity · 1PN over `relativityEnabled` and
-  `onePNEnabled`); the forces; the Backdrop while Gravity is on; radiation; the scalar fields.
-- **World**: the next body (its scales, and its glyph as a click will place it, `bodyGlyph`);
-  collisions and black holes; the edges as five identification diagrams (open, wall, torus,
-  Klein, RP², `edgeGlyph`, over `boundaryMode` and `topology`); the universe, static or
-  expanding, with its history; the applied fields, g and E as arrows dragged in a pad
-  (`bindPad`) and B_z as a scale.
-- **Measure**: energy, momentum and angular momentum, each drift with a sparkline of the run;
-  the selected body (its glyph, clock and speed, and the forces on it as bars in their inks
-  against the largest); its phase-space and effective-potential plots; the observer; the
-  expansion, the quench and the backdrop star's light curve when they run.
-
-Every control is drawn in the plate's notation (`styles.css`): a **choice** is words, the
-pressed one in the accent and underlined, as the site's tag filters are (`bindChoice`,
-single or `multi`); a **tick** is a label over a visually clipped checkbox whose hairline
-frame shows the law's mark from the key while it is in force (`fillMarks` fills each
-`[data-mark]`), dashed and faded while a law it needs is off; a **scale** is a range input
-drawn as a ruled line with ticks and a needle in its parameter's ink, on one row with its
-value. A law's formula is its info tip's trigger (hover; Shift+click opens the reference).
-
-The plate's furniture, all hidden with the rulers by G ("Rulers and key"):
-
-- **The key** (`scene-key.js`, `#scene-key`, the stage's bottom right; not on a stage under
-  700 × 420): a double hairline box titled Reference with a row for each mark the scene is
-  drawing now, from `sim.scene` (a slow snapshot of the bodies, `GPUBackend._readScene`), the
-  settings and the view: bodies by kind, the selection, world lines and their bead step,
-  clocks, light (photons in the pool), the cone and events when tilted, the Fields layers, the
-  scalar hatching, a uniform external field (its direction in the swatch; its value is the
-  World tab's, and the cyclotron's caption's), the lensed backdrop and its star. Each row is
-  the mark and a word or two; the world line's and the clock's add their Δτ. The DOM is
-  rebuilt when a row's words or swatch change. Swatches are inline SVG with the scene's own
-  marks in `var(--ink-*)` (`marks.js`). The margin's ticks show the same marks, so the Laws
-  tab reads as the scene's legend; one ink per force, margin and scene alike (1PN mulberry,
-  boson interaction mulberry, the modes graphite). The clock's row shows once a body is
-  drawn 5 px in radius.
-- **The scale bar** (`Overlay._drawScaleBar`): bottom left seen from above, a 1, 2 or 5 × 10^k
-  length up to 120 px, "length, c = 1". Tilted, `_drawDimension` sets a dimension line along
-  the box's front edge instead.
-
-One red: the accent marks only the selected body, its world line and cone, and the lens
-probe's star. Force arrows are px hairlines, the total in the text ink and components in
-their force's ink; velocity arrows are graphite; a clock's swept arc takes the marks' ink.
-
-### Rendering
-
-`GPURenderer` draws on `#gpuCanvas`, behind the 2D `#simCanvas` that `Overlay` uses for
-the field atlas, the spawn-drag line and the plate's lines. Every layer draws in order into
-one render pass and one submit (`render()` → `_drawLayers()`): on a tiled GPU each pass loads
-and stores the whole canvas, which cost more than the layers did. The world lines' compute
-passes (Decimation, above) go in the same encoder ahead of it. Uniforms are written per
-layer, and per slot for the rings, arrows and torques, so each draw reads its own. The pass
-clears and starts with the background grid (`grid-render.wgsl`), a full-screen triangle
-that draws the lab rulers and the domain edge: hairlines at
-spacings 2^k, each level faded in between 12 and 24 px on screen, and the edge (or, in loop
-mode, the seams) in the `--border` mix. The grid is a sheet at rest in the lab, so in a
-non-lab frame each pixel maps back through the observer's slice and the rulers contract by
-1/γ along u and turn with co-rotation; `sim.view.grid` (G) hides the rulers, the key and
-the scale but not the edge. Bodies, their clock rings, and their ring overlays share the
-camera uniforms' `relativityOn`, `blackHoleOn`, `showClocks`, `frameOn` and `frameImages`
-flags. It clears to `_PALETTE.{light,dark}.canvas`, with light/dark
-pipeline pairs that `setTheme()` swaps; both blend alpha-over (the dark theme's additive
-blend and the bosons' glow halos are gone: they read no quantity). Colours are the shared
-inks, theme-paired: WGSL gets `INK_<NAME>_L`/`_D` constants (graphite is `textMuted`), and
-the force and torque tables are built per theme. `syncRendererTheme()` in `ui.js` sets both;
-`GPUBackend.create()` adopts `sim.overlay.isLight` after `renderer.init()` because it is
-created after the first sync. WGSL theme colors are light/dark constant pairs picked by
-the `isDarkMode` uniform. The Measure tab's plots redraw with every stats readback, so their
-canvas text needs no font-load redraw.
+## State
+
+- **The GPU buffers are the only particle state.** A slot index names a body only while it lives
+  (slots recycle through the free stack; `(slot, generation)` names one across reuse). Selection is
+  a slot; a selection whose body dies clears itself, and each stats readback carries the selection
+  and state version it was requested for, so one in flight across a change, reset or spawn can't
+  set the selection or the drift baseline.
+- **One path into the state:** presets and saves go through `applyConfig(sim, { settings, modes,
+  speed, view })`, which writes the store, then `sim.syncControls()` shows it without firing
+  handlers, then `update()` applies the laws' prerequisites (`LAWS`, in order) and the mode locks
+  (black holes force merge collisions; expansion forces the torus), which may turn more off, and
+  pushes the result to the GPU. A preset is data: what it doesn't turn on is off (except the
+  rulers and key), what it doesn't set is default.
+- **A figure** is a preset loaded by `sim.loadFigure(key)`; its per-load state is `sim.figureRun`
+  and its `tick` is `sim.presetTick`, both cleared by `reset()`, so nothing outlives the run.
+- **The domain is state, not the window** (`sim.domainW/H`, default 64, saved); resizing the window
+  moves only the camera.
+- **Device loss** recreates the device and restores the backend's auto-save (every 300 stepped
+  frames; fields and bosons aren't saved). The loop stops while the tab is hidden.
+
+## Units and signs
+
+- c = G = ħ = 1. `WORLD_SCALE` (16) is pixels per world unit at zoom 1. Linear and rotational state
+  are proper velocities (`velW`, `angW`); `derived.vel`, `angVel` come from them and equal them with
+  Relativity off. The spin slider is a surface speed. The body radius is ∛m (`bodyRSq` = ∛m²), the
+  source of moment of inertia, magnetic moment and angular momentum; in black-hole mode `radius`
+  holds the Kerr–Newman horizon. The one canonical spin is J = I·angW.
+- Charges are multiples of `BOSON_CHARGE` (0.1): `addParticle()` rounds, and every emission,
+  absorption, decay, discharge and shedding moves whole quanta.
+- **Force signs.** In the force shaders r is source − observer, so a positive radial coefficient
+  attracts. The Boris rotation parameter is `(q/2m)·Bz + 2·Bgz` scaled by dt/γ, so the stored fields
+  act as `F = q v × B + 4m v × Bg`. Moving charge: `Bz = −q (v × r)_z/r³` (parallel currents
+  attract); magnetic dipole: `Bz = −μ/r³` (aligned dipoles side by side repel, −3μ₁μ₂/r⁴); moving
+  mass: `Bgz = +m (v × r)_z/r³` (parallel mass currents repel; `4m v × Bg` is exactly EIH's v₁·v₂
+  sector, which the 1PN pair force leaves out); spinning mass: `Bgz = +J/(2r³)` (prograde orbits
+  slow, Ω = Ω_K − J/r³; the gravitomagnetic dipole force +3L₁L₂/r⁴ attracts). These were reversed
+  until 2026-10-23; the oracle page checks the magnetic and gravitomagnetic ones.
+- **Energy** is rest plus kinetic, spin, each force's conserved potential (`statsPE`), the fields'
+  slab energy and radiated: the pools, the pending accumulators, and escaped radiation, which the
+  pool culls hand to `GPUPhysics.ledger.escapedE` instead of destroying. `docs/MODEL.md` §5 says
+  what is booked and what isn't.
+
+## Time and the step
+
+- `GPUPhysics.update(dt)` splits a frame into at most 32 substeps from the previous frame's
+  `maxAccel` readback, `dtSafe = √(softening/a_max)`; with ε = 8 that is almost always one. Each
+  substep is its own command buffer, so its uniforms (`simTime` above all) are the ones its passes
+  read. `_dispatchSubstep()`'s pass comments are the order. The step depends on the wall clock;
+  `docs/MODEL.md` §4 is its replacement.
+- The scheme is the staggered Boris pusher: both half-kicks precede the drift, so velocities sit
+  half a kick from positions; spin–orbit kicks change `w` directly. 1PN forces are
+  velocity-dependent and break Newton's third law, hence the velocity-Verlet correction. The clocks
+  must run before it: Thomas precession subtracts the 1PN force (`allForces.f2`), which the
+  correction overwrites.
+- **GPU times are f32 on a rolling epoch** of the world-line clock (lab time, or conformal time η
+  while the universe expands, kept in f64 as `conformalTime`): past `EPOCH_SPAN` (512) the epoch
+  advances by `EPOCH_STEP` (256) and every stored time shifts back (`worldline-rebase.wgsl`), each
+  line mapped back to the identity deck. Only world-line samples, creation times and `deathTime`
+  hold absolute GPU times. World-line cadence is by that clock, not ticks.
+- The world steps with no bodies alive: the body passes skip, the fields and bosons go on.
+
+## Expansion
+
+- **Expansion requires the torus** (the toggle switches the boundary to loop and the topology to
+  torus): the universe is the periodic domain, a slab of comoving thickness `SHEET_THICKNESS` cut
+  from flat 3D FRW. Klein and RP² aren't homogeneous, and there a uniform background's
+  minimum-image pull doesn't cancel.
+- **Physical coordinates on a growing domain:** `sim.domainW/H` is comoving; `GPUPhysics.domainW/H`
+  is a times it, and the forces never see a. `update()` stretches positions by √r and peculiar
+  momenta and photon energies by 1/√r before and after the substeps (Strang), which run static at
+  the midpoint a (`_frameA`). `GPUBackend._advance` splits a frame whose H·dt exceeds 0.02. a stops
+  at `A_MAX` (1000) with a toast.
+- **World lines are comoving and conformal** (C = x/a, η, dw/dη), so `retardedState()` solves the
+  flat cone in (η, C) and Liénard–Wiechert's flat formula gives E_phys = E_conformal/a² (Maxwell is
+  conformally invariant). Non-lab frames are off once a ≠ 1: FRW has no global boosts.
+- **The ledger:** `ledger.expansionWork` is the energy expansion took, metered at each operator
+  (the stretch in `expansion.wgsl`, the fields' Hubble friction in `field-ledger.wgsl`, potentials
+  to first order in JS), so E + W holds. Momentum drift compares a·P, which expansion conserves on
+  the torus. The Friedmann closure's ρ̄ comes from each stats readback; between readbacks matter
+  and fields scale as a⁻³ and radiation as a⁻⁴.
+
+## Forces and trees
+
+- **Fourteen toggles** (`TOGGLE_KEYS`). Less obvious couplings: signal delay runs whenever
+  Relativity is on, and with it charges interact through their Liénard–Wiechert fields; field
+  gravity follows Gravity; lensing follows Gravity; Boson interaction acts through Gravity or
+  Coulomb and builds its own tree; kugelblitz runs under Boson interaction with Gravity. The 1PN
+  pair forces (`shared-1pn.wgsl`, shared by the force pass and the recompute): EIH with
+  Gravitomagnetic, Bažański's mixed term with Gravitomagnetic and Coulomb, scalar Breit with
+  Yukawa. There is no Darwin term: Liénard–Wiechert carries EM to all orders in v.
+- **The fields don't modulate the pair laws:** the Higgs-modulated Yukawa range, the axion's EM
+  scaling and the Peccei–Quinn factor are removed until they have an action (`docs/MODEL.md` §2).
+- **Force summation is automatic** (`config.js` "Force summation", `GPUPhysics._chooseForceSum()`
+  on every `update()` and `setToggles()`, so a frame's substeps agree): pairwise below `TREE_ON`
+  (1536), Barnes–Hut above until the count falls under `TREE_OFF` (1152), θ ramping log-linearly
+  from 0.1 at `TREE_ON` to 0.5 at the 4096 cap. 1536 is the open-domain crossover at θ = 0.1 (M5
+  Max, the force pass's own timestamps), where the walk is 0.01% rms from the pairwise sum; at the
+  cap it is 0.7% and a quarter of the pairwise cost. On a periodic domain the walk gains at most a
+  third and near 4000 uniform bodies sometimes takes 5–6 ms against 0.75 (cause not isolated: the
+  half-domain criterion opening every node near a plane, or group boxes Morton jumps make large),
+  so periodic domains stay pairwise (`TREE_ON_PERIODIC` 8192). With Relativity every force is
+  pairwise from the world lines, since a node's aggregate has no world line. `forceSum` is the
+  readout; `treeOverride` and `thetaOverride` pin it for oracles and benchmarks. The boson tree's
+  walks have no pairwise alternative and keep θ = 0.5.
+- **Trees are built from sorted keys** (`tree-build.wgsl` over `tree-items-*.wgsl`: Morton codes, a
+  bitonic sort sized on the GPU by `treePlan`, Karras's radix tree, a compressed quadtree), so the
+  same positions give the same tree. The CAS-built trees they replaced lost items when a
+  subdivision raced a claim, and their roots were often never summed, so every walk quietly
+  returned nothing: test a tree by its root. Each node sums its own range of sorted leaves
+  (`reduceNodes`) because WGSL's relaxed atomics don't order a bottom-up climb's reads after its
+  children's writes. Word 17 counts a node's items, word 19 their largest radius.
+- **The walk** (`forces-tree.wgsl`) is a group walk: 32 Morton-adjacent bodies share one traversal
+  into workgroup memory, from a ring with a depth-first reserve so no tree overflows it (a
+  breadth-first frontier did, and took nodes whole: a body met its own mass). On a periodic domain
+  a node is taken whole only when it and the group's box lie within half a domain, so each body
+  sees it in one image (without that, 31% off pairwise). A far node's tidal torque squares its
+  total coupling where pairwise sums the squares, a far-field approximation.
+- **Ghosts weigh nothing** in the aggregates: every walk takes minimum-image displacements, and a
+  weighted ghost would count its pair twice. They exist for seam collisions and absorption, so a
+  ghost reaches only a contact (its radius + the largest radius + `GHOST_SLOP`); the host copies as
+  many ghost slots as the bodies could fill and `trimGhosts` clears the rest, because it learns the
+  count a frame late.
+- **Collisions and absorption prune by each node's largest radius**; a collision pair is written by
+  its smaller body (the lower slot of two alike), so a small body deep in a large horizon is found
+  and a large body's walk stays short. The tree is from before the drift, so the search reaches c·dt
+  further.
+- **A force-law change** touches `pair-force`, `forces-tree`, `compute-stats` (PE) and `heatmap.wgsl`,
+  and `effective-potential.js` for the plot; a 1PN change touches `shared-1pn.wgsl` alone.
+  Spin–orbit applies `F = μ∇Bz` and `F = +2L∇Bgz` from the moving sources' gradients only: the
+  direct dipole–dipole terms already carry spin–spin.
+
+## Signal delay and world lines
+
+- **`retardedState()`** (`shared-worldline.wgsl`) finds a source's retarded state: the image nearest
+  the observer now fixes which copy of the line it sees, a gallop from a hint brackets the past
+  cone among the samples, and Newton's method finds it on the cubic Hermite segment. The pair force
+  keeps each pair's bracket as the next call's hint (`wlHints`, capacity²), seeded from the
+  distance: in a crowded scene paths curve too much over a light-crossing time for a guess from
+  now, and a full bisection cost half again as much at 4000 bodies.
+- **Which laws read it:** charges act through their Liénard–Wiechert fields, softened by σ³ of the
+  retarded distance so a charge at rest gives softened Coulomb, κ floored at `LW_KAPPA_MIN`. Gravity
+  (Paczyński–Wiita included), Yukawa and the two dipole forces are static forms at the retarded
+  position times the toy aberration factor (1 − n̂·v)⁻³; the Bg fields, frame drag, tidal torque,
+  spin–orbit gradients and 1PN take the retarded state without it (`docs/MODEL.md` §3.2, §3.5).
+- **Causality at the ends:** a removed body keeps sourcing from its death snapshot until its last
+  light has passed. A source's past before its first sample is uniform motion back to its creation
+  time and invalid before it, so a body spawned by hand acts once its light arrives; preset and
+  loaded bodies are created at −∞ and act at once.
+- **The store:** a ring of `WORLDLINE_LEN` (1024) samples a slot, one every `WORLDLINE_DT` (1/8)
+  of the world-line clock, 12 floats each (`t, x, y, wx, wy, ax, ay, τ, θ, angw, m, q`; a = dw/dt
+  with the Boris rotations), on the covering plane through a per-slot deck that every loop crossing
+  updates, so C never jumps. A merge writes a break (`FLAG_WL_BREAK`) so no segment smooths the
+  jump, and keeps the heavier parent's slot, so its τ and θ carry on. The rings and hints grow
+  through `STORE_TIERS` (512 … 4096 slots), every bind group that reads them rebuilt
+  (`onStoreGrown`); `reset()` gives the memory back.
+
+## Clocks and spin
+
+- τ advances by `dτ = dt·√max(0, 1 + 2Φ_N − v²)`, Φ_N softened like the force (never
+  Paczyński–Wiita, which vanishes at 4M); field gravity isn't in the lapse; with Relativity off the
+  lapse is 1 (a9's additive lapse, `docs/ROADMAP.md` §0).
+- The spoke angle θ is the in-plane transported axis and never touches `angW`: it turns at ω·dτ (or
+  Ω_H for a hole) plus Thomas precession from the **non-gravitational** acceleration only, geodetic
+  `−(3/2)(g × v)`, and Lense–Thirring with Gravitomagnetic. Klein and RP² crossings mirror it.
+- A body is drawn as its rest-frame disk through the Lorentz map of its centre's velocity, every
+  point of its spoke and clock face at the body's own time there (`particle.wgsl`).
+
+## Prescribed bodies
+
+- A prescribed body's world line is given (`docs/ROADMAP.md` §6.2): it sources every law and
+  responds to nothing. Its curves are evaluated in `src/prescribed.js` and again in
+  `shared-prescribed.wgsl`, **which must agree**; the oracle page checks every kind's samples
+  against the JS, and `tests/prescribed.test.mjs` checks the JS is kinematics.
+- `prescribed.wgsl` runs after everything that moves a body and before the world lines record it,
+  putting each back on its curve: position through its deck, proper velocity, `totalForce` as the
+  curve's m·dw/dt (so the recorded acceleration, and with it the Liénard–Wiechert field, is the
+  motion drawn), and the curve's exact proper time (`clocks.wgsl` skips these bodies).
+- `FLAG_PRESCRIBED` bodies don't radiate energy away, absorb, shed charge, collide, merge or get
+  captured; bodies pass through them. Their mass still follows the Higgs.
+- **The agent pays:** what a substep did to the body the pass undoes, so the agent's account adds
+  the curve's four-momentum minus the substep's (`agentAccum`, read with the stats into
+  `ledger.agentE/Px/Py/L`), W = Δ(γm) − ∫F_other·v dt; the drifts subtract it.
+- A figure's prescribed bodies are born at −∞ with their curve's past written into the ring
+  (`_writePast`), so they act at once. Saves keep a curve with t0 relative to the save's time.
+- **The hand** writes a prescribed line live (kind `held`): the body pursues the pointer, capped at
+  0.75c and an acceleration of 0.6, so its samples stay timelike and under the ~0.78c where
+  `LW_KAPPA_MIN` starts to suppress the forward field. The GPU sets and clears `FLAG_PRESCRIBED`,
+  so the host never writes a body's flags.
+
+## The spacetime view and frames
+
+- **One projection for both views:** a point on the present at time h before it projects with time
+  and space at one scale, so light keeps to 45°, and the plane view is the same projection from
+  above. `SpacetimeView.writeMatrices()` hands every pass a view matrix and the plane's inverse, so
+  every pass draws on the tilted plane unchanged and picking goes through `wrapCamera()`.
+- **The boost display** (`SpacetimeView.display()`, `disp()` in WGSL) eases every event from the
+  lab's coordinates to the observer's, then hands over to the boost frame of the same world line,
+  so the picture continues without a jump.
+- **Decimation** (`lineKeep`, `lineScan`, `lineWrite`) keeps only the world-line points the drawing
+  needs, in slot order (blending makes draw order pixel order), within 8/255 of the undecimated
+  strips. Trails are the same world lines seen from above.
+- **Frames are views** (`frames.js`, `frame-slice.wgsl`): spawning, selection and hover act in the
+  lab. The slicer cuts every world line on the observer's now and writes view buffers the body
+  pipelines draw instead of the live ones. **The lagged view:** the observer's now sits far enough
+  in the lab's past that everything on the visible slice has been computed, capped at the ring's
+  reach (127); the HUD names the lag. On a torus each body is drawn as its 3×3 nearest images, γL
+  apart with clocks γvL apart, because the identification holds at equal lab time; Klein and RP²
+  draw the primary image only. Arrows, torques, the heatmap and field overlays stay lab-only.
+- **The accelerated observer** (`FRAME_ACCEL`): its slices all pass its corner 1/α behind it, and
+  the anchor's lag is settled on the hyperbola by bisection (the velocity now would overshoot).
+  Bodies fade with the lapse αξ toward the horizon.
+- **Seen** cuts every world line by the observer's past cone at its anchor (`wlOnCone`), all
+  computed past, so no lag; sight doesn't extrapolate, so a source with no history there isn't
+  drawn. Lorentz observers only. Under Seen each point of a body is drawn at its own retarded time,
+  the body taken in uniform motion over its light-crossing time.
+- **Radar** (`radar.js`) needs the observer's future, so only observers whose world line is known
+  have it: the lab's eye, the moving and accelerated observers, a prescribed red body.
+
+## Lensing
+
+- With Gravity on the rulers are a backdrop seen through the bodies as a thin lens along z, lab
+  frame only, instantaneous (no time delays, moving-lens corrections or strong-field images);
+  black holes flag an imposed 3√3·M capture disk. The pass runs only while something is there to
+  bend.
+- `lensCompact` lists the live, massive slots in slot order by a prefix sum, so every sum over the
+  list is the same each run; each lens sits at its image nearest the view's centre (a per-pixel
+  minimum image would tear the backdrop at the seam). Past `LENS_WORK` the map is computed coarser
+  and refilled to 512². Probe results carry `sim.lens.gen`, so a stale readback is dropped.
+
+## Black holes
+
+- The horizon is Kerr–Newman, `r₊ = M + √(M² − a² − Q²)`, a = J/M; super-extremal inputs clamp to
+  r₊ = M, an effective radius for stable evolution, and WGSL repeats the clamp in many shaders (grep
+  `disc >= 0.0`). Gravity among holes is Paczyński–Wiita, unsoftened (`bhSourceRadius` is copied in
+  `pair-force`, `forces-tree`, `compute-stats` and `heatmap.wgsl`). Capture is a merge in Merge
+  mode. `docs/MODEL.md` §3.6 is the model's account and its faults.
+- **Extremal censorship** sheds same-sign leptons one quantum at a time, with recoil, until the
+  hole is under its limit; when the pool is full a clamp is the backstop, and charge isn't
+  conserved then. **Schwinger** pays one charge quantum and `ELECTRON_MASS` but not the lepton's
+  kinetic energy: subtracting that too made the discharge run away. **Superradiance** runs at α²,
+  not the real α⁸, which is too steep to see, and saturates at Ω_H ≤ μ_a; a hole's mass is its whole
+  energy, so the stats book no separate spin energy for holes. Hawking ends below `MIN_MASS` in two
+  back-to-back photons.
+
+## Bosons
+
+- Caps: 4096 bodies, 16384 photons, 4096 pions and 4096 leptons (leptons share the pion buffer,
+  `Pion.kind`). Emitters append; once a frame `boson-compact.wgsl` packs each pool in order and
+  sets its count live, so every boson pass is sized by live counts. A pool full of live bosons still
+  drops a multi-product event's products (`docs/MODEL.md` §2, bug 1). Boson passes aren't in the
+  pass plan: bosons outlive the switches that emit them, so they step every substep by indirect
+  dispatch.
+- Larmor radiation leaves in quanta of `PHOTON_QUANTUM`; pion emission takes its energy as it
+  accrues; a body that dies with radiation pending emits it the next frame. The quadrupole sink is
+  removed until a radiation reaction replaces it.
+- **Absorption** adds the boson's whole four-momentum. Each boson claims its absorber in parallel,
+  read-only on the bodies, and one workgroup per claimed body sums its claims in a fixed order:
+  per-body CAS float accumulators were 40× slower with 4096 bosons on one body, and their sums
+  depended on order. Bosons never wrap, so on a periodic boundary the search folds each one in.
+- Pion decay runs on the pion's clock; the cull ages are pool limits, not lifetimes. Photon → pair
+  conversion is deliberately absent. **Pion annihilation** pairs by proposals through the bosons'
+  tree, so no pion is in two pairs. **Kugelblitz** collapses a boson-tree node of at least 4 bosons
+  whose energy exceeds half its extent (hoop conjecture), at most one a frame.
+
+## Scalar fields
+
+- The Higgs and axion live on 128² grids with PQS (cubic B-spline) deposition and interpolation,
+  stepped by one joint Störmer–Verlet KDK a substep so the portal and the metric are evaluated at
+  matching times. Couplings and their faults: `docs/MODEL.md` §3.7–§3.9.
+- **The fields' energy** sums ½(Δφ)²/h² over every cell edge, so its derivative is the evolution's
+  5-point Laplacian and it sees every mode (centred differences missed the checkerboard).
+- The ether damping (`fieldDamping`), the quench's ramp and its Langevin bath (counter-based draws
+  keyed by cell and substep) do work the ledger doesn't book.
+- **Grid gravity:** the fields evolve in `ds² = −e^{2Φ}dt² + e^{−2Φ}d𝐱²`, `φ̈ = e^{4Φ}∇²φ −
+  e^{2Φ}V′ + 4Φ̇φ̇` (a9's decision, `docs/ROADMAP.md` §0), Φ from both fields' energy and the
+  particles' rest mass, each an FFT convolution with −1/√(r² + ℓ²), ℓ = `SHEET_THICKNESS`
+  (independent of the particle softening ε). The FFT's per-stage parameters are a static uniform
+  table picked by dynamic offset: a `writeBuffer` per stage lands before the whole encoder runs,
+  and that bug left Φ ≡ 0 until 2026-10-23. The convolution is circular, so every boundary mode is
+  periodic. Under expansion the grid is comoving and Ĝ drops k = 0.
+
+## GPU backend
+
+- `fetchShader()` loads `src/gpu/shaders/<file>?v=${SHADER_VERSION}`; **bump `SHADER_VERSION` after
+  any WGSL edit**, the query string being the only cache key. `getSharedPrefix()` prepends the
+  WGSL constants generated from `config.js` and the palette, then `shared-structs`,
+  `shared-topology`, `shared-rng` and `shared-relativity`.
+- Packed structs keep each stage within the 10 storage buffers `requestDevice()` asks for. Every
+  per-slot buffer is allocated for the cap except the world-line store (§ Signal delay).
+- `pass-graph.js` derives dispatch booleans from toggles only, not alive counts.
+- **Readbacks:** the frame's (largest acceleration, ghost count, merge and kugelblitz events, free
+  slots) goes into a three-deep ring mapped once, and one from before a `reset()` is dropped. Merge
+  events come from a frame's last substep only (each collision pass resets the counter). Every
+  other readback has its own channel with a pending flag cleared in `finally`, so a lost device
+  can't wedge it. `_phase5Ready` holds field dispatches until the async field pipelines exist.
+
+## Rendering and chrome
+
+- Every layer draws into one render pass and one submit (`render()` → `_drawLayers()`): on a tiled
+  GPU each pass loads and stores the whole canvas, which cost more than the layers did. The world
+  lines' compute passes go in the same encoder ahead of it.
+- Light and dark are pipeline pairs that `setTheme()` swaps, both alpha-over (the additive dark
+  blend and the bosons' glow read no quantity, so they're gone). Colours are the shared inks,
+  theme-paired as `INK_<NAME>_L/_D` WGSL constants; `syncRendererTheme()` sets both sides, and
+  `GPUBackend.create()` adopts the theme after `renderer.init()` because it is created after the
+  first sync. Bodies' ink is their charge's sign (sienna positive, prussian negative, graphite
+  neutral); **one red**: the accent marks only the selected body, its world line and cone, and the
+  lens probe's star.
+- Worldline was the sim overhaul's pilot (`../../docs/sim-overhaul/PLAN.md`) and loads neither
+  `shared/hud.css` nor `toolbar.js`. **The caption** (`caption.js`) is "Fig. N." and one line of
+  names and live values; it reads out and never explains (root `AGENTS.md`, Show, don't tell).
+  Its writer keeps one `Knob` element per knob across rewrites, so a drag survives the rebuilds.
+  **The key** (`scene-key.js`) rows each mark the scene is drawing now, in the scene's own marks
+  (`marks.js`), which the margin's ticks share: one ink per force in both.
 
 ## Conventions
 
-- **Naming.** Code, comments, and UI text say "signal delay" or "finite-speed force
-  propagation", never "retarded potential(s)" (a9's rule; `docs/ROADMAP.md` §13 adds
-  "light-cone" and "Liénard–Wiechert").
-- **Force laws.** A force-law change touches `pair-force`, `forces-tree`,
-  `compute-stats` (PE), and `heatmap.wgsl`, and `effective-potential.js` for the plot;
-  a 1PN change touches `shared-1pn.wgsl` alone. Spin-orbit (`spin-orbit.wgsl`) applies
-  `F = μ∇Bz` and `F = +2L∇Bgz` (a spinning body's gravitomagnetic moment is 2L), from the
-  moving-source field gradients only: dipole fields add no gradient, since the direct
-  dipole-dipole terms already carry spin-spin.
-- **Constants.** WGSL constants are generated from `config.js`, but the toggle bits are
-  written twice in `gpu-constants.js` (WGSL string and JS exports), and tree node
-  layouts are repeated in `boson-tree` and `kugelblitz.wgsl`. JS uniform writers follow
-  WGSL struct member order; the post-substep `dt` is a raw write at byte 0 of
-  `SimUniforms`. Event records are mirrored between shaders and the readback parsers in
-  `gpu-physics.js`: a 32-byte `MergeResult` change also touches `MERGE_RESULT_SIZE`,
-  `collision.wgsl`, `merge-photons.wgsl`, and the field-excitation upload. The stats
-  readback layout is listed at the top of `compute-stats.wgsl`: 128 words of results, then
-  each stats pass's per-workgroup partials (`STATS_LAYOUT` in `gpu-constants.js`, generated
-  into WGSL), which one `statsReduce` workgroup adds in a fixed order, so the same state
-  reads back the same sums.
-- **Shader cache.** Bump `SHADER_VERSION` after any WGSL edit; the query string is the
-  only cache key.
-- **New toggle or parameter.** Update `physics-contract.js` (`TOGGLE_KEYS`, or
-  `PARAMETER_KEYS` and `GPU_PARAMETER_SLOTS`), the default in `physics-settings.js`,
-  `ui.js` (a tick in `TICKS` and its markup in `index.html`, with its prerequisite in
-  `LAWS`, or a scale in `storeScales`; a mark for its tick in `marks.js` if the scene draws
-  one), the strings in `i18n/strings.js` (en and ja), and `GPUPhysics.setToggles()` with
-  its bit, then check that saves round-trip it. Presets and saves need nothing more:
-  `applyConfig()` carries every store key.
-- **Saves.** `version: 2` holds the domain, particles with τ and θ, toggles,
-  parameters, modes, speed, friction, and camera; fields, bosons, and world lines are
-  not saved. `migrateState()` lifts a version 1 save (domain = this window / 16, clocks
-  at 0). The quick-save key `nohair-quicksave` and download name `nohair-state.json`
-  are stored names; renaming them orphans saves.
-- **GPU slots.** `GPUPhysics.addParticle()` initializes every per-particle buffer.
-  `axYukMod` starts at `(1, 1, 1, 0)`; only `.w` (φ_a² at a hole, for superradiance) is
-  read now that the pair modulations are gone. The alive sentinel for `deathTime` is `FLT_MAX` (3.4028235e38), not `Infinity`.
-  Slots are recycled through the free stack, so a slot index names a particle only
-  while it lives.
-- **Command ordering.** `queue.writeBuffer()` lands at submit, before any of the
-  encoder's passes. Substeps submit separately, so uniforms may differ between them;
-  anything that must differ between passes of one substep goes through
-  `encoder.copyBufferToBuffer()`, `clearBuffer()`, or a dynamic offset into a static
-  table (the FFT). Each readback channel's pending flag skips new copies while its
-  staging buffer is mapped and clears in `finally`, so a lost device cannot wedge it.
-- **Bind groups.** One buffer may not fill two writable bindings of a dispatch; dummy
-  placeholders come in distinct buffers.
-- **WGSL.** Merge resolution guards with `mass <= EPSILON`, not `== 0`, because pairs
-  race; NaN guards come before global-memory writes; render pipelines use premultiplied
-  alpha with `srcFactor: 'one'`; entry points sharing a module declare shared bindings
-  `read_write`.
-- **World-line cadence** is by lab time, not ticks: `_nextWorldLineTime` steps to the
-  next multiple of `WORLDLINE_DT`, so a sample lands at the end of the substep that
-  crosses it.
-- **Topology.** Klein and RP² crossings flip velocity and spin and mirror θ; periodic
-  modes add ghost copies so tree forces cross the boundary, and world-line
-  interpolation wraps through `minImage()`.
-- **Input.** The antimatter mode (X, a touch-only button) drives touch only; mouse users spawn
-  antimatter with right-click. Click resolution is `InputHandler._resolveClickHit()`:
-  a click of the particle's own kind selects, the other kind deletes; black-hole mode
-  never spawns antimatter. A left press (or a finger) asks its hit test at once; on a body, a
-  drag past `DRAG_THRESHOLD` takes hold of it with the hand (Prescribed bodies) and selects it,
-  and letting go (anywhere, the window's mouseup included) throws it; elsewhere it spawns as
-  before. Hover hit tests pause while pressed, so the press's result is the one that returns.
-  Tilted, in the lab's coordinates, an edge of the sheet of the present (within 7 px on screen,
-  the cursor `ns-resize` over it) is a handle (roadmap §6.8): dragging it sets the moving
-  observer's velocity along the edge's outward normal to the time it leads by over the plane's
-  distance from the camera's centre to the edge (capped at 0.95c), so the observer's present tilts
-  with the drag and the figure bar's boost scale follows.
-- **CSS.** `styles.css` makes `[hidden]` win over every display rule (`base.css` gives
-  `.panel-section` and others a display), so the margin's rows and sections are shown and
-  hidden with the `hidden` attribute alone, never `style.display`. A mark's own svg may
-  overflow its frame, but only the direct child: a hatch's nested svg must keep clipping
-  to its box (`> svg` in the selectors).
-- **URLs.** Worldline's own files load by relative URL (`styles.css`, `colors.js`, `main.js`,
-  the shaders), which resolves only under `/worldline/` with its trailing slash.
-- **Storage keys keep earlier names.** Worldline was Geon until 2026-10-23
-  (`/geon` now redirects here), and No-Hair before that. `geon-lang`,
-  `geon-theme`, and `nohair-quicksave` stay as they are so saved settings and
-  quick saves survive; renaming them orphans user state.
+- **Naming.** Code, comments and UI text say "signal delay" or "finite-speed force propagation",
+  never "retarded potential(s)" (a9's rule); "light-cone" and "Liénard–Wiechert" are fine.
+- **Constants.** WGSL constants are generated from `config.js`, but the toggle bits are written
+  twice in `gpu-constants.js` (WGSL string and JS exports), tree node layouts are repeated in
+  `boson-tree` and `kugelblitz.wgsl`, and `serialize()` maps the toggle bits back to
+  `TOGGLE_KEYS` by hand (the oracle page's save case checks it). JS uniform writers follow WGSL
+  struct member order; the post-substep `dt` is a raw write at byte 0 of `SimUniforms`. Event
+  records are mirrored between shaders and the readback parsers: a `MergeResult` change also
+  touches `MERGE_RESULT_SIZE`, `collision.wgsl`, `merge-photons.wgsl` and the field-excitation
+  upload. The stats readback layout is at the top of `compute-stats.wgsl` (128 words, then each
+  pass's per-workgroup partials, `STATS_LAYOUT`), which one `statsReduce` workgroup adds in a fixed
+  order, so the same state reads back the same sums.
+- **A new toggle or parameter** updates `physics-contract.js` (`TOGGLE_KEYS`, or `PARAMETER_KEYS`
+  and `GPU_PARAMETER_SLOTS`), the default in `physics-settings.js`, `ui.js` (a tick in `TICKS` with
+  its markup in `index.html` and its prerequisite in `LAWS`, or a scale in `storeScales`; a mark in
+  `marks.js` if the scene draws one), the strings in `i18n/strings.js` (en and ja),
+  `GPUPhysics.setToggles()` with its bit, and `serialize()`'s map. Presets and saves need nothing
+  more: `applyConfig()` carries every store key.
+- **Saves:** `version: 2` holds the domain, bodies with τ, θ and any curve, toggles, parameters,
+  modes, speed, friction and camera; fields, bosons and world lines aren't saved. `migrateState()`
+  lifts version 1 (domain = this window / 16, clocks at 0).
+- **Storage keys keep earlier names:** Worldline was Geon until 2026-10-23 (`/geon` redirects
+  here) and No-Hair before that, so `geon-lang`, `geon-theme`, `nohair-quicksave` and the download
+  name `nohair-state.json` stay; renaming them orphans saved settings and saves.
+- **GPU slots.** `addParticle()` initializes every per-slot buffer; `axYukMod` starts at
+  `(1, 1, 1, 0)` and only `.w` (φ_a² at a hole, for superradiance) is read. The alive sentinel for
+  `deathTime` is `FLT_MAX`, not `Infinity`.
+- **Command ordering.** `queue.writeBuffer()` lands at submit, before any of the encoder's passes;
+  anything that must differ between passes of one substep goes through `copyBufferToBuffer()`,
+  `clearBuffer()` or a dynamic offset into a static table. A dispatch can't read its indirect size
+  from a buffer it writes. One buffer may not fill two writable bindings of a dispatch, so dummy
+  placeholders are distinct buffers.
+- **WGSL.** Merge resolution guards with `mass <= EPSILON`, not `== 0`, because pairs race; NaN
+  guards come before global-memory writes; render pipelines use premultiplied alpha with
+  `srcFactor: 'one'`; entry points sharing a module declare shared bindings `read_write`.
+- **Topology.** Klein and RP² crossings flip velocity and spin and mirror θ; periodic modes add
+  ghosts so tree searches cross the boundary; world-line interpolation wraps through `minImage()`.
+- **Input.** Antimatter mode (X) drives touch only; mouse users spawn antimatter with right-click.
+  A click of a body's own kind selects it, the other kind deletes it; black-hole mode never spawns
+  antimatter. A press on a body that drags past `DRAG_THRESHOLD` takes hold of it (the hand);
+  hover hit tests pause while pressed, so the press's result is the one that returns. Tilted, in
+  the lab's coordinates, an edge of the sheet of the present (within 7 px) drags the moving
+  observer's velocity along its normal, capped at 0.95c.
+- **CSS.** `styles.css` makes `[hidden]` win over every display rule, so margin rows and sections
+  are shown and hidden with the `hidden` attribute alone, never `style.display`. A mark's own svg may
+  overflow its frame, but only the direct child (`> svg`): a hatch's nested svg must keep clipping.
+- **URLs.** Worldline's own files load by relative URL, which resolves only under `/worldline/`
+  with its trailing slash.
 
 ## Open work
 
-`docs/ROADMAP.md` holds the plan: the model pass (2.5, `docs/MODEL.md`) and sight (2.6) in
-parallel, then the causal sandbox (3.0) and other spacetimes (3.x), ordered by the list of figures.
-`docs/MODEL.md` §2–§5 hold the model's known boundaries, and `docs/PERFORMANCE.md` what 2.1 and
-2.2 measured. The presets cut in 2.0 showed several of those boundaries: the inspiral gained energy under gravity's signal
-delay, the precession preset's planet escaped at once with 1PN on inside the softening
-length, and the nucleus preset's Yukawa well drove bodies to about 3c. Preset facts that
-follow from them:
-
-- The bremsstrahlung beam's electrons have m 0.3 because radiation reaction is strong at
-  these charges: Larmor's τ = 2q²/3m is 6.7 for m 0.1 and q −1, comparable to a pass, so
-  such an electron radiates more than its kinetic energy and is captured.
-- The cyclotron's synchrotron light is weak at 0.5c: a few photons a run.
+`docs/ROADMAP.md` holds the plan: the model pass (2.5, `docs/MODEL.md`), then the causal sandbox
+(3.0) and other spacetimes (3.x), ordered by the list of figures. Preset facts that follow from the
+model's boundaries: the bremsstrahlung beam's electrons have m 0.3 because Larmor's τ = 2q²/3m is
+6.7 for m 0.1 and q −1, comparable to a pass, so such an electron radiates more than its kinetic
+energy and is captured; the cyclotron's synchrotron light is weak at 0.5c, a few photons a run.

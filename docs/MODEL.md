@@ -1,11 +1,9 @@
 # Worldline's physics model
 
-The corrected model for 2.5, specified against an audit of the code at `6de3df8`. Status:
-**second draft, after Codex's adversarial review of the first (`fb4d1ab`, 2026-10-27).** It is
-the plan for the model pass (`ROADMAP.md` §5), and step 0 has landed from it; its §8 decisions
-are a9's and open, and step 2 ratifies the regimes once they are settled. §10 records what the
-review found and what changed. §2–§5's **Now** are the model's known boundaries, which were
-`ROADMAP.md` §7.3.
+The plan for the model pass (2.5, `ROADMAP.md` §5): an audit of the physics at `6de3df8`, the
+corrected model, and the order of work, revised after Codex's adversarial review (2026-10-27).
+Step 0 has landed (§2); §8's decisions are a9's and open, and step 2 ratifies the regimes once
+they are settled. §2–§5's **Now** is the model as it runs and its known boundaries.
 
 Tags as in the roadmap: [standard] is textbook or established practice, [synthesis] is a
 combination made here, [speculation] is a guess to test. **Now** is what the code does (with
@@ -24,29 +22,20 @@ its embedding diagram, the gravitational-wave detector ring, fields carrying ene
 the sandbox as 3.x, since they want its picking and measurements (roadmap §8), and the covariance
 meter becomes this pass's oracle (roadmap §5).
 
-Why the model first:
+Why the model first (reason 1, replay links carrying a dynamics version, lapsed when a9 set the
+record aside the same day):
 
-1. **Replay is the dynamics.** The record keeps runs reproducible by link and replay, so a
-   shared run names the dynamics version it ran under, whatever the order. Changing the
-   dynamics after links ship means carrying the old version or breaking the links; model
-   first, and the record starts on the dynamics it will keep longest. (Codex: the swap doesn't
-   remove the need for a version stamp, only how many versions the record must carry.)
-2. **The instrument would exhibit the faults.** §6.5 puts a predicted number beside every
-   measured one. On the held model the gravitating figures miss their own predictions: an
-   equal-mass binary at v = 0.16 loses 80% of its binding energy per orbit, and Plummer
-   softening ε = 8 leaves the pull at r = 20 (a third of the domain) 20% short of Newton's.
-3. **The decision is already informed.** The record was to inform 3.0's choice. The faults are
-   measured (§7.3) and the theory is standard: instantaneous forces can't be frame-independent
-   (Currie–Jordan–Sudarshan), and gravity's aberration cancels against velocity-dependent
-   terms (Carlip 2000). The covariance meter would quantify that, not decide it.
-4. **The harness exists.** `tests/physics-validation.html` and the physics hashes of
-   `shots.mjs` are enough to develop the model against.
+1. **The figures would exhibit the faults.** Each figure puts a predicted number beside a measured
+   one, and on the held model the gravitating figures miss theirs: an equal-mass binary at v = 0.16
+   loses 80% of its binding energy per orbit, and Plummer softening ε = 8 leaves the pull at r = 20
+   (a third of the domain) 20% short of Newton's.
+2. **The decision is already informed.** The faults are measured and the theory is standard:
+   instantaneous forces can't be frame-independent (Currie–Jordan–Sudarshan), and gravity's
+   aberration cancels against velocity-dependent terms (Carlip 2000).
+3. **The harness exists:** the oracle page and `shots.mjs`'s physics hashes are enough to develop
+   the model against.
 
-Reason 1 lapsed when a9 set the record aside (2026-10-27): there are no replay links to carry a
-dynamics version. Reasons 2–4 stand, with "the instrument" read as each figure's predicted number.
-
-What it costs: the record's replay would have helped bisect model regressions; and §1.1's
-"one recorded history serves the dynamics" narrows. World lines still serve electromagnetism,
+What it costs: §1.1's "one recorded history serves the dynamics" narrows. World lines still serve electromagnetism,
 causal gating, simultaneity, proper time and the picture, but gravity's force no longer reads
 them (§3.2).
 
@@ -86,62 +75,32 @@ them (§3.2).
 ## 2. Audit: what the code does beyond §7.3
 
 Six lanes (2026-10-27) read the physics end to end, one area each, without editing the repo;
-the fields lane also measured in a headless `GPUPhysics`. Their check scripts (sympy
-Euler–Lagrange for EIH, Bažański and Breit; the Liénard–Wiechert force against Darwin; a CPU
-transcription of capture) are in that session's scratchpad. Findings were spot-checked where
-they were surprising: the pools, boson gravity, the modulations' pass order and the radiation
-reaction were each confirmed by reading the code again, and the pass order also live (an
-axion field with `axMod` = 1.25 left the Coulomb kick unchanged to 0.5%). Each section's
-**Now** has its detail; the headlines:
+the fields lane also measured in a headless `GPUPhysics`. Codex confirmed bugs 1–10 by reading
+the code and found 11 and 12. Its caution governs the list: **a wiring fix that switches on a
+defective coupling makes things worse**, so where the coupling behind a bug is itself wrong, the
+fix disables it until its model correction lands.
 
-**Bugs that don't wait for 2.5.** Status, 2026-10-27: 2, 3 and 4 are disabled (the pair
-modulations, the quadrupole sink and the bodies' pull from the bosons removed, since each fix
-alone would have switched on a coupling with no consistent action); 5–11 are fixed, each with an
-oracle in `tests/physics-validation.html`; so is 12, and 1's compaction (the pools pack each
-frame), while 1's transactional saturation (a pool full of *live* bosons dropping a decay's or
-annihilation's products) is still open. Bug 6's fix went past the sign: the
-contact torques also take their lever from the mid-overlap contact point (r_i − δ/2), which makes
-orbital plus spin angular momentum exact; bug 8's dead bodies emit their balance as a photon
-(the collision pass is at its ten storage buffers, so it can't hand it to the survivor).
+**Bugs, and where they stand** (step 0, `aee6699`, `a3bdc7b`):
 
-Codex confirmed each of 1–10 by reading the code. Its
-caution governs the list: a wiring fix that switches on a defective coupling makes things
-worse, so where the coupling behind a bug is itself wrong, the immediate fix *disables* it
-until its model correction lands.
-
-1. The boson pools only append: after 16384 photons (8192 pions and leptons) since the last
-   reset every emission fails and decay, annihilation and Hawking-burst energy is destroyed
-   (§3.12). Fix: compaction, and transactional saturation (a full pool of live packets
-   defers an event or keeps a conserved reservoir; a decay never consumes its parent before
-   its products are secured).
-2. The Higgs and axion modulations never reach the pair or tree forces: pass 0 resets
-   `axYukMod` before the force pass reads it, since 2026-03-14 (§3.2). **Don't reorder:** that
-   switches on an axion pair coupling of the wrong sign with no source and no force from ∇a
-   (§3.8), and a Higgs-modulated Yukawa range with no force from ∇μ (§3.4). Remove the pair
-   modulations, from the stats too (they book a coupling no force applies), until §3.4 and
-   §3.8 settle them.
-3. The quadrupole sink advances `PHYSICS_DT` once a frame, about 34× too little at the default
-   speed and frame-rate dependent, and books energy it doesn't take (§3.2). **Don't fix the dt
-   alone:** that makes a sink with the wrong formula, a spurious lone-body drag and no momentum
-   conservation 34× stronger. Disable it until the reaction of §3.2 and §3.5 replaces it.
-4. Boson → body gravity is computed into a buffer that is cleared before it's read (§3.12).
-5. Pion and lepton Coulomb kicks lack 1/m (§3.12).
-6. Bounce mode's second-body spin torque has the wrong sign (§3.6).
-7. The 1PN recompute skips retired sources the force pass includes (§3.2).
-8. Pending radiation vanishes when its body merges or dies (§3.5); the surviving slot's
-   balance stays, the consumed slot's goes.
-9. Pion emission books its energy as pending before taking it from the body (§5).
-10. A black hole's spin kinetic energy is booked on top of its mass, which already contains it,
-    so superradiance reads as an 11% energy loss (measured by audit D, §3.6).
-11. **Two spin angular momenta** (found by Codex): `cache-derived.wgsl:43–58` takes J = I·angVel
-    for gravitomagnetism and the Kerr parameter, while the stats, merges and superradiance take
-    J = I·angW; they differ relativistically, and subtracting dJ/I_old then changing I doesn't
-    remove dJ. Fix: store one canonical J and derive a = J/M and the drawn rate from it.
-12. **The stats' field energy misses the stiffest modes** (Codex; audit F had it as a small
-    seam effect): `compute-stats.wgsl:545–580` takes centred gradients, which vanish on a
-    checkerboard, while the evolution's 5-point Laplacian is stiffest there. Fix: the
-    edge-difference quadratic energy whose derivative is that Laplacian, with the actual
-    boundary conditions; oracle, single Fourier modes up to Nyquist.
+- **Open:** 1, the pools' transactional saturation. Compaction landed (each pool packs every frame),
+  but a pool full of *live* bosons still drops a decay's, annihilation's or Hawking burst's
+  products. The fix defers the event or keeps a conserved reservoir, and a decay never consumes
+  its parent before its products are secured (§3.12).
+- **Disabled until their models land:** 2, the Higgs and axion pair modulations (a pass-order fault
+  had kept them out of the forces since 2026-03-14 while the stats booked them; reordering would
+  switch on an axion pair coupling of the wrong sign with no source, and a Higgs-modulated Yukawa
+  range with no force from ∇μ: §3.4, §3.8); 3, the quadrupole sink (once a frame, about 34× too
+  weak at the default speed and frame-rate dependent, the wrong formula, a lone body's spurious
+  drag, no momentum conservation: §3.2, §3.5); 4, the bodies' pull from the bosons (computed into
+  a buffer cleared before it was read; a reciprocal pull needs each boson's projected impulse,
+  §3.12).
+- **Fixed:** 5 pion and lepton Coulomb's 1/m; 6 the bounce torque's sign (the contact torques also
+  take their lever from the mid-overlap point, so orbital plus spin angular momentum is exact);
+  7 the 1PN recompute's retired sources; 8 pending radiation through deaths (the dead body's
+  balance leaves as a photon, since the collision pass is at its ten storage buffers); 9 pion
+  emission booked before it was paid; 10 holes' spin energy booked on top of their mass;
+  11 two spin angular momenta (one canonical J = I·angW now); 12 the stats' field energy blind to
+  the checkerboard (edge differences now, whose derivative is the evolution's Laplacian).
 
 **Model faults beyond §7.3:**
 
@@ -166,12 +125,6 @@ until its model correction lands.
   have no orbital reaction (§3.3, §5).
 - No charge ledger; external fields, walls and despawns move energy and charge unbooked (§5).
 
-**Docs that are wrong** (fixed when the corresponding code is): `AGENTS.md`'s "sized by the
-live counts", "every other law … times the toy aberration factor" (four laws carry it),
-"Paczyński–Wiita … with `BH_SOFTENING`" (unsoftened), "capture with merge bookkeeping" (five
-differences), the pending-radiation description for pions; `ROADMAP.md`'s old §7.3 said "the
-stats' energies are … unsoftened" (they use the softened ρ).
-
 **Checked and right:** the force-sign conventions; two-body EIH (with the Boris Bg term) and
 its energy; the kinematic compensation for EIH under relativistic momentum; scalar Breit;
 Majumdar–Papapetrou balance; Liénard–Wiechert's formula and its O(v⁴) agreement with Darwin
@@ -186,7 +139,7 @@ kinetic energy to an event, which isn't by itself a conservation result).
 
 **Now:** Plummer, ε = `SOFTENING` (8) for every particle law, `BH_SOFTENING` (4) in
 black-hole mode; Liénard–Wiechert scales by σ³, σ = R/√(R² + ε²). Force, potential and lapse
-use the same ρ = √(r² + ε²), so they agree where they apply (audit A); the exceptions are
+use the same ρ = √(r² + ε²), so they agree where they apply; the exceptions are
 Paczyński–Wiita (raw r), Liénard–Wiechert (σ³ of the retarded distance) and the
 effective-potential plot's Yukawa exponent (raw r). Black-hole mode switches ε for every law at
 once while Paczyński–Wiita ignores it.
@@ -221,48 +174,36 @@ force = −∇V by finite differences across the kernel edge; third law to round
 
 ### 3.2 Gravity: near-zone post-Newtonian [standard]
 
-**Now** (audit A; sympy Euler–Lagrange checks `eih_check.py`, `baz_check.py`,
+**Now** (sympy Euler–Lagrange checks `eih_check.py`, `baz_check.py`,
 `breit_check.py`, each exact to 10⁻¹³ unsoftened and unretarded):
 
 - Every source under Relativity is its retarded state (position, velocity, mass, charge,
   spin, acceleration) seen from the observer's present; the toy factor
   min((1 − n̂·v)⁻³, 100) multiplies gravity (Paczyński–Wiita included), Yukawa and the two
   dipole forces, not the moving-mass Bg, the spin Bg, frame drag, tidal torque, the spin–orbit
-  gradients or 1PN (`AGENTS.md` says every other law). The lapse uses present positions.
-- **EIH is right, two-body.** `shared-1pn.wgsl:36–37` plus the Boris term 4m v × Bg reproduce
+  gradients or 1PN. The lapse uses present positions.
+- **EIH is right, two-body.** `shared-1pn.wgsl` plus the Boris term 4m v × Bg reproduce
   the harmonic two-body EIH acceleration exactly; the stats' e0 + e2 + ⅜mv⁴ is its conserved
   energy. The force is the order-reduced Euler–Lagrange force, so it isn't reciprocal (static
   pair: F₁ + F₂ = m₁m₂(m₁ − m₂)/r³) and no 1PN momentum is booked. The three-body G² terms
   are missing (summed two-body forms).
-- **The kinematic compensation exists** (`shared-1pn.wgsl:38–41`: + ½v²a_N + v(v·a_N), so the
+- **The kinematic compensation exists** (`shared-1pn.wgsl`: + ½v²a_N + v(v·a_N), so the
   relativistic momentum update gives EIH's dw/dt). It uses the unaberrated a_N even when
   gravity is aberrated or Paczyński–Wiita, and EIH evaluated at retarded positions on top of
   retarded Newtonian gravity counts retardation twice: 1PN's accuracy is void while gravity is
-  delayed. 1PN requires Relativity in the UI (`ui.js:26`), so the Relativity-off 1PN paths
+  delayed. 1PN requires Relativity in the UI (`ui.js`), so the Relativity-off 1PN paths
   (and the 1PN tree walk) are unreachable.
 - Bažański's cross term is 6m + 5M where its potential gives 2(m + M); the extra is
   order-reduction with Coulomb accelerations plus Darwin's Gq² piece, which Liénard–Wiechert
   supplies. Majumdar–Papapetrou balance is exactly zero. The full two-body coefficient is a
   symmetrization of the test-charge Reissner–Nordström limit, not independently sourced.
-- **The 1PN velocity-Verlet recompute doesn't match the force pass:** the force pass includes
-  retired sources in 1PN and `onePN.wgsl:114,169` skips them (effective weight ½), and the
-  recompute has no Breit cutoff.
+- The 1PN velocity-Verlet recompute has no Breit cutoff.
 - The moving-mass Bg sector books no energy (it's in EIH's e2, booked only with 1PN on) and is
   non-reciprocal with no gravitational field momentum booked.
-- **The Higgs and axion modulations never reach the pair or tree forces.** `cache-derived.wgsl:78`
-  resets `axYukMod` to (1, 1, 1, 0) in pass 0; the force pass (5) reads it; the field pass that
-  writes it runs after (5c). So the axion's EM scaling, the Higgs-modulated Yukawa range and
-  the Peccei–Quinn Yukawa flip have acted on nothing but the 1PN recompute, the radiation's
-  pion mass, the stats and the plot, since `46e6670` (2026-03-14). No oracle covers it.
-  (Confirmed by reading the pass order.)
-- **The quadrupole sink** (audits B, E, F; `quadrupole.wgsl`) runs once a frame with
-  dE = P·`PHYSICS_DT` (`:353`) while a frame is about 34 ticks at the default speed (8–64
-  across speeds), so gravitational and EM quadrupole losses are low by that factor and change
-  with frame rate and speed. Its gravitational power omits the trace-free zz component; it
-  uses absolute v and F, not centre-of-mass-relative, so a lone body in a uniform field or a
-  cyclotron feels a spurious drag; it removes energy by rescaling each body's w (momentum and
-  angular momentum not conserved, no recoil from its quanta); and it books each body's share
-  before clipping it to the body's kinetic energy, so a clipped body creates energy.
+- The Higgs and axion pair modulations are removed until §3.4 and §3.8 settle them (§2, bug 2).
+- The quadrupole sink is removed until the reaction below replaces it (§2, bug 3). Its faults
+  are the reaction's requirements: the whole trace-free tensor, centre-of-mass-relative motion,
+  momentum conserved with recoil from its quanta, and a body's share taken, not just booked.
 
 **Target.** Collisional N-body practice: gravity is instantaneous in the near zone, with
 post-Newtonian corrections, and radiation reaction is its own term. This gives up propagating
@@ -351,7 +292,7 @@ acceleration), geodetic −(3/2)(g × v) and Lense–Thirring −J/r³, without 
 kinetic energy (dω = −F·v·dt/L, with a 10⁻⁴ floor on |L| that breaks even that), and its
 reaction on the source is only the Boris term. Tidal torque and frame drag act on spin alone
 with no orbital reaction, so total angular momentum isn't conserved; the frame-drag torques
-of a pair sum to 2(ω_j − ω_i)(L_j − L_i)/ρ³, not zero (audit A).
+of a pair sum to 2(ω_j − ω_i)(L_j − L_i)/ρ³, not zero.
 
 **Target:** first, **one canonical spin J** per body (§2, bug 11), from which the Kerr
 parameter a = J/M, the moments and the drawn rate all follow, and which every event updates.
@@ -378,7 +319,7 @@ correction; the spoke's precession per orbit against the Hamiltonian's.
 
 ### 3.4 Yukawa [standard; one decision]
 
-**Now** (audit A): Yukawa from the retarded state with the toy factor under Relativity,
+**Now**: Yukawa from the retarded state with the toy factor under Relativity,
 exactly −∇ of the booked −g·m_i m_j e^{−μρ}/ρ at fixed μ; scalar Breit at 1PN, its Lagrangian
 re-derived from the Klein–Gordon propagator and matched exactly. With the Higgs on the range
 is μ·√(h_i h_j), with no force from ∇μ and no back-reaction on φ, but by the pass-order fault
@@ -401,10 +342,10 @@ physical reading to protect.
 
 ### 3.5 Electromagnetism [standard]
 
-**Now** (audit B; `pair-force.wgsl:213–243`, `boris-fused.wgsl`, `radiation.wgsl:36–160`):
+**Now** (`pair-force.wgsl`, `boris-fused.wgsl`, `radiation.wgsl`):
 
-- The field is Liénard–Wiechert as `AGENTS.md` states, E as a kick and B = n̂ × E as the Boris
-  rotation, both scaled by σ³ with σ from the *retarded* distance. At ε = 0 the applied force
+- The field is Liénard–Wiechert, E = q[(n̂ − β)(1 − β²)/(κ³R²) + n̂ × ((n̂ − β) × β̇)/(κ³R)] as a kick
+  and B = n̂ × E as the Boris rotation, with κ floored at `LW_KAPPA_MIN` (1/κ³ ≤ 100), both scaled by σ³ with σ from the *retarded* distance. At ε = 0 the applied force
   matches the Darwin force to O(v⁴) (5·10⁻⁷ of Coulomb at v = 0.05, 2·10⁻³ at 0.4). At ε = 8 it
   doesn't: σ³(R_ret) isn't even under v → −v, so within about 2ε the force has a time-odd part
   of 4%, 7.5% and 14% of Coulomb at v = 0.05, 0.1, 0.2 (pair at R = 8): an O(v) dissipative
@@ -429,7 +370,7 @@ physical reading to protect.
   the reaction raises KE creates energy, and its Schott part is mixed in. Photons carry no
   recoil; momentum balances only on average through the −v term.
 - Pending radiation (`radAccum`) vanishes when its body dies, merges or is absorbed.
-- The EM quadrupole sink (`quadrupole.wgsl:347–386`) uses Q = Σ q x x, neither trace-free nor
+- The EM quadrupole sink (`quadrupole.wgsl`) uses Q = Σ q x x, neither trace-free nor
   with the factor 3; its dE is P·`PHYSICS_DT` once a frame whatever the frame's length; and it
   books dE before clipping it to the body's KE, so a clipped body creates energy.
 - Without Relativity, Coulomb, Biot–Savart and the dipoles act from present positions, Coulomb
@@ -520,7 +461,7 @@ residual ledger; Darwin energy plus the residual exchange constant (extends the 
 
 ### 3.6 Black holes [synthesis on standard pieces]
 
-**Now** (audit C; `pair-force.wgsl:117–181`, `compute-stats.wgsl:400`, `collision.wgsl:213–272`;
+**Now** (`pair-force.wgsl`, `compute-stats.wgsl`, `collision.wgsl`;
 a CPU transcription reproduces the measured 25.1):
 
 - **The force isn't the booked potential's gradient, and isn't reciprocal.** Body i feels
@@ -529,7 +470,7 @@ a CPU transcription reproduces the measured 25.1):
   0.010, the booked gradient is 0.026: the pair gains momentum toward the heavier hole. Under
   Relativity the source's horizon, mass and charge are retarded and the toy factor applies.
   `BH_SOFTENING` touches the other laws, the lapse and the step rule, never Paczyński–Wiita
-  (`AGENTS.md` says otherwise). The tree treats a node as one hole of the summed mass.
+  The tree treats a node as one hole of the summed mass.
 - **The plateau.** Inside a horizon the gap pins at 0.25: the booked potential is flat, the
   force is a constant 16·m_i m_j toward the centre at any depth.
 - **Two capture rules.** Overlapping horizons merge by the ordinary rule (rest masses summed,
@@ -554,12 +495,6 @@ a CPU transcription reproduces the measured 25.1):
   1/√3 and pays m_e, and leptons past the `MIN_MASS` floor are free. Hawking's isotropic
   emission creates about e²/2M of recoil energy per photon, and the final burst's
   charge-shedding leptons take no recoil and unpaid kinetic energy.
-- **Superradiance** drops both the hole's mass by dE and its spin by dJ = dE/μ, and the stats
-  count mass and spin energy separately, so the bodies lose about dE + Ω·dJ for the field's
-  dE; a moving hole loses dE·w of momentum to nothing.
-- **Bounce mode's spin torque on the second body has the wrong sign** (`collision.wgsl:644`,
-  `angW -= r2·Ft·dt/I2`): ΔL_total = +3·10⁻⁴ per 0.01 of impulse against −1.6·10⁻⁵ with it
-  flipped; Hertz contact energy and friction are unbooked.
 
 **Target:**
 
@@ -611,8 +546,7 @@ a CPU transcription reproduces the measured 25.1):
   whose rest mass exceeds what the hole may give isn't emitted: a threshold, as Schwinger's
   has. An over-extremal hole has no area to respect, only E < e·M/Q; it sheds near the
   lepton's rest mass, stops when it can't pay, and the clamp stays the backstop with its
-  charge change booked. (Why paying the kinetic energy once made the discharge run away,
-  as `AGENTS.md` records, this argument doesn't identify: launch versus asymptotic energy,
+  charge change booked. (Why also subtracting the lepton's kinetic energy made the discharge run away, this argument doesn't identify: launch versus asymptotic energy,
   finite quanta, recoil and changing J all enter. The plateau-and-capture loop is the mass
   runaway, independently.)
 - **Hawking** recoils exactly (M₁² = M₀² − 2M₀e for an isotropic rest-frame photon), and the
@@ -638,7 +572,7 @@ angular momentum.
 
 ### 3.7 The Higgs field [standard: the Standard Model's Yukawa structure]
 
-**Now** (audit D, with live measurements in a headless `GPUPhysics`):
+**Now**:
 
 - V = −½εμ²φ² + ¼μ²φ⁴, μ² = m_H²/2, and the evolution is the covariant Klein–Gordon equation for
   the metric ansatz (correct), plus damping 2m_H·φ̇, a viscosity ν∇²φ̇ and a thermal term.
@@ -646,7 +580,7 @@ angular momentum.
   time) at fixed momentum, after the force pass (forces use the old mass, the kick the new);
   spin isn't rescaled, so spin angular momentum changes unbooked. The force is
   +g·baseMass·sign(φ)·∇φ (no 1/γ) and the source +g·baseMass/γ, never odd in φ
-  (`field-forces.wgsl:121–184`, `field-deposit.wgsl:97–116`). The mass alone,
+  (`field-forces.wgsl`, `field-deposit.wgsl`). The mass alone,
   L = −baseMass·|φ|·dτ, would give F = −baseMass·∇|φ|/γ and J = −baseMass·sgn(φ)/γ; the code's F
   and J have the opposite signs and don't come from one action between them either (the force
   carries sign(φ) and lacks 1/γ, the source lacks the sign; Codex). Measured: on a ramp of |φ| from 0.6 to 1.4 a body of 0.1 is pushed toward
@@ -658,11 +592,10 @@ angular momentum.
   energy appears with nothing debited.
 - **A thermal term the docs don't mention:** every substep each body's kinetic energy is
   deposited per cell (raw, not per area, so resolution-dependent) and enters as
-  μ²_eff = εμ² − thermal (`gpu-fields.js:538–541`, `field-evolve.wgsl:91`). It isn't in any
+  μ²_eff = εμ² − thermal (`gpu-fields.js`, `field-evolve.wgsl`). It isn't in any
   potential, gives bodies no back-force and is booked nowhere; a body with kinetic energy
   about 1 would melt the vacuum under it at m_H = 0.5 (suspected by arithmetic).
-- **Viscosity is real dissipation:** ν∇²φ̇ with ν = 0.5/√(1/dx² + 1/dy²) (`field-evolve.wgsl:116–117,
-  187–188`); measured, a merge's field energy fell 23% in about 1.8 time units with damping
+- **Viscosity is real dissipation:** ν∇²φ̇ with ν = 0.5/√(1/dx² + 1/dy²) (`field-evolve.wgsl`); measured, a merge's field energy fell 23% in about 1.8 time units with damping
   off. The comment that it vanishes for physical modes is wrong.
 - Z₂ is broken by the reset, the NaN guard and the drift fix-up (all +1), the exterior cells of
   an open edge (+1), the positive source, and merge pulses (all positive). The Kibble–Zurek
@@ -679,7 +612,7 @@ angular momentum.
 - the energy is Σ m_a γ_a plus the field's, with no separate interaction term;
 - **the discrete force is the derivative of the discrete energy** (Codex): the body's mass is
   m(Σ_g S_g(x)φ_g), so its force needs Σ_g (∇S_g)φ_g, the gradient of the PQS weights. The code
-  interpolates a precomputed central-difference grid gradient (`field-forces.wgsl:55–88`), a
+  interpolates a precomputed central-difference grid gradient (`field-forces.wgsl`), a
   different operator even in the interior; that is what has to change for the action to
   conserve energy on the grid.
 
@@ -705,7 +638,7 @@ subcell positions; a quench with matter: walls pin to bodies.
 
 ### 3.8 The axion field
 
-**Now** (audit D): two channels.
+**Now**: two channels.
 
 - **Single body:** force g(q² + s·m)∇a, source g·q² (+ g·s·m/γ for the Peccei–Quinn part),
   booked interaction −g·q²·a − g·s·m·a. These three agree as U = −J·a, and the sign matches a
@@ -713,13 +646,13 @@ subcell positions; a quench with matter: walls pin to bodies.
   source has, and the force has none.
 - **Pairs:** `axModPair = √(axMod_i·axMod_j)` multiplies Coulomb, the Liénard–Wiechert E, the
   dipoles and Bz (not gravity), with no source from the pair energy and no force from ∇a. It
-  multiplies by (1 + ga), where `config.js:121`'s L = −(1 + ga)F²/4 gives e²_eff = e²/(1 + ga):
+  multiplies by (1 + ga), where `config.js`'s L = −(1 + ga)F²/4 gives e²_eff = e²/(1 + ga):
   the opposite sign. By the pass-order fault (§3.2) the forces never apply it; the stats do
   (measured: the booked Coulomb energy 10% larger at a = 2), so the ledger books work no force
   did.
 - `yukMod` (Peccei–Quinn) multiplies the Yukawa pair and scalar Breit, unrelated to the
   single-body PQ term, which is linear in a.
-- The field is clamped to ±2 without zeroing ȧ (`field-evolve.wgsl:247`).
+- The field is clamped to ±2 without zeroing ȧ (`field-evolve.wgsl`).
 
 **The name.** In the symmetry plane the electric field lies in the plane and the magnetic
 field along z, so E·B = 0 on the reflection plane and the axion's aF F̃ coupling vanishes
@@ -761,7 +694,7 @@ uniform a₀ feeling Z(a₀)⁻¹ of Coulomb is necessary and far from sufficien
 
 ### 3.9 Grid gravity
 
-**Now** (audit D): Φ_F is sourced by the fields' energy density ρ = ½φ̇² + ½(∇φ)² + V, Φ_P by
+**Now**: Φ_F is sourced by the fields' energy density ρ = ½φ̇² + ½(∇φ)² + V, Φ_P by
 the bodies' mass, each convolved with −1/√(r² + ℓ²) by circular FFT for every boundary (an open
 domain sees image masses). The fields feel Φ_F + Φ_P; the bodies feel −m∇Φ_F, Newtonian, no γ
 or e^Φ, dispatched once (the header says once per field). The particle's own Φ_P sources only
@@ -788,7 +721,7 @@ zero-padded convolution on open domains (Hockney and Eastwood) and circular only
 
 ### 3.10 Field boundaries and damping [standard]
 
-**Now** (audit D): every open boundary reflects. Bounce is Neumann, despawn Dirichlet to the
+**Now**: every open boundary reflects. Bounce is Neumann, despawn Dirichlet to the
 vacuum (+1 for the Higgs, 0 for the axion) through ghost cells, and `pqsGradient` drops
 out-of-grid cells while the grid gradients use the ghosts, so the two disagree near an edge.
 Damping (Higgs e^Φ·2m_H·φ̇, axion e^Φ·g·m_a·ȧ) and viscosity act on the grid frame's φ̇, an
@@ -804,9 +737,8 @@ the absorbing layer, not +1. The quench's mass ramp and the Langevin bath stay, 
 
 ### 3.11 Cosmology
 
-**Now** (audit F; `gpu-physics.js:2229–2279, 2644–2761`, `expansion.wgsl`, `gpu-backend.js:15–16,
-107–108`): the Strang split is as `AGENTS.md` says (two √r half-stretches around substeps at
-the midpoint a), with chunks min(16, ⌈H·dt/0.02⌉) from H sampled once at the frame's start:
+**Now** (`gpu-physics.js`, `expansion.wgsl`, `gpu-backend.js`): the Strang split (two √r half-stretches around substeps at the
+midpoint a), with chunks min(16, ⌈H·dt/0.02⌉) from H sampled once at the frame's start:
 enough for the imposed schedules (H·dt ≤ 0.25 at the slider's top), not for the Friedmann
 closure, whose H is unbounded; the cap of 16 is undocumented. `expansionWork` is exact for
 kinetic energy, photons, pions and the fields; the potentials' share is first order
@@ -831,21 +763,12 @@ the closure's matter content is stated as an approximation.
 
 ### 3.12 Bosons and pools
 
-**Now** (audit E):
+**Now**:
 
-- **The pools only append.** Every emitter `atomicAdd`s `phCount` or `piCount` and only an
-  overflow rolls it back; only `reset()` zeroes them (`gpu-physics.js:3368–3373`), and the
-  culls clear flags without freeing slots. The counts are high-water marks that size every
-  boson dispatch, and after 16384 photons (8192 pions and leptons) emitted since the last
-  reset every emission fails: Larmor and quadrupole energy waits as pending, while pion-decay
-  products, annihilation and merge photons and the Hawking final burst are destroyed.
-  `AGENTS.md`'s "sized by the live counts" is wrong. (Confirmed by reading every write.)
-- **Boson → body gravity is dead:** `computeBosonGravity` adds to `allForces.f0` only
-  (`boson-tree.wgsl:130–133`), which the next substep clears before anything reads it.
-- **Pion and lepton Coulomb has no 1/m** (`bosons.wgsl:116–118`, `bosons-tree-walk.wgsl`,
-  `boson-tree.wgsl:235`): the kick goes straight into w, 6.7× low for pions and 100× for
-  leptons, static and without recoil on the body. Photon and pion lensing gives the bodies
-  no recoil either.
+- **The pools pack every frame** (§2, bug 1), but a pool full of live bosons still drops a
+  multi-product event's products.
+- **Boson → body gravity is removed** (§2, bug 4); photon and pion lensing gives the bodies no
+  recoil either.
 - Boson–boson gravity and pion–pion Coulomb kick once a frame with the frame's dt (up to
   0.5) while lensing steps per substep.
 - Culls are by age: photons past 256, leptons past 512 (their energy field reused as an age),
@@ -878,7 +801,7 @@ the closure's matter content is stated as an approximation.
 
 ## 4. The integrator and resolution
 
-**Now** (audit E; `main.js:586–605`, `gpu-backend.js:127–130`, `gpu-physics.js:2631–2637`):
+**Now** (`main.js`, `gpu-backend.js`, `gpu-physics.js`):
 
 - **The step depends on the wall clock.** A frame's simulated time is `ticks·PHYSICS_DT`
   from the frame's wall-clock time × speed (about 0.27 at the default speed and 60 Hz, 0.07–0.5
@@ -909,7 +832,7 @@ the closure's matter content is stated as an approximation.
   run in its wall time, so a figure behaves the same at any frame rate. **Bitwise
   reproducibility isn't pursued** (a9, 2026-10-27: it was for replay, which was set aside), so
   the emission RNG keyed by `u.frameCount`, atomic claims in collisions and emission
-  (`collision.wgsl:180–188`) and merge identities stay as they are. What still changes is
+  (`collision.wgsl`) and merge identities stay as they are. What still changes is
   feedback that makes the *dynamics* depend on the frame rate: the step's a_max read back from an
   older frame and the Friedmann density from a delayed readback move onto the GPU or to step
   boundaries, because they bias results, not for bit-equality (Codex listed both).
@@ -929,7 +852,7 @@ the closure's matter content is stated as an approximation.
 
 ## 5. The ledger
 
-**Now** (audit F; `stats-display.js:75–106`):
+**Now** (`stats-display.js`):
 
 - E = rest + linear kinetic + spin kinetic + potential (with the field–particle interaction) +
   Darwin + the fields' slab energies + radiated (photons, pions and leptons with rest mass,
@@ -940,19 +863,12 @@ the closure's matter content is stated as an approximation.
   are in it, nothing else.
 - Angular momentum is orbital plus spin only, about a naive centre of mass on raw positions,
   so **on a torus every wrap jumps it by about domain·p**: meaningless there.
-- **Pion emission over-books:** `radiation.wgsl:382` adds to `yukawaRadAccum`, which the ledger
-  counts as pending, while the body keeps its kinetic energy; the energy is taken only at
-  emission, and only if the body's kinetic energy covers it.
 - Unbooked, beyond those in §3: the uniform external g and E do work with no column; field
   damping, numerical clamps and NaN resets in `field-evolve.wgsl`; the Langevin bath (outside
   the friction bracket); the quench's ∂V/∂t and its thermal deposit; Hertz contact and
   friction; wall impulses and despawns (mass, energy, momentum, angular momentum and charge
   leave with no column); boson–boson gravity and pion Coulomb (no potential, photons pulled 2×
   and bodies 1×); photon lensing (no recoil, no redshift). There is no charge ledger at all.
-- Three discrete gradient energies (stats with clamped edges and centred differences, the
-  ledger wrapping, the evolution's 5-point Laplacian) disagree, and not only at the seams: a
-  checkerboard mode has zero centred gradient and the Laplacian's largest stiffness (§2, bug
-  12; Codex).
 - Relativity off, the stats book ½mv² while capture, merge, absorption and Larmor use (γ−1)m.
 
 **Target:** E_total = conservative energies + Σ metered columns, each column certified by an
@@ -981,7 +897,8 @@ the bath's fluctuation–dissipation balance, the expansion's exact work).
 
 ## 6. Oracles
 
-New ones by section, in `tests/physics-validation.html`, each with its analytic number: §3.1 the
+The numbers that certify each section. Each becomes a check in `tests/physics-validation.html`
+only where a failure would be silent and its mechanism has no check yet (`AGENTS.md`, Tests): §3.1 the
 kernels (scalar and tensor) against finite differences; §3.2 binary binding at v = 0.16, the
 hierarchical triple's EIH energy, Peters' da/dt and de/dt, the instantaneous Schott balance,
 the rotating equilateral triple's zero loss; §3.3 spin–orbit periastron and the spoke's
@@ -1105,36 +1022,7 @@ fields carrying energy through a closed surface; the covariance meter is this pa
 
 ## 10. Review log
 
-**Codex (astra, extra-high effort, read-only), 2026-10-27, on `fb4d1ab`:** "Do not ratify this
+Codex (astra, read-only) reviewed the first draft (`fb4d1ab`, 2026-10-27): "Do not ratify this
 draft yet. The main §2 bug reports are real, but several target equations and conservation
-claims are wrong." It confirmed bugs 1–10 by reading the code and found two more (11, 12); it
-checked the EIH Lagrangian (LL 106.17), the 2.5PN coefficients (Blanchet 219–220), the EM
-quadrupole power (LL 71.5), ρ = γκR for uniform motion and E·B = 0 on the plane; and it found
-these wrong, each corrected above:
-
-- the area theorem's inequality, reversed, and an equivalence that should be an implication
-  (§3.6);
-- Paczyński–Wiita's 4M and 6M under relativistic kinetics, where they are 4.732M and 7.212M
-  (§3.6; checked here numerically);
-- the remnant booked at the pair's energy *and* a binding deficit emitted (§3.6);
-- the self-force's sign for the signature in use, differencing along the reacted path called
-  reduction of order, and the equivalence-principle argument for leaving gravity out (§3.5);
-- reaction work emitted as flux, ignoring the Schott term; every-pair 2.5PN, refuted by the
-  rotating equilateral triple (§3.2);
-- Bekenstein as endpoint factors (§3.8); scalar softening for tensor terms (§3.1); the G²
-  energy's sign (§3.2); the Tolman derivative's sign and the point body's source (§3.9);
-- the discrete force for the Higgs action, and the field energy's checkerboard blind spot
-  (§3.7, §2);
-- the matter effective potential and "walls end on bodies" (§3.7);
-- the gravitational-LW 2/3 argument (§8.1);
-- "one action per coupling" without the combined theory's order reduction and mixed
-  derivatives (§1.1);
-- replay guaranteed by the step schedule alone, and the step criteria's gaps (§4);
-- pool compaction as the whole fix (§2, §3.12); quintic Hermite through impulses (§3.5);
-- a ledger closed by definition, and accounting columns as Friedmann stress-energy (§1.3,
-  §3.11);
-- and, most consequentially, that two of the "contained" bug fixes would switch on defective
-  couplings (§2, bugs 2 and 3).
-
-Where this file says "Codex" without more, the point came from this review. The thread is
-`worldline-model-review` (gaslamp), job `cx-20261027-085629-c762`.
+claims are wrong." Each correction is folded into the section it changed; where this file says
+"Codex" without more, the point came from this review (gaslamp thread `worldline-model-review`).
