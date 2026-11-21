@@ -61,7 +61,7 @@ export default class SpacetimeView {
     }
 
     /**
-     * Time shown above the plane: a prescribed body's known future (roadmap §6.2), a fraction of
+     * Time shown above the plane: a prescribed body's known future, a fraction of
      * the depth, while there is one; free bodies' futures are blank.
      */
     future() {

@@ -66,7 +66,7 @@ export const TIDAL_STRENGTH = 64;
 // angle θ ramps log-linearly with the count from THETA_MIN at TREE_ON to THETA_MAX at TREE_FULL
 // (the body cap), so the error at the switch is far under what shows and grows only with the
 // count. TREE_ON is where the walk at THETA_MIN costs what the pairwise loop does on an open
-// domain (M5 Max; docs/second-pass/bh-notes.md has the table).
+// domain (M5 Max).
 export const TREE_ON = 1536;
 export const TREE_OFF = 1152;
 export const THETA_MIN = 0.1;

@@ -125,7 +125,7 @@ mkdirSync(OUT, { recursive: true });
 
 // ── The inks, read from the design system rather than copied ──
 const here = new URL('.', import.meta.url).pathname;
-const tokenPath = [opt.tokens, process.env.WL_TOKENS, resolve(here, '../../../../../shared/tokens.js'), '/Users/a9lim/Work/a9lim.github.io/shared/tokens.js'].filter(Boolean).find((p) => existsSync(p));
+const tokenPath = [opt.tokens, process.env.WL_TOKENS, resolve(here, '../../../shared/tokens.js'), '/Users/a9lim/Work/a9lim.github.io/shared/tokens.js'].filter(Boolean).find((p) => existsSync(p));
 if (!tokenPath) { console.error('shared/tokens.js not found; pass --tokens'); process.exit(2); }
 const win = {};
 const el = { dataset: {}, style: { setProperty() {} }, appendChild() {}, setAttribute() {}, classList: { add() {}, remove() {} } };

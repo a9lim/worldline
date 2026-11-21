@@ -1,4 +1,4 @@
-// ─── Radar (roadmap §6.4) ───
+// ─── Radar ───
 // Radar time is a slicing computed from the geometry, with nothing reflecting (Bondi; Dolby and
 // Gull 2001): an event E that the observer's light can reach, leaving at its proper time τ₁, and
 // whose light reaches the observer at τ₂, has radar time (τ₁ + τ₂)/2 and radar distance
@@ -8,7 +8,7 @@
 // and a prescribed red body. A simulated body's future isn't computed, and radar waits on it.
 //
 // A line is { pos(t) → [x, y], tau(t) } in lab coordinates and world-line time, with speed
-// under 1. Flat space, straight light, an open domain (§6.1).
+// under 1. Flat space, straight light, an open domain.
 import { curveAt, isKnown } from './prescribed.js';
 import { FRAME_BOOST, FRAME_ACCEL, FRAME_PARTICLE } from './frames.js';
 

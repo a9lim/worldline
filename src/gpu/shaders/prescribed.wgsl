@@ -11,7 +11,7 @@
 // The agent that drives it pays: what the substep did to the body (every force, an external
 // field) it undoes, so the four-momentum it adds is the curve's minus the state the substep
 // left, summed over the bodies here and added to agentAccum. Over a run that is
-// W_agent = Δ(γm) − ∫F_other·v dt (roadmap §6.2): the forces' work is the step from the curve
+// W_agent = Δ(γm) − ∫F_other·v dt: the forces' work is the step from the curve
 // to the state left, and the agent's the step back. Read and cleared with the stats.
 //
 // The clock is the curve's proper time, exact (prescribed clocks run flat: the gravitational
@@ -19,7 +19,7 @@
 // and precesses by Thomas's (γ²/(γ+1))·(a × v) of the curve's whole acceleration, all of it
 // the agent's push.
 //
-// The hand (roadmap §6.7) is a prescribed line written live: a held body's record (kind
+// The hand is a prescribed line written live: a held body's record (kind
 // CURVE_HELD) carries the pointer's position and the pursuit's state, which this pass advances.
 // The body pursues the pointer in simulation time with a velocity it would like, (target − x)/
 // HAND_REACH capped at HAND_SPEED, and an acceleration toward it, over HAND_RESPONSE, capped at

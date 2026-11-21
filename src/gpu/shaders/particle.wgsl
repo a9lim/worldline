@@ -22,7 +22,7 @@
 //     simultaneity that bends its spoke.
 // Marks show only on bodies at least 5 px across their radius; the edge is antialiased.
 //
-// Under Seen (roadmap §6.9) a body is drawn as the observer sees it, each point at its own
+// Under Seen a body is drawn as the observer sees it, each point at its own
 // retarded time: the observer sits at the origin of the view's coordinates and receives now,
 // so the point X of the drawing is seen as it was |X| ago, |X| − |X_c| before the centre the
 // slicer found on the cone. The body moving uniformly over that while (v its velocity there),

@@ -8,7 +8,7 @@
 // Simulation.reset() and kept meanwhile as sim.figureRun for the caption. `run.select` is the
 // body a figure opens selected, `run.view` the observer it put the view in.
 //
-// Its knobs (roadmap §1.3) are the numbers its caption states that a visitor can change, set in
+// Its knobs are the numbers its caption states that a visitor can change, set in
 // the caption (caption.js) and under its row in the list of figures (ui.js). A knob over a
 // `store` key is that setting, live; any other holds a value, from `value`, that spawn and tick
 // read as run.knobs[key]: live for what they read every time (the beam's speed), `rerun` for an
@@ -100,7 +100,7 @@ export const PRESETS = {
             // proper acceleration 0.5 and coming home to rest beside home, then out again, so
             // each trip starts as the last ends. Over a trip it ages τ per period against home's
             // period: √(1 − v²) while it coasts, more in the turns. It opens selected, so its
-            // ticks send light and, tilted, draw their two nows on home's line (roadmap §6.4)
+            // ticks send light and, tilted, draw their two nows on home's line
             const y = sim.domainH / 2, x = 3, alpha = 0.5, v = run.knobs.v;
             const g = 1 / Math.sqrt(1 - v * v), turn = (g - 1) / alpha;
             const coast = (sim.domainW - 2 * x - 2 * turn) / v;
@@ -330,7 +330,7 @@ function eject(sim, run, t) {
     if (idx >= 0) run.blobs.push({ idx, t, theta: th, v });
 }
 
-// The list of figures in its chapters (roadmap §4): the Figure tab rules them off, and the
+// The list of figures in its chapters: the Figure tab rules them off, and the
 // numbering runs on through them
 export const CHAPTERS = [
     { key: 'clocks', figures: ['twinBounce', 'wheel', 'accelerated'] },

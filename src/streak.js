@@ -1,4 +1,4 @@
-// ─── The streak plate (roadmap §6.5) ───
+// ─── The streak plate ───
 // Under Seen, a band under the scene: a planar eye sees a one-dimensional image, directions on a
 // circle, and stacked over the observer's proper time these images make a picture of everything
 // it saw: direction across (the plate's reference direction at the centre, ±180° at the edges),

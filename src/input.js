@@ -34,13 +34,13 @@ export default class InputHandler {
         // Deferred click: GPU hit tests resolve a frame or two later
         this._pendingClick = null; // { pos: Vec2, rightButton: bool }
 
-        // The hand (roadmap §6.7): a press on a body that then drags moves it, a prescribed line
+        // The hand: a press on a body that then drags moves it, a prescribed line
         // written live (GPUPhysics.grip, prescribed.wgsl); letting go throws it at its last
         // velocity. A press waits on its hit test: { hit } once it has resolved
         this._press = null;
         this.gripping = -1;         // the held slot
 
-        // The sheet as a handle (roadmap §6.8): tilted, in the lab's coordinates, an edge of the
+        // The sheet as a handle: tilted, in the lab's coordinates, an edge of the
         // sheet of the present drags; the time it leads by over its distance from the camera's
         // centre is the observer's velocity, so the observer's present tilts with it
         this._sheet = null;         // { n, d, y0, u0 } while dragging

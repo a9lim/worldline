@@ -110,7 +110,7 @@ fn expandPions(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocat
             pi.posY *= eu.ratio;
             let w0 = vec2(pi.wX, pi.wY);
             let w1 = w0 / eu.ratio;
-            // Pions and leptons always carry true proper velocity (AGENTS.md, Bosons)
+            // Pions and leptons always carry true proper velocity
             work = kinetic(pi.mass, w0, true) - kinetic(pi.mass, w1, true);
             pi.wX = w1.x;
             pi.wY = w1.y;

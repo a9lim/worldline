@@ -6,7 +6,7 @@
 // S sparse torus. Per N and θ: the tree's rms force error against the pairwise sum (allForces.f0
 // after one update(0.001)), and the force pass's own GPU time (pairForce / treeForce timestamps from
 // GPUProfiler, the median of 30 frames, the lowest of ROUNDS rounds interleaving the variants).
-// AGENTS.md (Forces) has the rule this picked and why periodic domains stay pairwise.
+// AGENTS.md (force summation) has the rule this picked and why periodic domains stay pairwise.
 import { createRequire } from 'node:module';
 import { writeFileSync } from 'node:fs';
 const require = createRequire('/Users/a9lim/Work/Exploratory/package.json');

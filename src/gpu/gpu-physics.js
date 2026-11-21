@@ -824,7 +824,7 @@ export default class GPUPhysics {
     }
 
     /**
-     * The streak plate (roadmap §6.5): after sliceFrame() under Seen, what the observer saw over
+     * The streak plate: after sliceFrame() under Seen, what the observer saw over
      * its last rows·dTau of proper time (frame-slice.wgsl streakRows), read back for
      * StreakPlate; `forward` is the plate's reference direction. Skipped while a readback is out.
      */
@@ -1662,7 +1662,7 @@ export default class GPUPhysics {
             b.bosonTreePlan, totalBosons);
 
         // Bodies don't feel the bosons' gravity: a pull that answered the lensing reciprocally
-        // needs each boson's projected impulse (docs/MODEL.md §3.12)
+        // needs each boson's projected impulse (docs/MODEL.md)
         if (this._gravityEnabled) {
             // applyBosonBosonGravity: boson <-> boson mutual gravity
             const passBosonBoson = encoder.beginComputePass({ label: 'applyBosonBosonGravity' });
@@ -2030,7 +2030,7 @@ export default class GPUPhysics {
     }
 
     /**
-     * Add a prescribed body (roadmap §6.2): `curve` (src/prescribed.js) gives its world line, t0
+     * Add a prescribed body: `curve` (src/prescribed.js) gives its world line, t0
      * on the world-line clock (conformalTime), and the body starts where the curve is now. Its
      * clock reads `tau` now unless the curve sets tau0. A body born at −∞ (a figure's initial
      * condition) has a past too, the curve's, written into its ring, so it acts at once with the
@@ -2054,7 +2054,7 @@ export default class GPUPhysics {
     }
 
     /**
-     * The hand (roadmap §6.7): take hold of slot idx, pursuing the pointer at lab (x, y) from the
+     * The hand: take hold of slot idx, pursuing the pointer at lab (x, y) from the
      * body's own state on the next substep (prescribed.wgsl). One body is held at a time.
      */
     grip(idx, x, y) {

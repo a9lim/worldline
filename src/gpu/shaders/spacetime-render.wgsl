@@ -1228,7 +1228,7 @@ fn vs_pierce(@builtin(vertex_index) vid: u32, @builtin(instance_index) s: u32) -
     return out;
 }
 
-// ─── The accelerated observer's horizons (roadmap §6.6) ───
+// ─── The accelerated observer's horizons ───
 // Its world line is the hyperbola about a corner 1/α behind it (frame-slice.wgsl, kind 6:
 // FrameState.omega is α, phi n̂'s angle). The null planes through the corner, (x − c)·n̂ = ±(t − t_c),
 // bound what it can ever see (the future one: events beyond it never send it light) and what it
@@ -1373,7 +1373,7 @@ fn fs_event(in: POut) -> @location(0) vec4<f32> {
     return vec4(rgb * a, a);
 }
 
-// ─── The known future (roadmap §6.2) ───
+// ─── The known future ───
 // A prescribed body's world line is given, so its future is known: drawn from its curve above
 // the present, up to params.future, faint and dashed, a hollow bead at each beadStep of its
 // proper time, fading as it rises. Free bodies' futures stay blank. Each segment is its own quad,
@@ -1467,7 +1467,7 @@ fn fs_future(in: VOut) -> @location(0) vec4<f32> {
     return vec4(in.color.rgb * a, a);
 }
 
-// ─── Ticks' light (roadmap §6.4) ───
+// ─── Ticks' light ───
 // The selected body's beads are its clock's ticks, and each tick's light is drawn: where its
 // future light cone crosses the present, a ring growing at c, and tilted, the null ray to the
 // event where it reaches each other world line (h = (t − t_k) − |x(t) − x_k| rises along a
@@ -1725,7 +1725,7 @@ fn vs_tickMark(@builtin(vertex_index) vid: u32, @builtin(instance_index) idx: u3
     return out;
 }
 
-// ─── Simultaneity at the ticks (roadmap §6.4) ───
+// ─── Simultaneity at the ticks ───
 // Each of the selected body's ticks has two nows on every other world line: its rest frame's,
 // the plane t − t_k = u_k·(x − x_k), and radar's, the events whose radar time (τ₁ + τ₂)/2 is the
 // tick's, τ₁ when the body's light leaves to reach the event and τ₂ when the event's light comes
@@ -1735,7 +1735,7 @@ fn vs_tickMark(@builtin(vertex_index) vid: u32, @builtin(instance_index) idx: u3
 // rises with t). They agree for a body that moves uniformly; for the travelling twin the rest
 // frame's sweep across home's line at the turn, and radar's stay even. Radar needs the body's
 // future: a prescribed body's curve has it, and a free body's radar events appear once their
-// light has come back. An open domain only (§6.1).
+// light has come back. An open domain only.
 //
 // simulTrace, a workgroup per tick and receiver, solves them into simul once a frame: SIM_PTS
 // points of the radar trace (x, y, t, 1), the tick first and the event last, then the rest

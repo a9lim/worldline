@@ -14,11 +14,11 @@
 // The lagged view sets t_A = now − |u|γ·max(x′·û) over the visible rectangle (plus any
 // scrub), so the whole visible slice lies in the computed past.
 //
-// Seen (fp.seen, roadmap §6.3): what the observer sees instead of what it measures. Each world
+// Seen (fp.seen): what the observer sees instead of what it measures. Each world
 // line is cut by the observer's past light cone at its anchor, which is all computed past, so
 // there is no lag (only the scrub's). The event a body is seen at, boosted into the observer's
 // coordinates, lies in its aberrated direction at the distance its light travelled. Before a
-// source's oldest sample its history is unavailable, and sight doesn't extrapolate it (§6.1).
+// source's oldest sample its history is unavailable, and sight doesn't extrapolate it.
 //
 // Prepended with the shared prefix and shared-worldline.wgsl.
 
@@ -314,7 +314,7 @@ fn frameAnchor(@builtin(local_invocation_index) lid: u32) {
         uNow = fp.boost;
         st.aNow = wrapToDomain(fp.origin + fp.boost * (fp.nowT - fp.refT));
     } else if (fp.kind == 6u) {
-        // Accelerated (roadmap §6.6): at rest at the origin at refT, proper acceleration α along
+        // Accelerated: at rest at the origin at refT, proper acceleration α along
         // n̂, so w = α(t − refT) and x = origin + n̂(γ − 1)/α, the hyperbola about its corner
         let a = max(length(fp.boost), 1e-6);
         let n = fp.boost / a;
@@ -529,7 +529,7 @@ fn sliceWorldLines(@builtin(global_invocation_id) gid: vec3u) {
     viewClocks[k] = vec4(q.tau, phase, select(theta, theta - st.phi, fp.kind == 4u), lapse);
 }
 
-// ─── The streak plate (roadmap §6.5) ───
+// ─── The streak plate ───
 // What the observer has seen, as a picture: row k is the reception event R_k on its world line
 // k·dTau of its proper time before the anchor (row 0 is now), and each source's entry there is the
 // direction the observer saw it in at R_k, in its rest frame against the plate's reference

@@ -1,5 +1,5 @@
 // ─── Prescribed world lines ───
-// A prescribed body's world line is given, not computed (roadmap §6.2): it sources every law
+// A prescribed body's world line is given, not computed: it sources every law
 // like any body and responds to nothing, and the agent that drives it pays. These are its
 // curves, evaluated here for the host (the known past written into the ring at spawn, the
 // figures' predictions, the oracles) and in shared-prescribed.wgsl for the GPU (prescribed.wgsl
@@ -19,7 +19,7 @@
 //                (the twin's traveller): a period of four turns of W/α (W = γv) and two coasts
 // Speeds stay under c: a circle's r|ω|, an oscillation's amp·ω and a shuttle's v below 1.
 //
-// The hand (roadmap §6.7) is a sixth kind, 'held': no curve but a pursuit of the pointer that
+// The hand is a sixth kind, 'held': no curve but a pursuit of the pointer that
 // prescribed.wgsl integrates, its state in the GPU record (GPUPhysics.grip()). Its future isn't
 // known, and curveAt() doesn't evaluate it.
 

@@ -1,12 +1,12 @@
-// A static server like the root's docs/sim-overhaul/serve.mjs, with /worldline/ served from a
-// chosen checkout (a worktree, a frozen base for benchmarks), so each tree is tested alone.
-// usage: node serve.mjs PORT [WORLDLINE_DIR = this checkout]; A9_ROOT overrides the site root
+// The root's tools/sims/serve.mjs with /worldline/ served from a chosen checkout (a worktree,
+// a frozen base for benchmarks), so each tree is tested alone; for plain previews use that one.
+// usage: node tools/serve.mjs PORT [WORLDLINE_DIR = this checkout]; A9_ROOT overrides the site root
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 const ROOT = process.env.A9_ROOT || '/Users/a9lim/Work/a9lim.github.io';
 const port = +process.argv[2];
-const WL = resolve(process.argv[3] || new URL('../../..', import.meta.url).pathname);
+const WL = resolve(process.argv[3] || new URL('..', import.meta.url).pathname);
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',

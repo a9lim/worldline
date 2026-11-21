@@ -7,7 +7,7 @@
 // The lagged view (the default) puts the observer's now far enough in the lab's past that
 // the whole visible slice has already been computed; `state.lag` is how far.
 //
-// Seen (`seen`, roadmap §6.3) draws what the observer sees instead: every world line cut by its
+// Seen (`seen`) draws what the observer sees instead: every world line cut by its
 // past light cone now, each body in its aberrated direction at the distance its light travelled.
 // The cone is all computed past, so it needs no lag. Lorentz observers only: the co-rotating and
 // falling ones see as the boost and the red body do.
@@ -22,7 +22,7 @@ export const FRAME_COROTATE = 4;
 // acceleration is subtracted and uniform gravity vanishes while tides remain (the slicer
 // runs it as the particle frame with Galilean slices)
 export const FRAME_FREEFALL = 5;
-// Accelerated (roadmap §6.6): constant proper acceleration α along `direction`, at rest at the
+// Accelerated: constant proper acceleration α along `direction`, at rest at the
 // camera's centre when chosen, so its world line is the hyperbola about a corner 1/α behind it,
 // with the corner's two null planes its horizons
 export const FRAME_ACCEL = 6;
